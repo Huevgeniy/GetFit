@@ -13,7 +13,7 @@ import { GlobalAiChatModal } from './components/GlobalAiChatModal';
 import { ResearchLabView } from './components/ResearchLabView';
 import { AiSettingsModal } from './components/AiSettingsModal';
 import { InteractiveTour } from './components/InteractiveTour';
-import { Bot } from 'lucide-react';
+import { Bot, Mic } from 'lucide-react';
 
 import { 
   UserProfile, 
@@ -370,6 +370,134 @@ export default function App() {
     // Shared record placeholder
   };
 
+  // Natural Language Interface / Voice AI Handlers
+  const handleLogWorkoutFromAi = (exercise: string, weight: number, reps: number, sets = 1, rpe = 8) => {
+    const oneRM = Math.round(weight * (1 + reps / 30));
+    const nowIso = new Date().toISOString();
+    const newRecord: WorkoutRecord = {
+      id: `rec_nli_${Date.now()}`,
+      title: 'ИИ-Лог (NLI / Голос)',
+      date: 'Сегодня',
+      startedAt: nowIso,
+      completedAt: nowIso,
+      durationMinutes: 45,
+      totalTonnageKg: weight * reps * sets,
+      status: 'completed',
+      exercises: [{
+        exerciseId: `ex_nli_${Date.now()}`,
+        name: exercise,
+        best1RM: oneRM,
+        sets: Array.from({ length: sets }).map((_, i) => ({
+          id: `set_nli_${Date.now()}_${i}`,
+          setNumber: i + 1,
+          weight,
+          reps,
+          rpe,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          calculated1RM: oneRM,
+          normalizedRepsAt100kg: Math.max(0, Math.round(reps * (weight / 100))),
+        })),
+      }],
+    };
+    setPastWorkouts(prev => [newRecord, ...prev]);
+    setUser(prev => ({
+      ...prev,
+      streakDays: prev.streakDays + 1,
+      disciplineScore: Math.min(100, prev.disciplineScore + 2),
+      longestStreak: Math.max(prev.longestStreak, prev.streakDays + 1),
+    }));
+
+    if (exercise.toLowerCase().includes('жим') && weight >= 100) {
+      setAchievements(prev => prev.map(a => a.id === 'ach_1' ? { ...a, unlocked: true, unlockedDate: 'Сегодня' } : a));
+    }
+  };
+
+  const handleLogMetricFromAi = (name: string, value: number, unit: string, category?: string) => {
+    if (name.toLowerCase().includes('вес')) {
+      setUser(prev => ({ ...prev, currentWeight: value }));
+    }
+    try {
+      const raw = localStorage.getItem('getfit_custom_metrics');
+      const list = raw ? JSON.parse(raw) : [];
+      const existingIdx = list.findIndex((m: any) => m.name.toLowerCase() === name.toLowerCase());
+      const nowStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+      if (existingIdx >= 0) {
+        list[existingIdx].currentValue = value;
+        list[existingIdx].history = [{ id: `mh_${Date.now()}`, date: nowStr, value }, ...(list[existingIdx].history || [])];
+      } else {
+        list.unshift({
+          id: `cm_${Date.now()}`,
+          name,
+          unit: unit || 'см',
+          category: category || 'physical',
+          currentValue: value,
+          history: [{ id: `mh_${Date.now()}`, date: nowStr, value }],
+        });
+      }
+      localStorage.setItem('getfit_custom_metrics', JSON.stringify(list));
+      window.dispatchEvent(new Event('storage'));
+    } catch {}
+  };
+
+  const handleLogDailyStateFromAi = (sleepHours: number, notes?: string, quality?: number) => {
+    const sleepQuality = quality || (sleepHours < 6.5 ? 5 : 8);
+    const feelingVal = sleepHours < 6 ? 'exhausted' : sleepHours < 7.5 ? 'normal' : sleepHours < 9 ? 'rested' : 'peak';
+    const newSleep: SleepRecord = {
+      id: `slp_${Date.now()}`,
+      date: new Date().toISOString().split('T')[0],
+      bedtime: '23:30',
+      wakeTime: '07:30',
+      durationHours: sleepHours,
+      qualityScore: sleepQuality,
+      feeling: feelingVal,
+      notes: notes || 'Записано через Natural Language Interface',
+    };
+    setSleepRecords(prev => [newSleep, ...prev]);
+
+    const readinessScore = Math.min(100, Math.round((sleepHours / 8) * 85 + (sleepQuality / 10) * 15));
+    setUser(prev => ({
+      ...prev,
+      dailyReadiness: {
+        date: new Date().toISOString().split('T')[0],
+        sleepHours,
+        sleepQuality,
+        readinessScore,
+        overallReadinessScore: readinessScore,
+        autoAdjustRecommendation: sleepHours < 6.5 
+          ? 'Недосып: снизь интенсивность или RPE рабочих подходов на 5-10%.' 
+          : 'Высокая готовность ЦНС: отличный день для силовых подходов!',
+      },
+    }));
+  };
+
+  const handleCreateExperimentFromAi = (title: string, hypothesis: string, dependentMetric?: string, independentMetrics?: string[], durationDays?: number) => {
+    try {
+      const raw = localStorage.getItem('getfit_experiments');
+      const list = raw ? JSON.parse(raw) : [];
+      const newExp = {
+        id: `exp_${Date.now()}`,
+        title: title || 'Новый эксперимент',
+        hypothesis: hypothesis || '',
+        startDate: new Date().toISOString().split('T')[0],
+        endDate: new Date(Date.now() + (durationDays || 21) * 86400000).toISOString().split('T')[0],
+        durationDays: durationDays || 21,
+        status: 'active',
+        dependentMetric: { name: dependentMetric || '1ПМ Жим', unit: 'кг', type: 'performance' },
+        independentMetrics: (independentMetrics || ['Креатин 5г/день']).map(m => ({ name: m, unit: 'ед', targetValue: 1, type: 'supplement' })),
+        baselineValue: 'База',
+        dailyLogs: {},
+      };
+      list.unshift(newExp);
+      localStorage.setItem('getfit_experiments', JSON.stringify(list));
+      fetch('/api/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newExp),
+      }).catch(() => {});
+      window.dispatchEvent(new Event('storage'));
+    } catch {}
+  };
+
   const handleResetAllData = () => {
     localStorage.clear();
     setUser(INITIAL_USER_PROFILE);
@@ -536,27 +664,33 @@ export default function App() {
           )}
         </main>
 
-        {/* Global Floating AI Concierge Button (when live workout is not actively taking over) */}
+        {/* Global Floating AI Concierge / NLI Button (when live workout is not actively taking over) */}
         {!isLiveWorkoutOpen && (
           <button
             onClick={() => setIsGlobalAiChatOpen(true)}
-            className="fixed bottom-[72px] right-4 sm:right-[max(1rem,calc(50%-224px))] z-30 w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-emerald-400 text-slate-950 flex items-center justify-center shadow-xl shadow-emerald-500/25 hover:scale-105 active:scale-95 transition-all border border-emerald-300/40 group"
-            title="Задать вопрос или изменить параметры через ИИ"
+            className="fixed bottom-[72px] right-4 sm:right-[max(1rem,calc(50%-224px))] z-30 h-12 px-3.5 rounded-2xl bg-gradient-to-tr from-emerald-600 to-emerald-400 text-slate-950 flex items-center gap-2 shadow-xl shadow-emerald-500/25 hover:scale-105 active:scale-95 transition-all border border-emerald-300/40 group"
+            title="Голосовой и текстовый ввод тренировок, метрик и сна"
           >
-            <Bot className="w-6 h-6 group-hover:rotate-6 transition-transform text-slate-950" />
-            <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-slate-950 rounded-full flex items-center justify-center">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            </span>
+            <div className="relative">
+              <Bot className="w-5 h-5 group-hover:rotate-6 transition-transform text-slate-950" />
+              <Mic className="w-3 h-3 text-slate-950 absolute -bottom-1 -right-1" />
+            </div>
+            <span className="text-xs font-bold tracking-tight hidden sm:inline text-slate-950">ИИ-Логгер</span>
+            <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse" />
           </button>
         )}
 
-        {/* Global AI Chat Modal */}
+        {/* Global AI Chat / Natural Language Interface Modal */}
         <GlobalAiChatModal
           isOpen={isGlobalAiChatOpen}
           onClose={() => setIsGlobalAiChatOpen(false)}
           user={user}
           onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
           onAddPenalty={handleApplyPenalty}
+          onLogWorkout={handleLogWorkoutFromAi}
+          onLogMetric={handleLogMetricFromAi}
+          onLogDailyState={handleLogDailyStateFromAi}
+          onCreateExperiment={handleCreateExperimentFromAi}
         />
 
         {/* AI Brain & Personal Prompt Settings Modal */}

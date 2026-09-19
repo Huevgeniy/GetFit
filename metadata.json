@@ -1,6 +1,6 @@
 {
   "name": "GetFitBot",
   "description": "Telegram Mini App для учета тренировок, 1ПМ калькулятора, спортивных разрядов, заруб с друзьями и ИИ-тренера в реальном времени",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

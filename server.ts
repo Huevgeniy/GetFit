@@ -7,6 +7,9 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 
 dotenv.config();
+if (!process.env.GROQ_API_KEY && fs.existsSync('.env.example')) {
+  dotenv.config({ path: '.env.example' });
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,7 +36,7 @@ function getGeminiClient(): GoogleGenAI | null {
 }
 
 // Dual AI Engine configuration (Gemini primary -> Grok/Groq seamless fallback)
-process.env.GROQ_API_KEY
+const GROK_KEY = process.env.GROK_API_KEY || process.env.GROQ_API_KEY || '';
 
 interface CallAIOptions {
   systemInstruction: string;
@@ -41,6 +44,7 @@ interface CallAIOptions {
   isJson?: boolean;
   temperature?: number;
   userProfile?: any;
+  preferGroq?: boolean;
 }
 
 interface CallAIResult {
@@ -49,7 +53,7 @@ interface CallAIResult {
 }
 
 async function callUnifiedAI(options: CallAIOptions): Promise<CallAIResult> {
-  const { systemInstruction: baseInstruction, prompt, isJson = false, temperature = 0.4, userProfile } = options;
+  const { systemInstruction: baseInstruction, prompt, isJson = false, temperature = 0.4, userProfile, preferGroq = true } = options;
 
   // Personal athlete memory and constraints enrichment
   let personalContext = '';
@@ -74,39 +78,21 @@ async function callUnifiedAI(options: CallAIOptions): Promise<CallAIResult> {
 
   const fullSystemInstruction = `${baseInstruction}${personalContext}`;
 
-  // 1. Primary Attempt: Google Gemini (gemini-2.5-flash)
-  const ai = getGeminiClient();
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-        config: {
-          systemInstruction: fullSystemInstruction,
-          responseMimeType: isJson ? 'application/json' : undefined,
-          temperature,
-        },
-      });
-      if (response && response.text) {
-        return { text: response.text, provider: 'gemini' };
-      }
-    } catch (geminiError: any) {
-      console.warn('[AI Fallback] Gemini failed or throttled:', geminiError?.message || geminiError);
-      console.log('[AI Fallback] Seamlessly switching to Grok/Groq AI engine...');
-    }
-  }
-
-  // 2. Secondary Attempt: Grok / Groq (ultra-fast resilient fallback)
-  if (GROK_KEY) {
+  const tryGroq = async (): Promise<string | null> => {
+    if (!GROK_KEY) return null;
     try {
       const isGroq = GROK_KEY.startsWith('gsk_');
       const endpoint = isGroq 
         ? 'https://api.groq.com/openai/v1/chat/completions' 
         : 'https://api.x.ai/v1/chat/completions';
-      const model = isGroq ? 'qwen/qwen3.8-27b' : 'grok-2-latest';
+      const model = isGroq ? 'llama-3.3-70b-versatile' : 'grok-2-latest';
+
+      const grokSystem = isJson 
+        ? `${fullSystemInstruction}\n\nCRITICAL: Output valid JSON only, without markdown wraps if possible.` 
+        : fullSystemInstruction;
 
       const messages: any[] = [
-        { role: 'system', content: fullSystemInstruction },
+        { role: 'system', content: grokSystem },
         { role: 'user', content: prompt }
       ];
 
@@ -127,16 +113,52 @@ async function callUnifiedAI(options: CallAIOptions): Promise<CallAIResult> {
       if (grokResponse.ok) {
         const data = await grokResponse.json() as any;
         const content = data.choices?.[0]?.message?.content;
-        if (content) {
-          return { text: content, provider: 'groq' };
-        }
+        if (content) return content;
       } else {
         const errText = await grokResponse.text();
-        console.warn('[AI Fallback] Grok response error:', errText);
+        console.warn('[AI Engine] Groq response error:', errText);
       }
     } catch (grokError: any) {
-      console.error('[AI Fallback] Grok/Groq fetch error:', grokError?.message || grokError);
+      console.error('[AI Engine] Groq fetch error:', grokError?.message || grokError);
     }
+    return null;
+  };
+
+  const tryGemini = async (): Promise<string | null> => {
+    const ai = getGeminiClient();
+    if (!ai) return null;
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+          systemInstruction: fullSystemInstruction,
+          responseMimeType: isJson ? 'application/json' : undefined,
+          temperature,
+        },
+      });
+      if (response && response.text) {
+        return response.text;
+      }
+    } catch (geminiError: any) {
+      console.warn('[AI Engine] Gemini failed or throttled:', geminiError?.message || geminiError);
+    }
+    return null;
+  };
+
+  // If preferGroq is active and GROK_KEY exists, try Groq first for blazing speed (<500ms) & reliable JSON mode
+  if (preferGroq && GROK_KEY) {
+    const groqContent = await tryGroq();
+    if (groqContent) return { text: groqContent, provider: 'groq' };
+
+    const geminiContent = await tryGemini();
+    if (geminiContent) return { text: geminiContent, provider: 'gemini' };
+  } else {
+    const geminiContent = await tryGemini();
+    if (geminiContent) return { text: geminiContent, provider: 'gemini' };
+
+    const groqContent = await tryGroq();
+    if (groqContent) return { text: groqContent, provider: 'groq' };
   }
 
   return { text: '', provider: 'heuristic' };
@@ -632,18 +654,41 @@ app.post('/api/ai/parse-inbody', async (req, res) => {
       contents.push(`Распознай показатели InBody из следующего текста и сформируй JSON: "${text}"`);
     }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents,
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        temperature: 0.2,
-      },
-    });
+    let responseText = '';
+    if (ai) {
+      try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            temperature: 0.2,
+          },
+        });
+        responseText = response.text || '';
+      } catch (err) {
+        console.warn('InBody Gemini scan failed, falling back to Groq/Grok if text available...', err);
+      }
+    }
 
-    const responseText = response.text || '{}';
-    const parsedData = JSON.parse(responseText);
+    if (!responseText && text) {
+      const grokRes = await callUnifiedAI({
+        systemInstruction,
+        prompt: `Распознай показатели InBody из следующего текста и сформируй JSON: "${text}"`,
+        isJson: true,
+        temperature: 0.2,
+        userProfile,
+      });
+      responseText = grokRes.text;
+    }
+
+    let parsedData: any = {};
+    try {
+      parsedData = JSON.parse(responseText || '{}');
+    } catch {
+      parsedData = {};
+    }
 
     const record = {
       id: `inbody_${Date.now()}`,
@@ -729,102 +774,264 @@ app.post('/api/ai/cross-analysis', async (req, res) => {
 
 Сделай глубокий комплексный кросс-анализ и дай четкие рекомендации.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.3,
-      },
+    const aiResult = await callUnifiedAI({
+      systemInstruction,
+      prompt,
+      temperature: 0.3,
+      userProfile,
     });
 
-    res.json({ analysis: response.text || 'Анализ успешно завершен.' });
+    res.json({ analysis: aiResult.text || 'Анализ успешно завершен.', aiProvider: aiResult.provider });
   } catch (err: any) {
     console.error('Cross analysis error:', err);
     res.status(500).json({ error: 'Ошибка анализа', details: err?.message });
   }
 });
 
-// Global AI Sports Concierge / Natural Language Parameter Setter
+// Global AI Sports Concierge / Natural Language Interface Engine
+interface NLIResult {
+  reply: string;
+  actions: Array<{
+    function: string;
+    args: any;
+  }>;
+  action?: any;
+  aiProvider: string;
+}
+
+async function processNaturalLanguageInput(message: string, userProfile?: any, currentSettings?: any): Promise<NLIResult> {
+  const systemInstruction = `Ты — GetFitBot Natural Language Interface & AI Coach, ядро интеллектуального спортивного ввода и анализа.
+Пользователь может как задать вопрос по спорту, так и ввести тренировку, замеры, сон или эксперимент на свободном русском языке, например:
+«Сегодня сделал жим 100 на 5 раз, чувствовалось тяжело, спал всего 5 часов. Еще замерил талию 82 см.»
+«Подтягивания с весом 20 кг на 6 раз»
+«Спал 8 часов, отлично отдохнул, вес утром 81.5 кг»
+«Начни эксперимент: пить креатин 5г каждый день для жима лежа»
+«Поставь цель 12 000 шагов»
+«Назначь мне штраф 50 берпи»
+
+ТВОЯ ЗАДАЧА:
+1. Выполнить распознавание намерений (intent) и сущностей (entity extraction).
+2. Сформировать естественный, ободряющий и научно-обоснованный ответ тренера (отметь связи, например влияние недосыпа на RPE, похвали за жим или замер талии).
+3. Вернуть СТРОГИЙ JSON следующего формата:
+{
+  "reply": "Твой ответ пользователю на русском языке (живой, лаконичный, с поддержкой и анализом связей)",
+  "actions": [
+    // Список функций (пустой массив [], если это просто вопрос без сохранения данных):
+    // 1. log_workout:
+    // { "function": "log_workout", "args": { "exercise": "Жим штанги лежа", "weight": 100, "reps": 5, "sets": 1, "rpe": 8.5, "notes": "Чувствовалось тяжело" } }
+    // 2. log_metric:
+    // { "function": "log_metric", "args": { "name": "Талия", "value": 82, "unit": "см", "category": "body" } }
+    // 3. log_daily_state:
+    // { "function": "log_daily_state", "args": { "sleep_hours": 5, "sleep_quality": 5, "stress_level": 6, "notes": "Недосып, спал всего 5ч" } }
+    // 4. create_experiment:
+    // { "function": "create_experiment", "args": { "title": "Прием креатина 5г", "hypothesis": "Ежедневный прием 5г креатина повысит жим на 5%", "dependent_metric": "Жим лежа", "independent_metrics": ["Креатин 5г/день"], "duration_days": 21 } }
+    // 5. update_user:
+    // { "function": "update_user", "args": { "dailyStepGoal": 12000, "currentWeight": 81.5 } }
+    // 6. add_penalty:
+    // { "function": "add_penalty", "args": { "reason": "Самодисциплина", "penaltyTask": "50 берпи", "pointsDeducted": 5 } }
+  ]
+}
+`;
+
+  const contextPrompt = `Профиль атлета: ${JSON.stringify(userProfile || {})}
+Текущие настройки/контекст: ${JSON.stringify(currentSettings || {})}
+Сообщение атлета: "${message}"
+
+Выдели намерения, извлеки данные и сформируй ответ.`;
+
+  const aiResult = await callUnifiedAI({
+    systemInstruction,
+    prompt: contextPrompt,
+    isJson: true,
+    temperature: 0.3,
+    userProfile,
+    preferGroq: true,
+  });
+
+  if (aiResult.text) {
+    try {
+      let cleanText = aiResult.text.trim();
+      if (cleanText.startsWith('```json')) {
+        cleanText = cleanText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+      } else if (cleanText.startsWith('```')) {
+        cleanText = cleanText.replace(/^```\s*/, '').replace(/\s*```$/, '');
+      }
+      const parsed = JSON.parse(cleanText);
+      const actions: any[] = Array.isArray(parsed.actions) ? parsed.actions : [];
+      if (!actions.length && parsed.action && parsed.action.type && parsed.action.type !== 'answer_only') {
+        actions.push({ function: parsed.action.type, args: parsed.action.payload || {} });
+      }
+      return {
+        reply: parsed.reply || 'Данные успешно обработаны!',
+        actions,
+        action: parsed.action || (actions.length > 0 ? { type: actions[0].function, payload: actions[0].args } : { type: 'answer_only', payload: null }),
+        aiProvider: aiResult.provider,
+      };
+    } catch (parseError) {
+      console.warn('NLI JSON parse error, falling back to heuristic:', parseError);
+    }
+  }
+
+  // Robust algorithmic regex heuristic fallback
+  const actions: any[] = [];
+  const replyParts: string[] = [];
+
+  // 1. Workout recognition (e.g. "жим 100 на 5", "присед 120 3 по 8", "подтягивания 20 кг на 6")
+  const workoutRegex = /(?:сделал|пожал|подтянул(?:ся)?|присел|выполнил)?\s*(жим(?:\s+штанги)?(?:\s+лежа|\s+стоя|\s+узким\s+хватом)?|присед(?:ания)?(?:\s+со\s+штангой)?|станов(?:ая)?\s+тяг(?:а)?|подтягивани[яе](?:\s+на\s+турнике)?|отжимания?(?:\s+на\s+брусьях)?|брусь[яев]|тяг[аи](?:\s+в\s+наклоне)?)\s*(\d+(?:[.,]\d+)?)\s*(?:кг)?\s*(?:(?:на|х|\*)\s*(\d+)|(\d+)\s*(?:по|х|\*)\s*(\d+))/i;
+  const wMatch = message.match(workoutRegex);
+  if (wMatch) {
+    const rawExName = wMatch[1].trim();
+    let exName = 'Жим штанги лежа';
+    if (/присед/i.test(rawExName)) exName = 'Приседания со штангой';
+    else if (/станов/i.test(rawExName) || /тяг/i.test(rawExName)) exName = 'Становая тяга';
+    else if (/подтягиван/i.test(rawExName)) exName = 'Подтягивания с весом';
+    else if (/брусь|отжиман/i.test(rawExName)) exName = 'Отжимания на брусьях';
+
+    const weight = parseFloat(wMatch[2].replace(',', '.'));
+    let reps = 5;
+    let sets = 1;
+    if (wMatch[3]) {
+      reps = parseInt(wMatch[3], 10);
+    } else if (wMatch[4] && wMatch[5]) {
+      sets = parseInt(wMatch[4], 10);
+      reps = parseInt(wMatch[5], 10);
+    }
+
+    let rpe = 8.0;
+    if (/тяжело|еле|максимум|отказ/i.test(message)) rpe = 8.5;
+    else if (/легко|запас/i.test(message)) rpe = 7.0;
+
+    actions.push({
+      function: 'log_workout',
+      args: {
+        exercise: exName,
+        weight,
+        reps,
+        sets,
+        rpe,
+        notes: message.includes('тяжело') ? 'Чувствовалось тяжело' : undefined,
+      },
+    });
+    replyParts.push(`Записал подход: ${exName} ${weight} кг × ${reps} повторений (RPE ~${rpe})!`);
+  }
+
+  // 2. Sleep recognition (e.g. "спал 5 часов", "сон 7.5 ч")
+  const sleepMatch = message.match(/(?:спал|поспал|сон)\s*(?:всего\s*)?(\d+(?:[.,]\d+)?)\s*(?:ч|час(?:а|ов)?)/i);
+  if (sleepMatch) {
+    const sleepHours = parseFloat(sleepMatch[1].replace(',', '.'));
+    const isLowSleep = sleepHours < 6.5;
+    actions.push({
+      function: 'log_daily_state',
+      args: {
+        sleep_hours: sleepHours,
+        sleep_quality: isLowSleep ? 5 : 8,
+        stress_level: isLowSleep ? 6 : 3,
+        notes: isLowSleep ? 'Недосып, возможна просадка ЦНС' : 'Оптимальное восстановление',
+      },
+    });
+    if (isLowSleep) {
+      replyParts.push(`Зафиксировал ${sleepHours} ч сна. При таком недосыпе тяжелые веса даются труднее — недосып снижает пиковую взрывную силу.`);
+    } else {
+      replyParts.push(`Зафиксировал ${sleepHours} ч сна — отличное восстановление для тренировок.`);
+    }
+  }
+
+  // 3. Body metric recognition (waist, bicep, etc.)
+  const waistMatch = message.match(/(?:тали[яи]|обхват талии|замерил талию)\s*(?:в|на|равна|составляет)?\s*(\d{2,3}(?:[.,]\d+)?)\s*(?:см)?/i);
+  if (waistMatch) {
+    const waist = parseFloat(waistMatch[1].replace(',', '.'));
+    actions.push({
+      function: 'log_metric',
+      args: { name: 'Талия', value: waist, unit: 'см', category: 'body' },
+    });
+    replyParts.push(`Замер талии ${waist} см сохранен в динамику показателей.`);
+  }
+
+  const bicepMatch = message.match(/(?:бицепс|обхват руки)\s*(?:в|на|равен)?\s*(\d{2,3}(?:[.,]\d+)?)\s*(?:см)?/i);
+  if (bicepMatch) {
+    const bicep = parseFloat(bicepMatch[1].replace(',', '.'));
+    actions.push({
+      function: 'log_metric',
+      args: { name: 'Бицепс', value: bicep, unit: 'см', category: 'body' },
+    });
+    replyParts.push(`Замер бицепса ${bicep} см сохранен.`);
+  }
+
+  // 4. Weight
+  const weightMatch = message.match(/(?:мой\s+)?(?:текущий\s+)?вес\s*(?:сейчас|стал|был|равен|поставить|утром)?\s*(\d{2,3}(?:[.,]\d+)?)\s*(?:кг)?/i);
+  if (weightMatch) {
+    const weight = parseFloat(weightMatch[1].replace(',', '.'));
+    actions.push({
+      function: 'update_user',
+      args: { currentWeight: weight },
+    });
+    actions.push({
+      function: 'log_metric',
+      args: { name: 'Вес тела', value: weight, unit: 'кг', category: 'body' },
+    });
+    replyParts.push(`Текущий вес обновлен: ${weight} кг.`);
+  }
+
+  // 5. Steps goal
+  const stepMatch = message.match(/(?:норматив|цель|норма|план)?\s*(?:по\s+)?шаг(?:ов|ам|ами)?\s*(?:на|в|поставить|сделать|равен)?\s*(\d{3,6})/i)
+    || message.match(/(\d{3,6})\s*шаг/i);
+  if (stepMatch) {
+    const steps = parseInt(stepMatch[1], 10);
+    actions.push({
+      function: 'update_user',
+      args: { dailyStepGoal: steps },
+    });
+    replyParts.push(`Цель по шагам установлена: ${steps.toLocaleString('ru-RU')} шагов.`);
+  }
+
+  // 6. Penalty
+  const penaltyMatch = message.match(/штраф\s*(?:на\s+)?(?:мне\s+)?(.+)/i);
+  if (penaltyMatch) {
+    const taskText = penaltyMatch[1].trim();
+    actions.push({
+      function: 'add_penalty',
+      args: { reason: 'Самодисциплина', penaltyTask: taskText, pointsDeducted: 5 },
+    });
+    replyParts.push(`Штрафное задание назначено: «${taskText}» (-5% дисциплины).`);
+  }
+
+  // 7. Experiment
+  const expMatch = message.match(/(?:эксперимент|начни эксперимент|исследование)\s*:\s*(.+)/i);
+  if (expMatch) {
+    const hyp = expMatch[1].trim();
+    actions.push({
+      function: 'create_experiment',
+      args: {
+        title: hyp.slice(0, 40),
+        hypothesis: hyp,
+        dependent_metric: '1ПМ / Сила',
+        independent_metrics: ['Фактор эксперимента'],
+        duration_days: 21,
+      },
+    });
+    replyParts.push(`Эксперимент «${hyp.slice(0, 40)}» добавлен в Исследовательскую Лабораторию!`);
+  }
+
+  const finalReply = replyParts.length > 0
+    ? replyParts.join('\n\n')
+    : 'Я твой персональный спортивный ИИ-ассистент GetFitBot. Могу зафиксировать подход («жим 100 на 5»), замер («талия 82 см»), сон («спал 5 часов») или начать эксперимент. Что запишем?';
+
+  return {
+    reply: finalReply,
+    actions,
+    action: actions.length > 0 ? { type: actions[0].function, payload: actions[0].args } : { type: 'answer_only', payload: null },
+    aiProvider: 'heuristic',
+  };
+}
+
 app.post('/api/ai/concierge', async (req, res) => {
   try {
     const { message, userProfile, historySummary, currentSettings } = req.body;
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
-
-    const systemInstruction = `Ты — GetFitBot AI Concierge, персональный интеллектуальный ассистент по спорту, силовой подготовке, дисциплине и биохакингу.
-Пользователь может:
-1. Задавать любые вопросы по тренировкам, технике, программам, питанию, БЖУ, восстановлению, сну, спортивным разрядам (WRPF, WSF, пауэрлифтинг, стритлифтинг, бег).
-2. Просить тебя настроить или изменить любые параметры приложения через естественный язык:
-   - норматив шагов (например: "поставь цель 10000 шагов", "хочу ходить 15 000 в день")
-   - текущий вес или целевой вес (например: "мой вес теперь 82.5 кг", "хочу весить 78 кг")
-   - назначить штрафное задание за пропуск/нарушение (например: "я сорвался на пиццу, дай мне штраф 100 берпи")
-   - персональные наставления и ограничения для ИИ (например: "у меня болит плечо при жиме, учитывай это")
-   - создать или предложить новую тренировку
-3. Ты должен отвечать авторитетно, емко, научно обоснованно и доброжелательно на русском языке.
-
-Если пользователь выражает явное намерение изменить данные приложения, верни JSON следующего формата:
-{
-  "reply": "Твой ответ пользователю (дружелюбный, мотивирующий, лаконичный)",
-  "action": {
-    "type": "update_user" | "add_penalty" | "suggest_penalty" | "answer_only",
-    "payload": {
-      // Для update_user: { dailyStepGoal?: number, currentWeight?: number, targetWeight?: number, weightGoalType?: string, aiPersonalPrompt?: string, injuriesAndLimitations?: string }
-      // Для add_penalty: { reason: string, penaltyTask: string, pointsDeducted: number }
-    }
-  }
-}
-Если это просто вопрос или консультация, action.type должен быть "answer_only", action.payload = null.`;
-
-    const contextPrompt = `Профиль пользователя: ${JSON.stringify(userProfile || {})}
-Текущие настройки/контекст: ${JSON.stringify(currentSettings || {})}
-Сообщение пользователя: "${message}"
-
-Ответь пользователю и при необходимости распознай действие для приложения.`;
-
-    const aiResult = await callUnifiedAI({
-      systemInstruction,
-      prompt: contextPrompt,
-      isJson: true,
-      temperature: 0.4,
-      userProfile,
-    });
-
-    if (aiResult.text) {
-      let parsed: any = {};
-      try {
-        parsed = JSON.parse(aiResult.text);
-      } catch {
-        parsed = { reply: aiResult.text, action: { type: 'answer_only', payload: null } };
-      }
-      return res.json({ ...parsed, aiProvider: aiResult.provider });
-    }
-
-    // Algorithmic heuristic fallback
-    let action: any = null;
-    let reply = 'Я твой персональный спортивный ИИ-ассистент GetFitBot. Могу ответить на любой вопрос о тренировках, питании, рекордах и нормативах, а также изменить любые параметры твоего профиля!';
-
-    const stepMatch = message.match(/(?:норматив|цель|норма|план)?\s*(?:по\s+)?шаг(?:ов|ам|ами)?\s*(?:на|в|поставить|сделать|равен)?\s*(\d{3,6})/i)
-      || message.match(/(\d{3,6})\s*шаг/i);
-    const weightMatch = message.match(/(?:мой\s+)?(?:текущий\s+)?вес\s*(?:сейчас|стал|равен|поставить|изменить\s+на)?\s*(\d{2,3}(?:[.,]\d+)?)\s*(?:кг)?/i);
-    const penaltyMatch = message.match(/штраф\s*(?:на\s+)?(?:мне\s+)?(.+)/i);
-
-    if (stepMatch) {
-      const steps = parseInt(stepMatch[1], 10);
-      action = { type: 'update_user', payload: { dailyStepGoal: steps } };
-      reply = `Принято! Обновил твой ежедневный норматив шагов: ${steps.toLocaleString('ru-RU')} шагов в день.`;
-    } else if (weightMatch) {
-      const weight = parseFloat(weightMatch[1].replace(',', '.'));
-      action = { type: 'update_user', payload: { currentWeight: weight } };
-      reply = `Зафиксировал твой текущий вес: ${weight} кг. Данные профиля обновлены!`;
-    } else if (penaltyMatch) {
-      const taskText = penaltyMatch[1].trim();
-      action = { type: 'add_penalty', payload: { reason: 'Самодисциплина', penaltyTask: taskText, pointsDeducted: 5 } };
-      reply = `Назначил штрафное задание: «${taskText}» (-5% дисциплины до выполнения). Держи планку!`;
-    }
-
-    return res.json({ reply, action, aiProvider: 'heuristic' });
+    const result = await processNaturalLanguageInput(message, userProfile, currentSettings);
+    return res.json(result);
   } catch (err: any) {
     console.error('Concierge API error:', err);
     res.status(500).json({ error: 'Ошибка ассистента', details: err?.message });
@@ -1119,28 +1326,149 @@ async function handleTelegramUpdate(token: string, update: any) {
     return;
   }
 
-  // Answer user questions via Gemini AI Coach in Telegram chat
-  const ai = getGeminiClient();
+  // Process message via Natural Language Interface & AI Coach in Telegram chat
   let aiReply = 'Отличный настрой на тренировку! Открой приложение для подробного плана и аналитики.';
-  if (ai && text) {
+  if (text) {
     try {
-      const prompt = `Ты — GetFit AI Coach, персональный спортивный тренер, нутрициолог и аналитик приложения GetFit Мини-апп.
-Пользователь написал в Telegram: "${text}".
-Дай экспертный, мотивирующий, четкий и лаконичный ответ (3-5 предложений) на русском языке. 
-Разбирайся в пауэрлифтинге, стритлифтинге, технике упражнений, прогрессивной перегрузке, расчете 1ПМ, КБЖУ, спортивном питании и восстановлении. Отвечай дружелюбно, по-спортивному и без воды. В конце напомни зафиксировать тренировку в приложении.`;
+      const db = getDb();
+      let userKey = `tg_${chatId}`;
+      let userEntry = db.users[userKey];
+      if (!userEntry && msg.from?.username) {
+        const foundKey = Object.keys(db.users).find(k => db.users[k]?.user?.telegramUsername === msg.from?.username);
+        if (foundKey) {
+          userKey = foundKey;
+          userEntry = db.users[foundKey];
+        }
+      }
 
-      const aiRes = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: prompt,
-        config: {
-          temperature: 0.5,
-        },
-      });
-      if (aiRes.text) {
-        aiReply = aiRes.text;
+      const nliResult = await processNaturalLanguageInput(text, userEntry?.user);
+      aiReply = nliResult.reply;
+
+      // If user performed real data actions via Telegram, persist to database
+      if (nliResult.actions && nliResult.actions.length > 0) {
+        if (!db.users[userKey]) {
+          db.users[userKey] = {
+            user: {
+              id: userKey,
+              name: msg.from?.first_name || 'Атлет',
+              telegramUsername: msg.from?.username,
+              disciplineScore: 90,
+              streakDays: 1,
+            },
+            pastWorkouts: [],
+            sleepRecords: [],
+            customMetrics: [],
+            penalties: [],
+          };
+        }
+        const uData = db.users[userKey];
+        if (!uData.pastWorkouts) uData.pastWorkouts = [];
+        if (!uData.sleepRecords) uData.sleepRecords = [];
+        if (!uData.customMetrics) uData.customMetrics = [];
+        if (!uData.penalties) uData.penalties = [];
+
+        const actionNotices: string[] = [];
+
+        for (const act of nliResult.actions) {
+          if (act.function === 'log_workout') {
+            const args = act.args || {};
+            const weight = Number(args.weight) || 0;
+            const reps = Number(args.reps) || 1;
+            const sets = Number(args.sets) || 1;
+            const oneRM = Math.round(weight * (1 + reps / 30));
+            const exName = args.exercise || 'Упражнение';
+            uData.pastWorkouts.unshift({
+              id: `rec_tg_${Date.now()}`,
+              planTitle: 'Telegram AI Лог',
+              completedDate: new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' }),
+              durationMinutes: 45,
+              totalTonnage: weight * reps * sets,
+              exercises: [{
+                name: exName,
+                sets: [{ setNumber: 1, weight, reps, completed: true, rpe: Number(args.rpe) || 8 }],
+                best1RM: oneRM,
+              }],
+            });
+            if (uData.user) {
+              uData.user.streakDays = (uData.user.streakDays || 0) + 1;
+              uData.user.disciplineScore = Math.min(100, (uData.user.disciplineScore || 85) + 2);
+            }
+            actionNotices.push(`🏋️ Записан подход: ${exName} ${weight}кг × ${reps} (1ПМ ~${oneRM}кг)`);
+          } else if (act.function === 'log_daily_state') {
+            const args = act.args || {};
+            const sleepHours = Number(args.sleep_hours) || 7;
+            uData.sleepRecords.unshift({
+              id: `slp_tg_${Date.now()}`,
+              date: new Date().toISOString().split('T')[0],
+              durationHours: sleepHours,
+              qualityScore: Number(args.sleep_quality) || 7,
+              deepSleepMinutes: Math.round(sleepHours * 15),
+              remSleepMinutes: Math.round(sleepHours * 12),
+              restingHeartRate: 58,
+              notes: args.notes || 'Лог через Telegram',
+            });
+            actionNotices.push(`🌙 Зафиксирован сон: ${sleepHours}ч`);
+          } else if (act.function === 'log_metric') {
+            const args = act.args || {};
+            const val = Number(args.value) || 0;
+            const metricName = args.name || 'Метрика';
+            const unit = args.unit || 'см';
+            uData.customMetrics.unshift({
+              id: `cm_${Date.now()}`,
+              name: metricName,
+              unit,
+              category: args.category || 'body',
+              currentValue: val,
+              history: [{
+                id: `mh_${Date.now()}`,
+                date: new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
+                value: val,
+              }],
+            });
+            actionNotices.push(`📏 Замер сохранен: ${metricName} ${val} ${unit}`);
+          } else if (act.function === 'update_user') {
+            uData.user = { ...uData.user, ...(act.args || {}) };
+            actionNotices.push(`🎯 Параметры профиля обновлены`);
+          } else if (act.function === 'add_penalty') {
+            const args = act.args || {};
+            uData.penalties.unshift({
+              id: `pen_tg_${Date.now()}`,
+              workoutDate: new Date().toISOString().split('T')[0],
+              reason: args.reason || 'Самодисциплина',
+              penaltyTask: args.penaltyTask || 'Штраф',
+              status: 'pending',
+              date: 'Сегодня',
+              pointsDeducted: Number(args.pointsDeducted) || 5,
+            });
+            actionNotices.push(`⚠️ Назначено штрафное задание: «${args.penaltyTask}»`);
+          } else if (act.function === 'create_experiment') {
+            const args = act.args || {};
+            if (!db.experiments) db.experiments = [];
+            db.experiments.unshift({
+              id: `exp_tg_${Date.now()}`,
+              title: args.title || 'Эксперимент через Telegram',
+              hypothesis: args.hypothesis || '',
+              startDate: new Date().toISOString().split('T')[0],
+              endDate: new Date(Date.now() + (Number(args.duration_days) || 21) * 86400000).toISOString().split('T')[0],
+              durationDays: Number(args.duration_days) || 21,
+              status: 'active',
+              dependentMetric: { name: args.dependent_metric || 'Сила', unit: 'кг', type: 'performance' },
+              independentMetrics: (args.independent_metrics || ['Фактор']).map((m: string) => ({ name: m, unit: 'ед', targetValue: 1, type: 'supplement' })),
+              baselineValue: 'База',
+              dailyLogs: {},
+            });
+            actionNotices.push(`🔬 Эксперимент создан в Лаборатории: «${args.title}»`);
+          }
+        }
+
+        saveDb(db);
+
+        if (actionNotices.length > 0) {
+          aiReply = `✅ **Данные сохранены в GetFit:**\n${actionNotices.join('\n')}\n\n${aiReply}`;
+        }
       }
     } catch (err) {
-      console.error('Telegram AI coach error:', err);
+      console.error('Telegram NLI AI error:', err);
     }
   }
 
