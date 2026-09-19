@@ -1,7 +1,7 @@
 import React from 'react';
-import { Dumbbell, Utensils, LineChart, FlaskConical, Award, ShieldCheck, User } from 'lucide-react';
+import { Dumbbell, Utensils, LineChart, FlaskConical, Award, ShieldCheck, User, Layers } from 'lucide-react';
 
-export type NavTab = 'workouts' | 'nutrition' | 'charts' | 'lab' | 'ranks' | 'discipline' | 'profile' | 'battles';
+export type NavTab = 'workouts' | 'nutrition' | 'charts' | 'lab' | 'periodization' | 'ranks' | 'discipline' | 'profile' | 'battles';
 
 interface NavigationProps {
   currentTab: NavTab;
@@ -19,6 +19,7 @@ export const Navigation: React.FC<NavigationProps> = ({
     { id: 'nutrition' as NavTab, label: 'Питание/Сон', icon: Utensils },
     { id: 'charts' as NavTab, label: 'Прогресс', icon: LineChart },
     { id: 'lab' as NavTab, label: 'Лаборатория', icon: FlaskConical },
+    { id: 'periodization' as NavTab, label: 'Циклы', icon: Layers },
     { id: 'ranks' as NavTab, label: 'Разряды', icon: Award },
     { 
       id: 'discipline' as NavTab, 

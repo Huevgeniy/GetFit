@@ -11,6 +11,7 @@ import { ProfileView } from './components/ProfileView';
 import { NutritionSleepTracker } from './components/NutritionSleepTracker';
 import { GlobalAiChatModal } from './components/GlobalAiChatModal';
 import { ResearchLabView } from './components/ResearchLabView';
+import { PeriodizationView } from './components/PeriodizationView';
 import { AiSettingsModal } from './components/AiSettingsModal';
 import { InteractiveTour } from './components/InteractiveTour';
 import { Bot, Mic } from 'lucide-react';
@@ -638,6 +639,14 @@ export default function App() {
 
               {currentTab === 'lab' && (
                 <ResearchLabView
+                  user={user}
+                  pastWorkouts={pastWorkouts}
+                  onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
+                />
+              }
+
+              {currentTab === 'periodization' && (
+                <PeriodizationView
                   user={user}
                   pastWorkouts={pastWorkouts}
                   onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
