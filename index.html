@@ -13,6 +13,36 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+      // Initialize Telegram WebApp immediately
+      window.TelegramWebAppInit = function() {
+        if (window.Telegram && window.Telegram.WebApp) {
+          const tg = window.Telegram.WebApp;
+          
+          // Expand to full height
+          tg.expand();
+          
+          // Enable closing confirmation
+          tg.enableClosingConfirmation();
+          
+          // Set header color
+          tg.setHeaderColor('#0b0f12');
+          tg.setBackgroundColor('#0b0f12');
+          
+          // Ready signal
+          tg.ready();
+          
+          // Send initData to app for auth
+          window.telegramInitData = tg.initData;
+          window.telegramUser = tg.initDataUnsafe?.user;
+          
+          console.log('[Telegram WebApp] Initialized', window.telegramUser);
+        }
+      };
+      
+      // Call init on load
+      document.addEventListener('DOMContentLoaded', window.TelegramWebAppInit);
+    </script>
   </head>
   <body>
     <div id="root"></div>
