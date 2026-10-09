@@ -77,6 +77,8 @@ export interface UserProfile {
   weightGoalType: 'lose' | 'gain' | 'maintain' | 'recomp';
   stepGoalEnabled?: boolean;
   dailyStepGoal: number;
+  /** Напоминания в Telegram. По умолчанию включены; false — бот не пишет первым. */
+  notificationsEnabled?: boolean;
   disciplineScore: number; // 0 to 100
   streakDays: number;
   longestStreak: number;

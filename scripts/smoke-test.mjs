@@ -176,5 +176,21 @@ if (notifyNoSecret.status === 503) {
   );
 }
 
+// 13. Проверка доставки уведомлений: dev-пользователю нельзя, реальному — уходит в Telegram
+const notifyTestDev = await call('/api/notifications/test', { method: 'POST', token: A });
+check(
+  'проверка уведомлений недоступна вне Telegram (dev)',
+  notifyTestDev.status === 400 && notifyTestDev.json?.delivered === false,
+  JSON.stringify(notifyTestDev.json),
+);
+const notifyTestUnAuth = await call('/api/notifications/test', { method: 'POST' });
+check('проверка уведомлений требует авторизации', notifyTestUnAuth.status === 401, String(notifyTestUnAuth.status));
+const notifyTestReal = await call('/api/notifications/test', { method: 'POST', token: realLogin.json.token });
+check(
+  'для реального пользователя попытка отправки доходит до Telegram',
+  notifyTestReal.status === 502 && notifyTestReal.json?.delivered === false && /Telegram/i.test(notifyTestReal.json?.error || ''),
+  JSON.stringify(notifyTestReal.json),
+);
+
 console.log(`\n${failures === 0 ? 'ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ' : `ПРОВАЛОВ: ${failures}`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -114,7 +114,11 @@ check('на следующий день напоминание снова уме
 // 11. Пользователи без Telegram пропускаются
 check('dev-пользователю не пишем', !real.due.some((d) => d.userId === 'dev:local') && !dry.due.some((d) => d.userId === 'dev:local'));check('состояние пользователя не перетёрто напоминаниями', (await storage.getUserState('tg:1001'))?.state?.workoutPlans?.length === 1);
 
-// 12. Неудачная доставка: отметка не ставится, попытка повторится
+// 12. Пользователь отключил напоминания в профиле
+const disabledUser = { ...planUser, user: { ...planUser.user, notificationsEnabled: false } };
+check('при notificationsEnabled=false напоминаний нет', typesFor(disabledUser, NOW).length === 0, JSON.stringify(typesFor(disabledUser, NOW)));
+
+// 13. Неудачная доставка: отметка не ставится, попытка повторится
 const dataDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'getfit-notify2-'));
 fs.writeFileSync(
   path.join(dataDir2, 'cloud_db.json'),

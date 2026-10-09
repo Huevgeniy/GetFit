@@ -26,11 +26,16 @@ import {
   ChevronDown,
   Download,
   Upload,
-  Swords
+  Swords,
+  Bell,
+  BellOff,
+  Send
 } from 'lucide-react';
 import { UserProfile, Achievement, InBodyRecord, PersonalRecord, RecordHistoryItem, FriendBattle } from '../types';
 import { InBodyTracker } from './InBodyTracker';
 import { FriendsAndBattlesView } from './FriendsAndBattlesView';
+import { hapticImpact, hapticNotify } from '../lib/telegram';
+import { testNotification } from '../lib/api';
 
 interface ProfileViewProps {
   user: UserProfile;
@@ -78,6 +83,25 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 }) => {
   const [profileTab, setProfileTab] = useState<'general' | 'friends_battles' | 'records' | 'disciplines' | 'inbody' | 'achievements'>('general');
   const [importStatus, setImportStatus] = useState<string | null>(null);
+
+  // Напоминания: по умолчанию включены (undefined считаем включённым)
+  const notificationsOn = user?.notificationsEnabled !== false;
+  const [notifyTest, setNotifyTest] = useState<{ status: 'idle' | 'sending' | 'ok' | 'error'; message?: string }>({
+    status: 'idle',
+  });
+
+  const handleTestNotification = async () => {
+    setNotifyTest({ status: 'sending' });
+    hapticImpact('light');
+    const result = await testNotification();
+    if (result.delivered) {
+      hapticNotify('success');
+      setNotifyTest({ status: 'ok' });
+    } else {
+      hapticNotify('error');
+      setNotifyTest({ status: 'error', message: result.error || 'Не удалось отправить сообщение' });
+    }
+  };
 
   // Edit Profile Modal
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
@@ -538,10 +562,69 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
 
               <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono px-1">
-                <span>Движок: Gemini 2.5 Flash</span>
-                <span className="text-emerald-400 font-bold">⚡ Grok 2 / Groq Llama-3.3 Fallback</span>
+                <span>Движок: Groq · qwen3.8-27b</span>
+                <span className="text-emerald-400 font-bold">⚡ Резерв: Gemini Flash</span>
               </div>
             </div>
+          </div>
+
+          {/* Напоминания в Telegram */}
+          <div className="bg-[#101820] border border-[#22303f] rounded-2xl p-3.5 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                {notificationsOn ? (
+                  <Bell className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <BellOff className="w-4 h-4 text-slate-500" />
+                )}
+                <div>
+                  <div className="text-xs font-bold text-slate-200">Напоминания в Telegram</div>
+                  <div className="text-[10px] text-slate-400">
+                    {notificationsOn
+                      ? 'Тренировка вечером, сон утром, день эксперимента'
+                      : 'Отключены — бот не пишет первым'}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                id="notifications-toggle"
+                onClick={() => {
+                  onUpdateUser({ notificationsEnabled: !notificationsOn });
+                  hapticImpact('light');
+                }}
+                className={`w-12 h-6 rounded-full border transition-colors shrink-0 relative ${
+                  notificationsOn ? 'bg-emerald-500/30 border-emerald-500/60' : 'bg-[#18232f] border-[#2b3a4a]'
+                }`}
+                title={notificationsOn ? 'Выключить напоминания' : 'Включить напоминания'}
+              >
+                <span
+                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-slate-100 transition-all ${
+                    notificationsOn ? 'left-6' : 'left-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              id="notifications-test"
+              disabled={notifyTest.status === 'sending' || !notificationsOn}
+              onClick={handleTestNotification}
+              className="w-full py-2 bg-[#141c24] hover:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>{notifyTest.status === 'sending' ? 'Отправляю…' : 'Проверить уведомления'}</span>
+            </button>
+
+            {notifyTest.status === 'ok' && (
+              <p className="text-[10px] text-emerald-400 leading-snug">
+                ✅ Отправлено — проверь чат с ботом @get_fitbot.
+              </p>
+            )}
+            {notifyTest.status === 'error' && (
+              <p className="text-[10px] text-amber-400 leading-snug">⚠️ {notifyTest.message}</p>
+            )}
           </div>
 
           {/* Simple Reset Action */}

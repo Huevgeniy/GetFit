@@ -181,3 +181,21 @@ export function updateBattleProgress(
 ): Promise<{ success: boolean; battle: any } | null> {
   return postJson('/api/battles/update-progress', { battleId, amount });
 }
+
+/* ------------------------------------------------------------------ */
+/* Уведомления                                                         */
+/* ------------------------------------------------------------------ */
+
+/** Просим сервер отправить тестовое сообщение — проверка, что бот может нам писать. */
+export async function testNotification(): Promise<{ delivered: boolean; error?: string }> {
+  try {
+    const res = await apiFetch('/api/notifications/test', { method: 'POST' });
+    const data = await res.json().catch(() => null);
+    return {
+      delivered: Boolean(data?.delivered),
+      error: data?.error || (res.ok ? undefined : `HTTP ${res.status}`),
+    };
+  } catch (err: any) {
+    return { delivered: false, error: err?.message || 'network error' };
+  }
+}

@@ -100,6 +100,7 @@ globalThis.fetch = async (url, init = {}) => {
       ],
     });
   }
+  if (target === '/api/notifications/test') return json({ delivered: true });
   return json({});
 };
 window.fetch = globalThis.fetch;
@@ -177,6 +178,39 @@ check('на вкладке видны зарубы с сервера', text().in
 const profileSwitched = await clickByText('Профиль');
 check('переключение на «Профиль» не падает', profileSwitched && !renderError);
 check('в профиле видны данные из облака', text().includes(CLOUD_USER));
+
+// 4b. Напоминания: переключатель и проверка доставки
+const toggle = container.querySelector('#notifications-toggle');
+check('в профиле есть переключатель напоминаний', Boolean(toggle));
+if (toggle) {
+  await act(async () => {
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+  check('переключатель отключает напоминания', text().includes('Отключены'), text().slice(-160));
+  await act(async () => {
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+  check('переключатель включает напоминания обратно', text().includes('Тренировка вечером'), text().slice(-160));
+}
+
+const testButton = container.querySelector('#notifications-test');
+check('кнопка проверки уведомлений доступна', Boolean(testButton) && testButton.disabled === false);
+if (testButton) {
+  await act(async () => {
+    testButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  });
+  check('запрос проверки уведомлений ушёл на сервер', requests.some((r) => r.url === '/api/notifications/test' && r.method === 'POST'));
+  check('пользователю показан успешный результат', text().includes('Отправлено'), text().slice(-160));
+}
 
 // 5. Ещё раз возвращаемся на тренировки — проверяем, что состояние не потерялось
 const backToWorkouts = await clickByText('Тренировки');

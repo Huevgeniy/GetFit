@@ -68,6 +68,8 @@ function sameDay(iso: string | undefined, dateKey: string): boolean {
 export function decideReminders(userId: string, state: any, now: Date = new Date()): ReminderDecision[] {
   const decisions: ReminderDecision[] = [];
   if (!state || typeof state !== 'object') return decisions;
+  // Пользователь может отключить напоминания в профиле
+  if (state.user?.notificationsEnabled === false) return decisions;
 
   const { hour, dateKey } = localNow(now);
   const yesterdayKey = dateKeyShifted(-1, now);

@@ -365,6 +365,30 @@ async function handleNotificationRun(req: express.Request, res: express.Response
 app.get('/api/notifications/run', handleNotificationRun);
 app.post('/api/notifications/run', handleNotificationRun);
 
+/**
+ * Проверка доставки: бот пишет самому пользователю.
+ * Самое хрупкое место связки — бот не может написать тому, кто не запускал его,
+ * поэтому даём возможность проверить это одним тапом из приложения.
+ */
+app.post('/api/notifications/test', async (req, res) => {
+  const userId = getAuthedUserId(req);
+  if (!userId.startsWith('tg:')) {
+    return res.status(400).json({
+      delivered: false,
+      error: 'Проверка доступна только внутри Telegram',
+    });
+  }
+  const delivered = await notifyTelegramUser(
+    userId,
+    '🔔 <b>Проверка уведомлений GetFit</b>\nЕсли ты видишь это сообщение — напоминания о тренировках, сне и экспериментах будут приходить сюда.',
+  );
+  if (delivered) return res.json({ delivered: true });
+  res.status(502).json({
+    delivered: false,
+    error: 'Telegram не доставил сообщение. Открой чат с ботом и нажми /start, затем попробуй снова.',
+  });
+});
+
 // Синхронизация состояния пользователя.
 // Идентификатор берётся из подписанной сессии — подставить чужой нельзя.
 app.get('/api/db/sync', async (req, res) => {
