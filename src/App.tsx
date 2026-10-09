@@ -15,7 +15,7 @@ import { PeriodizationView } from './components/PeriodizationView';
 import { AiSettingsModal } from './components/AiSettingsModal';
 import { InteractiveTour } from './components/InteractiveTour';
 import { Bot, Mic } from 'lucide-react';
-import { applyTelegramUi, getStartParam, hapticImpact, hapticNotify, setupBackButton } from './lib/telegram';
+import { applyTelegramUi, closeMiniApp, getStartParam, hapticImpact, hapticNotify, setupBackButton } from './lib/telegram';
 import {
   apiFetch,
   createBattle,
@@ -698,6 +698,7 @@ export default function App() {
           onProfileClick={() => setCurrentTab('profile')}
           onOpenAiSettings={() => setIsAiSettingsOpen(true)}
           onOpenTutorial={() => setIsTourOpen(true)}
+          onCloseApp={closeMiniApp}
         />
 
         {/* Floating banner if active workout is currently minimized */}

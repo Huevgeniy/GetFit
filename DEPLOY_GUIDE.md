@@ -1,317 +1,149 @@
-# 🏋️ GetFitBot - Telegram Mini App для трекинга тренировок
+# 🚀 GetFitBot — деплой Telegram Mini App (Render + Supabase, бесплатно)
 
-## 🚀 Быстрый старт для тестирования в Telegram
+Актуальная инструкция под текущий код. Всё укладывается в бесплатные тарифы.
 
-### 1. Создай Telegram бота
-1. Открой @BotFather в Telegram
-2. Отправь `/newbot`
-3. Придумай имя и юзернейм (должен заканчиваться на `bot`)
-4. Скопируй полученный токен
+## Что понадобится
 
-### 2. Настрой .env файл
+| Что | Где взять | Обязательно |
+|---|---|---|
+| Аккаунт GitHub | репозиторий `Huevgeniy/GetFit` | да |
+| Аккаунт Render | [render.com](https://render.com) | да |
+| Проект Supabase | [supabase.com](https://supabase.com) | да (иначе данные не сохранятся) |
+| Токен бота | @BotFather → твой бот @get_fitbot | да |
+| Ключ Groq | [console.groq.com](https://console.groq.com/keys) | да для ИИ-функций |
+
+---
+
+## Шаг 1. База данных Supabase
+
+1. Создай проект: **New project** → имя любое → **регион Frankfurt** (тот же, что у Render, иначе лишняя задержка).
+2. Пароль базы сохрани в надёжном месте — он понадобится в строке подключения.
+3. Открой **Connect** (кнопка сверху) → вкладка **Session pooler** → скопируй строку вида:
+
+```
+postgresql://postgres.abcdefgh:ТВОЙ_ПАРОЛЬ@aws-0-eu-central-1.pooler.supabase.com:5432/postgres
+```
+
+> ⚠️ **Бери именно Session pooler (порт 5432), а не Direct connection.** Direct сейчас IPv6-only, а Render работает через IPv4 — прямое подключение просто не откроется.
+
+Таблицы создавать руками не нужно: сервер при старте выполняет миграции сам.
+
+**Важно про бесплатный тариф:** проект засыпает после ~7 дней без запросов. Если пользуешься приложением хотя бы пару раз в неделю — этого не произойдёт. Разбудить можно кнопкой **Resume project** в дашборде.
+
+---
+
+## Шаг 2. Деплой на Render
+
+1. В Render: **New** → **Blueprint** → подключи репозиторий `Huevgeniy/GetFit`.
+   Файл `render.yaml` уже в репозитории: Render сам создаст web-сервис (free, Frankfurt, health-check `/api/health`).
+2. Render попросит заполнить переменные окружения (те, что помечены `sync: false`):
+
+| Переменная | Значение |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | токен от @BotFather |
+| `GROQ_API_KEY` | ключ Groq (`gsk_...`) |
+| `DATABASE_URL` | строка Session pooler из шага 1 |
+| `APP_URL` | публичный адрес сервиса, например `https://getfitbot.onrender.com` |
+
+   `SESSION_SECRET` и `TELEGRAM_WEBHOOK_SECRET` Render сгенерирует автоматически — трогать не нужно.
+   `GEMINI_API_KEY` можно не заполнять (из России Gemini API недоступен, основной провайдер — Groq).
+
+3. Нажми **Apply** и дождись окончания сборки (первый билд ~2-3 минуты).
+
+### Что произойдёт при старте автоматически
+
+- выполнятся миграции Postgres (таблицы `user_state`, `battles`, `experiments`, `cycles`, `custom_metrics`);
+- у бота установится webhook на `APP_URL/api/telegram/webhook` с секретным заголовком;
+- в меню чата с ботом появится кнопка **«Открыть GetFit»**;
+- выставится список команд (`/start`, `/help`, `/ranks`).
+
+---
+
+## Шаг 3. Проверка
+
+1. `https://<твой-сервис>.onrender.com/api/health` → должен вернуть `{"status":"ok","mode":"production",...}`.
+2. Открой бота @get_fitbot в Telegram → команда `/start` → кнопка **«Открыть GetFit Мини-апп»**.
+3. Внизу слева в приложении — индикатор `✓ в облаке`. Это значит, что данные сохраняются на сервере.
+4. Проверь синхронизацию: измени что-нибудь, закрой и открой приложение снова (или с другого устройства) — изменения на месте.
+
+---
+
+## Как работают зарубы с друзьями
+
+1. Оба должны запустить бота (нажать `/start`) — иначе бот не сможет прислать приглашение.
+2. Ты: **Зарубы → Кинуть пари** → выбираешь друга, цель и штраф → **Создать**.
+3. Появится панель со ссылкой вида `https://t.me/get_fitbot?startapp=XXXXXXXX` → кнопка **«Отправить в Telegram»**.
+4. Друг открывает ссылку → приложение открывается и **автоматически принимает зарубу**.
+5. Оба видят один и тот же прогресс; при достижении цели победитель определяется автоматически, сопернику приходит уведомление от бота.
+
+---
+
+## Локальная разработка
+
 ```bash
-TELEGRAM_BOT_TOKEN=1234567890:AAF...  # твой токен из @BotFather
-GROQ_API_KEY=gsk_...  # получи бесплатно на https://console.groq.com
-GEMINI_API_KEY=...  # опционально, https://aistudio.google.com
-APP_URL=https://твой-домен.com  # будет после деплоя
+npm install
+npm run dev          # http://localhost:3000, вход без Telegram разрешён
 ```
 
-### 3. Получи Groq API Key (БЕСПЛАТНО)
-1. Иди на https://console.groq.com
-2. Зарегистрируйся
-3. Создай API key в разделе "API Keys"
-4. Копируй в `.env`
+- В дев-режиме бот работает через long polling (webhook для localhost невозможен).
+- Если вписать `DATABASE_URL` в `.env`, локальная версия будет работать с той же базой. Без него данные пишутся в `data/cloud_db.json` — это только для разработки, на Render файлы не сохраняются.
+- Проверки перед коммитом:
 
-**Почему Groq?**
-- 🔥 Бесплатно (Llama 3.3 70B)
-- ⚡ Быстро (<500ms ответ)
-- 🎯 Отлично понимает JSON
-- 📈 Лимиты: 30 запросов/мин, 14k токенов/запрос
-
-### 4. Запусти локально для тестов
 ```bash
-npm run dev
+npm run lint         # типы
+npm run test:client  # логика входа и синхронизации (12 проверок)
+npm run test:smoke   # API: авторизация, зарубы, хранилище (26 проверок, нужен запущенный сервер)
 ```
-
-Открой http://localhost:3000 в браузере
-
-### 5. Задеплой на Railway (БЕСПЛАТНО)
-
-#### Вариант A: Railway App
-1. Зайди на https://railway.app
-2. "New Project" → "Deploy from GitHub repo"
-3. Выбери свой репозиторий
-4. В Settings → Variables добавь все переменные из `.env`
-5. Deploy!
-
-#### Вариант B: Vercel + Supabase
-1. **Frontend на Vercel:**
-   - `vercel deploy --prod`
-   
-2. **База данных на Supabase:**
-   - Создай проект на https://supabase.com
-   - Получи URL и ключ в Settings → API
-   - Добавь в переменные окружения
-
-### 6. Подключи к Telegram
-
-1. Открой @BotFather
-2. Отправь `/mybots` → выбери своего бота
-3. Bot Settings → Menu Button → Configure Menu Button
-4. Отправь ссылку на приложение (из Railway/Vercel)
-5. Дай название кнопке "🏋️ Открыть GetFit"
-
-**ИЛИ через WebApp URL:**
-```
-https://t.me/твой_бот?startapp=getfit
-```
-
-### 7. Проверь работу
-1. Открой своего бота в Telegram
-2. Нажми кнопку меню или отправь `/start`
-3. Мини-апп должен открыться внутри Telegram!
 
 ---
 
-## 📊 Функционал приложения
+## Обслуживание
 
-### ✅ Уже реализовано:
-- **Тренировки**: План, логирование, 1ПМ калькулятор
-- **ИИ-тренер**: Анализ в реальном времени (Groq/Gemini)
-- **Нормативы**: WRPF, WSF, Минспорт
-- **Зарубы**: Friend Battles с прогрессом
-- **Дисциплина**: Штрафы, стрики, марафоны
-- **Питание**: Калории, БЖУ, продукты
-- **Сон**: Трекинг, качество, восстановление
-- **Лаборатория**: N=1 эксперименты, корреляции
-- **Периодизация**: Training Blocks (циклы)
-- **Кастомные метрики**: Любые показатели
-- **Telegram интеграция**: Auth, уведомления, бот
+**Обновить приложение:** закоммить и запушь в `main` — Render пересоберёт и перезапустит сервис автоматически (`autoDeploy: true`).
 
-### 🔧 Что добавить для максимальной гибкости:
+**Логи:** Render → сервис → **Logs**. Полезные строки: `[storage] режим: postgres`, `[telegram] webhook установлен`, `[auth] вход: tg:...`.
 
-#### 1. Периодизация и циклы (Training Blocks)
-**Что это:** Группировка тренировок в макро-/микроциклы
-- **Макроцикл**: 3 месяца "Набор массы"
-- **Микроцикл**: 1 неделя с конкретными задачами
-- **Автопрогрессия**: Увеличение весов по формуле
+**Сменить токен бота** (например, после утечки):
+1. @BotFather → `/revoke` → получишь новый токен.
+2. Render → Environment → обнови `TELEGRAM_BOT_TOKEN` → сохранить (сервис перезапустится и переустановит webhook).
+3. ⚠️ При смене токена `SESSION_SECRET`, выведенный из него, изменится — все пользователи перелогинятся автоматически, данные не потеряются.
 
-**Как работает:**
-```typescript
-interface TrainingBlock {
-  type: 'hypertrophy' | 'strength' | 'deload';
-  startDate: string;
-  endDate: string;
-  goals: ["+5кг к жиму", "+2кг к весу тела"];
-  targetRpeRange: [7, 9];
-  workouts: WorkoutRecord[];
-}
-```
-
-#### 2. Восстановление и Readiness
-**HRV (вариабельность сердечного ритма):**
-- Интеграция с Apple Health / Google Fit
-- Утренний замер через камеру телефона
-- Корреляция с результатами тренировок
-
-**RPE/RIR авто-расчет:**
-- RPE (Rate of Perceived Exertion): 1-10 шкала усилия
-- RIR (Reps in Reserve): сколько осталось в запасе
-- Автоматическая рекомендация: "Снизь вес на 5%"
-
-#### 3. Аналитика и корреляции
-**Примеры вопросов:**
-- "Какой сон влияет на 1ПМ в жиме?"
-- "Креатин vs прогресс в приседе"
-- "Стресс на работе vs результаты в тяге"
-
-**Визуализация:**
-- Scatter plot: Сон (часы) → 1ПМ (кг)
-- Heatmap: Дни недели → Средний тоннаж
-- Timeline: Эксперимент → Динамика метрик
-
-#### 4. Социальные фичи
-**Лента достижений:**
-```typescript
-interface CommunityPost {
-  authorName: string;
-  type: 'record' | 'workout_plan' | 'complex';
-  recordValue: "150кг × 3";
-  likes: number;
-  clones: number; // сколько скопировали программу
-}
-```
-
-**Публичные рекорды:**
-- Топ-10 по жиму/приседу/тяге
-- Фильтр по весовым категориям
-- Верификация по видео
-
-#### 5. Экспорт/Импорт данных
-**CSV экспорт:**
-```csv
-date,exercise,weight,reps,rpe,1RM
-2025-01-15,Жим лежа,100,8,8,126
-2025-01-15,Присед,140,5,9,168
-```
-
-**Google Sheets синхронизация:**
-- Google Apps Script webhook
-- Авто-обновление при каждой тренировке
-- Сводные таблицы и графики
-
-**Backup в облако:**
-- JSON дамп всех данных
-- Restore одной кнопкой
-- Share программой с другом (ссылка)
-
-#### 6. Умные уведомления
-**Telegram Push:**
-- "⏰ Пора на тренировку! (День ног)"
-- "😴 Недосып: снизь интенсивность на 10%"
-- "🔥 Через 3 дня рекорд в жиме!"
-- "📉 Разгрузка нужна: высокий fatigue"
-
-**Триггеры:**
-- Время суток (scheduled)
-- Пропуск тренировки (missed)
-- Новый рекорд (achievement)
-- Окончание эксперимента (analysis ready)
-
----
-
-## 🗄️ База данных: варианты
-
-### Вариант 1: Google Sheets (БЕСПЛАТНО, просто)
-**Плюсы:**
-- ✅ Полностью бесплатно
-- ✅ Видишь данные глазами
-- ✅ Легко экспортировать
-- ✅ Нет лимитов на запись
-
-**Минусы:**
-- ❌ Медленнее чем SQL (~1-2 сек)
-- ❌ Нет реляционных связей
-- ❌ Ручная настройка Apps Script
-
-**Настройка:**
-1. Создай Google Sheet
-2. Tools → Script Editor
-3. Вставь код вебхука (см. `googleAppsScript.js`)
-4. Deploy → Web App → Anyone with link
-5. Копируй URL в `GOOGLE_APPS_SCRIPT_URL`
-
-### Вариант 2: Supabase (PostgreSQL, 500MB бесплатно)
-**Плюсы:**
-- ✅ Настоящая SQL база
-- ✅ Real-time подписки
-- ✅ REST API из коробки
-- ✅ 500MB бесплатно навсегда
-
-**Минусы:**
-- ❌ Нужно учить SQL
-- ❌ Лимит 500MB (~1M записей)
-
-**Схема таблиц:**
-```sql
-CREATE TABLE users (
-  telegram_id BIGINT PRIMARY KEY,
-  name TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE workouts (
-  id UUID DEFAULT gen_random_uuid(),
-  user_id BIGINT REFERENCES users(telegram_id),
-  title TEXT,
-  started_at TIMESTAMPTZ,
-  duration_minutes INT,
-  total_tonnage NUMERIC
-);
-
-CREATE TABLE experiments (
-  id UUID DEFAULT gen_random_uuid(),
-  user_id BIGINT REFERENCES users(telegram_id),
-  title TEXT,
-  hypothesis TEXT,
-  status TEXT CHECK (status IN ('active', 'completed', 'paused'))
-);
-```
-
-### Вариант 3: PlanetScale (MySQL, 5GB бесплатно)
-**Плюсы:**
-- ✅ 5GB бесплатно
-- ✅ Ветвление схем (branching)
-- ✅ Быстрые миграции
-
-**Минусы:**
-- ❌ Нет бесплатного tier после марта 2024 (только trial)
-
-### Рекомендация:
-**Для себя и пары друзей:** Google Sheets достаточно
-**Для публичного релиза:** Supabase + Railway
-
----
-
-## 🤖 ИИ API: сравнение
-
-| Провайдер | Модель | Бесплатно | Скорость | Качество | Лимиты |
-|-----------|--------|-----------|----------|----------|--------|
-| **Groq** | Llama 3.3 70B | ✅ Да | ⚡ <500ms | 🎯 9/10 | 30/min |
-| **Gemini** | 2.5 Flash | ✅ Да | 🐌 2-5сек | 🎯 8/10 | 15/min |
-| **Ollama** | Llama 3.1 | ✅ Локально | ⚡ <1сек | 🎯 8/10 | ∞ |
-| **OpenAI** | GPT-4o-mini | ❌ $0.15/1M | ⚡ <1сек | 🎯 10/10 | Платно |
-
-**Рекомендация:**
-1. **Основной:** Groq (быстро, бесплатно, качественно)
-2. **Фолбэк:** Gemini (если Groq упал)
-3. **Локально:** Ollama для дебага
-
----
-
-## 📱 Как открыть в Telegram прямо сейчас
-
-### Метод 1: ngrok туннель (для тестов)
+**Проверить webhook вручную:**
 ```bash
-# Установи ngrok
-npm install -g ngrok
-
-# Запусти сервер
-npm run dev
-
-# Открой туннель
-ngrok http 3000
+curl "https://api.telegram.org/bot<ТОКЕН>/getWebhookInfo"
 ```
 
-Копируй HTTPS URL из ngrok → вставь в @BotFather как Web App URL
+---
 
-### Метод 2: Railway деплой (навсегда)
-1. Fork этот репозиторий
-2. Deploy на Railway
-3. Копируй домен типа `your-app.railway.app`
-4. Вставь в @BotFather
+## Ограничения бесплатных тарифов (честно)
+
+| Ограничение | Последствие | Что делать |
+|---|---|---|
+| Render free засыпает после 15 мин простоя | Первое открытие после паузы — до ~1 минуты | Принять, либо внешний пингер каждые 10 мин, либо платный Starter ($7) |
+| Render free: диск эфемерный | Данные на диске не переживают рестарт | Именно поэтому всё хранится в Supabase |
+| Supabase free засыпает после 7 дней без запросов | Приложение не откроется, пока не разбудишь проект | Пользоваться хотя бы раз в неделю |
+| Groq free: лимиты на запросы | ИИ-ответы могут быть недоступны в пик | В коде есть резерв (Gemini) и упрощённый офлайн-разбор |
+| 750 часов Render free в месяц | На один сервис хватает с запасом | — |
 
 ---
 
-## 🆘 Troubleshooting
+## Если что-то не работает
 
-**"Init data invalid"**
-- Проверь что TELEGRAM_BOT_TOKEN правильный
-- Убедись что открываешь через своего бота
-
-**"AI не отвечает"**
-- Проверь GROQ_API_KEY в .env
-- Посмотри логи: `railway logs` или `docker logs`
-
-**"Данные не сохраняются"**
-- Проверь права записи в папку `data/`
-- Для Google Sheets: проверь что Apps Script deployed как Web App
+| Симптом | Причина | Решение |
+|---|---|---|
+| `Application failed to respond` / долгая загрузка | Сервис спал | Подожди минуту и обнови |
+| В приложении `⚠ только на устройстве` | Не прошла авторизация | Открой приложение именно из Telegram; проверь `TELEGRAM_BOT_TOKEN` в Render |
+| `401 unauthorized` в логах | Устаревшая сессия | Закрой и открой Mini App заново |
+| Сервис падает при старте, в логах `[storage] Postgres недоступен` | Неверный `DATABASE_URL` или взят Direct вместо Session pooler | Возьми строку Session pooler (порт 5432) |
+| Бот не отвечает на `/start` | Webhook не установлен | Проверь, что `APP_URL` совпадает с фактическим адресом сервиса, и перезапусти сервис |
+| ИИ отвечает шаблонными фразами | Не задан/просрочен ключ Groq | Проверь `GROQ_API_KEY` и лог `[AI Engine] Groq response error` |
+| Друг не получил приглашение | Он не запускал бота | Попроси нажать `/start` в @get_fitbot |
 
 ---
 
-## 📚 Дополнительные ресурсы
+## Ссылки
 
-- [Telegram WebApp Docs](https://core.telegram.org/bots/webapps)
-- [Groq API Docs](https://console.groq.com/docs)
-- [Supabase Docs](https://supabase.com/docs)
-- [Railway Deploy Guide](https://docs.railway.app/deploy)
+- [Render Blueprint](https://render.com/docs/blueprint-spec) · [Free tier](https://render.com/docs/free) · [Persistent disks](https://render.com/docs/disks)
+- [Supabase: пауза бесплатных проектов](https://supabase.com/docs/guides/platform/free-project-pausing)
+- [Telegram Mini Apps: документация](https://core.telegram.org/bots/webapps)
+- [Проверка initData](https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app)

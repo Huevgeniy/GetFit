@@ -1,5 +1,6 @@
 import React from 'react';
 import { Dumbbell, Utensils, LineChart, FlaskConical, Award, ShieldCheck, User, Layers } from 'lucide-react';
+import { hapticSelect } from '../lib/telegram';
 
 export type NavTab = 'workouts' | 'nutrition' | 'charts' | 'lab' | 'periodization' | 'ranks' | 'discipline' | 'profile' | 'battles';
 
@@ -40,7 +41,10 @@ export const Navigation: React.FC<NavigationProps> = ({
             <button
               key={tab.id}
               id={`tour-tab-${tab.id}`}
-              onClick={() => onChangeTab(tab.id)}
+              onClick={() => {
+                if (currentTab !== tab.id) hapticSelect();
+                onChangeTab(tab.id);
+              }}
               className={`relative flex flex-col items-center justify-center py-1 px-1.5 rounded-xl transition-all duration-150 min-w-[46px] ${
                 isActive
                   ? 'text-emerald-400 font-medium'

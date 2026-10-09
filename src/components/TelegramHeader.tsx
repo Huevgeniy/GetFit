@@ -13,6 +13,7 @@ interface TelegramHeaderProps {
   onProfileClick?: () => void;
   onOpenAiSettings?: () => void;
   onOpenTutorial?: () => void;
+  onCloseApp?: () => void;
 }
 
 export const TelegramHeader: React.FC<TelegramHeaderProps> = ({
@@ -26,6 +27,7 @@ export const TelegramHeader: React.FC<TelegramHeaderProps> = ({
   onProfileClick,
   onOpenAiSettings,
   onOpenTutorial,
+  onCloseApp,
 }) => {
   const userName = user?.name && user.name.trim().length > 0 ? user.name : 'Атлет';
   const userInitial = userName.charAt(0).toUpperCase() || 'A';
@@ -55,8 +57,9 @@ export const TelegramHeader: React.FC<TelegramHeaderProps> = ({
           </button>
           <button 
             type="button"
+            onClick={onCloseApp}
             className="text-slate-400 hover:text-slate-200 transition-colors p-1"
-            title="Закрыть"
+            title="Закрыть приложение"
           >
             <X className="w-3.5 h-3.5" />
           </button>

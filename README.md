@@ -1,20 +1,63 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# 🏋️ GetFitBot
 
-# Run and deploy your AI Studio app
+Telegram Mini App для учёта тренировок, питания и сна: 1ПМ-калькулятор, спортивные разряды, ИИ-тренер, зарубы с друзьями.
 
-This contains everything you need to run your app locally.
+**Стек:** React 19 + Vite + Tailwind (клиент) · Express + TypeScript (сервер) · Postgres/Supabase · Groq + Gemini (ИИ) · Telegram Bot API.
 
-View your app in AI Studio: https://ai.studio/apps/63be5a75-472f-48f6-b40f-4ed42364f5ed
+## Быстрый старт
 
-## Run Locally
+```bash
+npm install
+npm run dev      # http://localhost:3000
+```
 
-**Prerequisites:**  Node.js
+В дев-режиме вход без Telegram разрешён: создаётся локальная сессия `dev:<id>`.
+Данные пишутся в `data/cloud_db.json`, пока не задан `DATABASE_URL`.
 
+## Переменные окружения
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Скопируй `.env.example` в `.env`:
+
+| Переменная | Зачем |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | бот, проверка initData, уведомления |
+| `GROQ_API_KEY` | основной ИИ-провайдер (бесплатный) |
+| `GEMINI_API_KEY` | резервный ИИ-провайдер (недоступен из РФ) |
+| `APP_URL` | публичный адрес Mini App (для webhook и ссылок-приглашений) |
+| `DATABASE_URL` | Postgres/Supabase. Без него — локальный JSON-файл |
+| `SESSION_SECRET` | подпись сессий (если пусто — выводится из токена бота) |
+| `TELEGRAM_WEBHOOK_SECRET` | проверка, что webhook зовёт именно Telegram |
+| `GROQ_MODEL` / `GEMINI_MODEL` | переопределение модели (по умолчанию `qwen/qwen3.8-27b`, `gemini-flash-latest`) |
+
+## Команды
+
+```bash
+npm run dev          # сервер разработки (Vite middleware + бот на polling)
+npm run build        # сборка клиента и сервера в dist/
+npm start            # прод-запуск из dist/
+npm run lint         # проверка типов (tsc --noEmit)
+npm run test:client  # логика входа и синхронизации — 12 проверок, без сервера
+npm run test:smoke   # API целиком — 26 проверок, нужен запущенный сервер
+```
+
+## Архитектура
+
+```
+src/                 клиент
+  lib/api.ts         сессия по Telegram initData, авторизованные запросы, облачная синхронизация
+  lib/telegram.ts    обёртка WebApp SDK: тема, safe-area, haptics, кнопка «Назад», шаринг
+  components/        экраны и модалки
+server.ts            HTTP API, ИИ-слой, бот
+server/auth.ts       проверка initData (HMAC + срок жизни), сессионные токены
+server/storage.ts    Postgres с миграциями, JSON-файл как fallback для локалки
+scripts/             сквозные тесты
+```
+
+**Безопасность.** Все `/api/*`, кроме `health`, `auth` и `webhook`, требуют сессию.
+Идентификатор пользователя берётся только из подписанного токена — подставить чужой нельзя.
+`initData` проверяется по HMAC-SHA256 с контролем `auth_date`, сравнение — timing-safe.
+На ИИ-эндпоинты стоит лимит 40 запросов / 5 минут на пользователя.
+
+## Деплой
+
+Полная пошаговая инструкция — [DEPLOY_GUIDE.md](DEPLOY_GUIDE.md): Supabase + Render Blueprint, бесплатные тарифы, диагностика.
