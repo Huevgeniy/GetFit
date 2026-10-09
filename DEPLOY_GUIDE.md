@@ -141,8 +141,9 @@ npm run lint         # типы
 npm run test:client  # логика входа и синхронизации (13 проверок)
 npm run test:pg      # Postgres-ветка хранилища на in-memory Postgres (21 проверка)
 npm run test:css     # сборка Tailwind v4 из src/index.css (15 проверок)
+npm run test:render  # рендер приложения и всех экранов (24 проверки)
 npm run test:notify  # логика напоминаний (17 проверок)
-npm run test:smoke   # API целиком: авторизация, зарубы, хранилище (29 проверок)
+npm run test:smoke   # API целиком: авторизация, зарубы, хранилище (38 проверок)
 ```
 
 Для полного прогона smoke-теста запусти сервер с секретом планировщика:

@@ -60,6 +60,32 @@ check('GET /api/db/sync вернул те же данные', load.json?.found =
 const loadB = await call('/api/db/sync', { token: B });
 check('данные A не видны пользователю B', loadB.json?.found === false, JSON.stringify(loadB.json));
 
+// 6b. Полный блоб клиента (все 10 ключей) переживает запись и чтение без потерь
+const fullBlob = {
+  user: { id: 'user_local', name: 'Алиса', telegramUsername: '@alice', currentWeight: 63.5, disciplineScore: 92, streakDays: 7, selectedDisciplines: ['powerlifting', 'streetlifting'], inBodyRecords: [{ id: 'ib1', date: '2026-03-01', weightKg: 63.5, bodyFatPercent: 18.2 }] },
+  workoutPlans: [{ id: 'p1', title: 'День ног', scheduledDay: 'Вторник', exercises: [{ id: 'e1', name: 'Присед', targetSets: 5, targetReps: 5, targetWeight: 100, restMinutes: 3 }], status: 'scheduled' }],
+  pastWorkouts: [{ id: 'w1', title: 'Жим', startedAt: '2026-03-09T15:00:00.000Z', durationMinutes: 62, totalTonnageKg: 5400, status: 'completed', exercises: [{ exerciseId: 'e2', name: 'Жим лёжа', sets: [{ setNumber: 1, weight: 105, reps: 8, rpe: 8.5, timestamp: '2026-03-09T15:20:00.000Z', calculated1RM: 133, normalizedRepsAt100kg: 8.4 }] }] }],
+  penalties: [{ id: 'pen1', date: '2026-03-08', reason: 'Пропуск', penaltyTask: '50 бурпи', pointsDeducted: 5, status: 'pending' }],
+  achievements: [{ id: 'ach1', title: 'Первая сотка', description: 'Жим 100 кг', unlockedAt: '2026-02-20', icon: '🏆' }],
+  dailyNutritionRecords: [{ id: 'n1', date: '2026-03-09', totalCalories: 2650, protein: 180, fats: 80, carbs: 260, meals: [{ id: 'm1', name: 'Овсянка', calories: 420 }] }],
+  sleepRecords: [{ id: 's1', date: '2026-03-09', durationHours: 7.5, qualityScore: 8, deepSleepMinutes: 95, remSleepMinutes: 110, restingHeartRate: 54 }],
+  customFoods: [{ id: 'f1', name: 'Творог 5%', calories: 121, protein: 17, fats: 5, carbs: 3, per: 100 }],
+  personalRecords: [{ id: 'pr1', exerciseName: 'Жим лёжа', value: '105 кг × 8', date: '2026-03-09', history: [{ id: 'h1', date: '9 мар', value: '105 кг × 8' }] }],
+  customTemplates: [{ id: 't1', title: 'Спина+бицепс', scheduledDay: 'Пятница', exercises: [], isCustomTemplate: true }],
+};
+const fullSave = await call('/api/db/sync', { method: 'POST', token: A, body: fullBlob });
+check('полный блоб сохранён', fullSave.status === 200 && fullSave.json?.success === true);
+const fullLoad = await call('/api/db/sync', { token: A });
+const restored = fullLoad.json?.data || {};
+const missingKeys = Object.keys(fullBlob).filter((key) => !(key in restored));
+check('все 10 ключей состояния вернулись', missingKeys.length === 0, missingKeys.length ? `потеряны: ${missingKeys.join(', ')}` : '');
+const mismatched = Object.keys(fullBlob).filter(
+  (key) => JSON.stringify(restored[key]) !== JSON.stringify(fullBlob[key]),
+);
+check('содержимое совпадает побайтово (вложенные объекты и массивы)', mismatched.length === 0, mismatched.join(', '));
+check('вложенные числа не превратились в строки', restored.user?.currentWeight === 63.5 && restored.pastWorkouts?.[0]?.exercises?.[0]?.sets?.[0]?.rpe === 8.5);
+check('кириллица не побилась', restored.penalties?.[0]?.penaltyTask === '50 бурпи' && restored.personalRecords?.[0]?.value === '105 кг × 8');
+
 // 7. Заруба: создаёт A, присоединяется B
 const created = await call('/api/battles/create', {
   method: 'POST', token: A,
