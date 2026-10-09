@@ -36,8 +36,11 @@ npm run dev          # сервер разработки (Vite middleware + бо
 npm run build        # сборка клиента и сервера в dist/
 npm start            # прод-запуск из dist/
 npm run lint         # проверка типов (tsc --noEmit)
+npm run doctor       # проверка окружения перед деплоем: токен, ключи, APP_URL, база
 npm run test:client  # логика входа и синхронизации — 12 проверок, без сервера
-npm run test:smoke   # API целиком — 26 проверок, нужен запущенный сервер
+npm run test:pg      # Postgres-ветка хранилища на in-memory Postgres — 21 проверка
+npm run test:notify  # логика напоминаний — 17 проверок
+npm run test:smoke   # API целиком — 29 проверок, нужен запущенный сервер
 ```
 
 ## Архитектура
