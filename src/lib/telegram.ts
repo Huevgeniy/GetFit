@@ -65,12 +65,8 @@ export function applyTelegramUi(): void {
     if (tg.isVersionAtLeast?.('7.7')) tg.disableVerticalSwipes?.();
   } catch { /* ignore */ }
 
-  try {
-    // Полноэкранный режим доступен только на новых клиентах
-    if (tg.isVersionAtLeast?.('8.0') && tg.requestFullscreen && !tg.isFullscreen) {
-      tg.requestFullscreen();
-    }
-  } catch { /* ignore */ }
+  // Полноэкранный режим намеренно не включаем: у приложения своя шапка,
+  // а в fullscreen меняются safe-area и высота вьюпорта.
 
   const syncViewport = () => {
     const height = tg.viewportStableHeight || tg.viewportHeight || window.innerHeight;
