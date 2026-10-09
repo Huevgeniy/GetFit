@@ -21,6 +21,7 @@ import {
   createBattle,
   ensureSession,
   fetchBattles,
+  fetchMe,
   joinBattle,
   loadCloudState,
   saveCloudState,
@@ -250,6 +251,7 @@ export default function App() {
 
   /* ---------------- Синхронизация с облаком ---------------- */
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'offline' | 'local'>('idle');
+  const [storageMode, setStorageMode] = useState<'postgres' | 'file' | null>(null);
   const [battleNotice, setBattleNotice] = useState<{ text: string; link?: string } | null>(null);
   const hydratedRef = useRef(false);
   const skipSaveRef = useRef(false);
@@ -281,6 +283,10 @@ export default function App() {
       }
 
       setSyncStatus('syncing');
+      // Узнаём, куда сервер пишет данные: без Postgres они не переживут деплой
+      const me = await fetchMe();
+      if (!cancelled && me?.storage) setStorageMode(me.storage);
+
       const cloud = await loadCloudState();
       if (cancelled) return;
       const data = cloud?.found ? cloud.data : null;
@@ -342,15 +348,25 @@ export default function App() {
     customTemplates,
   ]);
 
-  // Приглашение в зарубу: приложение открыли по deep-link ?startapp=<код>
+  // Приглашение в зарубу: приложение открыли по ссылке ?startapp=<код>
   useEffect(() => {
     const startParam = getStartParam();
     if (!startParam || !/^[A-Za-z0-9_-]{6,32}$/.test(startParam)) return;
+    // Telegram открывает приложение с тем же параметром при каждом заходе —
+    // обрабатываем код один раз, чтобы не повторять уведомление и запрос
+    const processedKey = 'getfit_processed_start_param';
+    try {
+      if (localStorage.getItem(processedKey) === startParam) return;
+    } catch { /* ignore */ }
+
     (async () => {
       const session = await ensureSession();
       if (!session.authorized) return;
       const res = await joinBattle(startParam);
-      if (res?.battle) {
+      try {
+        localStorage.setItem(processedKey, startParam);
+      } catch { /* ignore */ }
+      if (res?.battle && !res.alreadyMember) {
         setBattles(prev => [res.battle, ...prev.filter(b => b.id !== res.battle.id)]);
         hapticNotify('success');
         setCurrentTab('battles');
@@ -907,21 +923,29 @@ export default function App() {
         {syncStatus !== 'idle' && (
           <div
             className={`fixed bottom-[74px] left-4 z-30 px-2 py-1 rounded-lg border text-[10px] font-mono backdrop-blur-sm pointer-events-none ${
-              syncStatus === 'synced'
-                ? 'border-emerald-500/40 bg-emerald-950/70 text-emerald-300'
-                : syncStatus === 'syncing'
-                  ? 'border-sky-500/40 bg-sky-950/70 text-sky-300'
-                  : 'border-amber-500/40 bg-amber-950/70 text-amber-300'
+              storageMode === 'file'
+                ? 'border-amber-500/60 bg-amber-950/80 text-amber-300'
+                : syncStatus === 'synced'
+                  ? 'border-emerald-500/40 bg-emerald-950/70 text-emerald-300'
+                  : syncStatus === 'syncing'
+                    ? 'border-sky-500/40 bg-sky-950/70 text-sky-300'
+                    : 'border-amber-500/40 bg-amber-950/70 text-amber-300'
             }`}
-            title="Состояние синхронизации с облаком"
+            title={
+              storageMode === 'file'
+                ? 'Сервер работает без базы данных: данные исчезнут при перезапуске. Подключи DATABASE_URL (Supabase)'
+                : 'Состояние синхронизации с облаком'
+            }
           >
-            {syncStatus === 'synced'
-              ? '✓ в облаке'
-              : syncStatus === 'syncing'
-                ? '☁ синхронизация…'
-                : syncStatus === 'local'
-                  ? '⚠ только на устройстве'
-                  : '⚠ нет связи'}
+            {storageMode === 'file'
+              ? '⚠ без базы данных'
+              : syncStatus === 'synced'
+                ? '✓ в облаке'
+                : syncStatus === 'syncing'
+                  ? '☁ синхронизация…'
+                  : syncStatus === 'local'
+                    ? '⚠ только на устройстве'
+                    : '⚠ нет связи'}
           </div>
         )}
 

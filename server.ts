@@ -396,8 +396,15 @@ const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'get_fitbot';
 /** Публичный адрес Mini App (Render домен). Без него бот не сможет открыть приложение. */
 const PUBLIC_APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
 
+/**
+ * Ссылка-приглашение идёт через чат с ботом (`?start=<код>`), а не через
+ * `?startapp=`: прямые ссылки startapp открывают приложение только если в
+ * BotFather настроен Main Mini App (у бота сейчас has_main_web_app = false).
+ * Ссылка `?start=` работает всегда: бот получает /start <код> и в ответ
+ * присылает кнопку открытия Mini App с этим кодом.
+ */
 function battleInviteLink(inviteCode: string): string {
-  return `https://t.me/${BOT_USERNAME}?startapp=${inviteCode}`;
+  return `https://t.me/${BOT_USERNAME}?start=${inviteCode}`;
 }
 
 /** Личное сообщение пользователю (userId формата `tg:<telegram_id>`). */
@@ -1766,12 +1773,35 @@ async function handleTelegramUpdate(token: string, update: any) {
 
 let isPollingStarted = false;
 
+/** Проверяем, что публичный адрес действительно обслуживается нашим сервером. */
+async function isPublicUrlReachable(): Promise<boolean> {
+  try {
+    const res = await fetch(`${PUBLIC_APP_URL}/api/health`, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return false;
+    const data = (await res.json()) as any;
+    return data?.status === 'ok';
+  } catch {
+    return false;
+  }
+}
+
 /** Регистрируем webhook — единственный рабочий вариант для Render (сервис засыпает, polling умирает). */
 async function registerTelegramWebhook(token: string): Promise<void> {
   if (!PUBLIC_APP_URL) {
     console.warn('[telegram] APP_URL не задан — webhook и кнопка Mini App не настроены.');
     return;
   }
+
+  // Без этой проверки опечатка в APP_URL уводит бота на нерабочий адрес,
+  // и он перестаёт отвечать вообще.
+  if (!(await isPublicUrlReachable())) {
+    console.error(
+      `[telegram] ${PUBLIC_APP_URL}/api/health не отвечает — webhook НЕ установлен, ` +
+        `чтобы не сломать бота. Проверь APP_URL в переменных окружения.`,
+    );
+    return;
+  }
+
   const url = `${PUBLIC_APP_URL}/api/telegram/webhook`;
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
   try {
@@ -1822,6 +1852,13 @@ async function initTelegramBot() {
     if (data.ok) {
       telegramBotInfo = data.result;
       console.log(`Telegram Bot @${telegramBotInfo?.username} (${telegramBotInfo?.first_name}) ready.`);
+      if (!data.result.has_main_web_app) {
+        console.log(
+          '[telegram] Main Mini App не настроен: прямые ссылки t.me/<bot>?startapp= не откроют приложение. ' +
+            'Приглашения в зарубы работают через t.me/<bot>?start=<код>. ' +
+            'Чтобы включить прямые ссылки: @BotFather → Bot Settings → Configure Mini App.',
+        );
+      }
 
       // Set command menu
       try {

@@ -141,6 +141,11 @@ export interface CloudStateResponse {
   updatedAt?: string;
 }
 
+/** Кто мы для сервера и куда он пишет данные (postgres | file). */
+export async function fetchMe(): Promise<{ userId: string; storage: 'postgres' | 'file' } | null> {
+  return apiJson<{ userId: string; storage: 'postgres' | 'file' }>('/api/me');
+}
+
 export async function loadCloudState(): Promise<CloudStateResponse | null> {
   return apiJson<CloudStateResponse>('/api/db/sync');
 }

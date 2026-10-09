@@ -60,6 +60,9 @@ globalThis.fetch = async (url, init = {}) => {
     forceUnauthorizedOnce = false;
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 });
   }
+  if (String(url) === '/api/me') {
+    return new Response(JSON.stringify({ userId: 'dev:test', storage: 'postgres' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
   return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 };
 
@@ -94,7 +97,12 @@ check('в теле есть данные пользователя', /Тест/.t
 await api.loadCloudState();
 check('loadCloudState делает GET /api/db/sync', requests[1]?.url === '/api/db/sync' && requests[1]?.method === 'GET');
 
-// 5. При наличии initData Telegram используется он, а не devId
+// 5. Режим хранилища, о котором сообщает сервер
+requests.length = 0;
+const me = await api.fetchMe();
+check('fetchMe читает /api/me и режим хранилища', requests[0]?.url === '/api/me' && ['postgres', 'file'].includes(me?.storage), JSON.stringify(me));
+
+// 6. При наличии initData Telegram используется он, а не devId
 store.clear();
 delete require_.cache[require_.resolve(path.join(outDir, 'api.js'))];
 const api2 = require_(path.join(outDir, 'api.js'));

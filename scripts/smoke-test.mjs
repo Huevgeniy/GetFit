@@ -39,6 +39,14 @@ check('разные пользователи получили разные id', 
 const forged = await call('/api/me', { token: A.slice(0, -3) + 'xyz' });
 check('подделанный токен = 401', forged.status === 401, String(forged.status));
 
+// 4b. /api/me отдаёт пользователя и режим хранилища (клиент показывает это в UI)
+const meAuthed = await call('/api/me', { token: A });
+check(
+  '/api/me отдаёт пользователя и режим хранилища',
+  meAuthed.status === 200 && meAuthed.json?.userId === 'dev:alice' && ['postgres', 'file'].includes(meAuthed.json?.storage),
+  JSON.stringify(meAuthed.json),
+);
+
 // 5. Пустой initData в production-режиме отклоняется... но ALLOW_DEV_AUTH=true разрешает dev-вход
 const emptyInit = await call('/api/auth/telegram', { method: 'POST', body: {} });
 check('вход без initData даёт dev-сессию при ALLOW_DEV_AUTH', emptyInit.status === 200 && emptyInit.json.devMode === true);
@@ -60,7 +68,12 @@ const created = await call('/api/battles/create', {
 check('заруба создана', created.status === 200 && !!created.json.battle?.inviteCode, created.json?.battle?.inviteCode);
 const battleId = created.json.battle.id;
 const inviteCode = created.json.battle.inviteCode;
-check('ссылка-приглашение сформирована', /^https:\/\/t\.me\/.+\?startapp=/.test(created.json.battle.inviteLink || ''), created.json.battle.inviteLink);
+check(
+  'ссылка-приглашение ведёт в чат с ботом (?start=<код>)',
+  /^https:\/\/t\.me\/[A-Za-z0-9_]+\?start=[A-Za-z0-9_-]{6,32}$/.test(created.json.battle.inviteLink || '') &&
+    created.json.battle.inviteLink.endsWith(inviteCode),
+  created.json.battle.inviteLink,
+);
 check('создатель видит статус pending_friend', created.json.battle.status === 'pending_friend', created.json.battle.status);
 
 const badJoin = await call('/api/battles/join', { method: 'POST', token: B, body: { inviteCode: 'NOPE1234' } });
