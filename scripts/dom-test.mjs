@@ -51,6 +51,13 @@ const define = (name, value) => Object.defineProperty(globalThis, name, { value,
 
 globalThis.window = window;
 globalThis.document = window.document;
+
+/** jsdom не реализует clipboard — добавляем его настоящему Navigator (подмена прототипа ломает jsdom) */
+let clipboardText = '';
+Object.defineProperty(window.navigator, 'clipboard', {
+  value: { writeText: async (value) => { clipboardText = String(value); } },
+  configurable: true,
+});
 define('navigator', window.navigator);
 define('localStorage', window.localStorage);
 define('location', window.location);
@@ -212,10 +219,67 @@ if (testButton) {
   check('пользователю показан успешный результат', text().includes('Отправлено'), text().slice(-160));
 }
 
+// 4c. Резервная копия: экспорт в буфер и восстановление
+const exportButton = container.querySelector('#backup-export');
+check('в профиле есть кнопка создания копии', Boolean(exportButton));
+if (exportButton) {
+  await act(async () => {
+    exportButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  });
+  check('копия попала в буфер обмена', clipboardText.includes('GetFitBot') && clipboardText.includes('workoutPlans'), clipboardText.slice(0, 60));
+  check('в копии есть состояние пользователя', clipboardText.includes('@fromcloud'));
+  check('пользователю сообщили об успехе', text().includes('буфер'));
+}
+
+const importToggle = container.querySelector('#backup-import-toggle');
+check('есть кнопка восстановления', Boolean(importToggle));
+if (importToggle) {
+  await act(async () => {
+    importToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+  const area = container.querySelector('#backup-import-text');
+  check('открылось поле для вставки копии', Boolean(area));
+  if (area) {
+    const restored = JSON.stringify({
+      app: 'GetFitBot',
+      version: 1,
+      data: { user: { name: 'ИзКопии', telegramUsername: '@restored' }, workoutPlans: [{ id: 'p9', title: 'Восстановленный план', scheduledDay: 'Среда', exercises: [] }] },
+    });
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    await act(async () => {
+      setter.call(area, restored);
+      area.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    const applyButton = container.querySelector('#backup-import-apply');
+    check('кнопка применения доступна после вставки', Boolean(applyButton) && applyButton.disabled === false);
+    if (applyButton) {
+      await act(async () => {
+        applyButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      });
+      check('данные восстановлены из копии', text().includes('ИзКопии') && text().includes('@restored'), text().slice(0, 120));
+      check('показано подтверждение восстановления', text().includes('восстановлены'));
+    }
+  }
+}
+
 // 5. Ещё раз возвращаемся на тренировки — проверяем, что состояние не потерялось
 const backToWorkouts = await clickByText('Тренировки');
 check('возврат на «Тренировки» работает', backToWorkouts && !renderError);
-check('данные из облака остались в шапке', text().includes(CLOUD_USER) && text().includes('@fromcloud'));
+// Импорт заменил имя на «ИзКопии», но не затёр остальные поля из облака
+check(
+  'восстановленные данные и данные из облака сосуществуют',
+  text().includes('ИзКопии') && text().includes('@restored') && text().includes('77'),
+  text().slice(0, 140),
+);
 
 if (reactRoot) {
   await act(async () => {

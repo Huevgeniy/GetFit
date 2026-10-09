@@ -531,6 +531,66 @@ export default function App() {
     }
   };
 
+  /* ---------------- Резервная копия данных ---------------- */
+  const BACKUP_KEYS = [
+    'user',
+    'workoutPlans',
+    'pastWorkouts',
+    'penalties',
+    'achievements',
+    'dailyNutritionRecords',
+    'sleepRecords',
+    'customFoods',
+    'personalRecords',
+    'customTemplates',
+  ] as const;
+
+  /** Копирует полный слепок данных в буфер обмена (в WebView скачивание файла ненадёжно). */
+  const handleExportData = async (): Promise<{ ok: boolean; size?: number; error?: string }> => {
+    try {
+      const payload = {
+        app: 'GetFitBot',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        data: buildSyncBlob(),
+      };
+      const text = JSON.stringify(payload, null, 2);
+      const copied = await copyToClipboard(text);
+      if (!copied) return { ok: false, error: 'Не удалось скопировать — выдели текст вручную' };
+      return { ok: true, size: text.length };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Ошибка экспорта' };
+    }
+  };
+
+  /** Восстанавливает состояние из текста резервной копии. */
+  const handleImportData = (jsonStr: string): { success: boolean; error?: string } => {
+    try {
+      const parsed = JSON.parse(jsonStr);
+      const data = parsed?.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return { success: false, error: 'Это не резервная копия GetFit' };
+      }
+      if (!BACKUP_KEYS.some(key => key in data)) {
+        return { success: false, error: 'В данных нет ни одного раздела GetFit' };
+      }
+      if (data.user) setUser(prev => ({ ...prev, ...data.user }));
+      if (Array.isArray(data.workoutPlans)) setWorkoutPlans(data.workoutPlans);
+      if (Array.isArray(data.pastWorkouts)) setPastWorkouts(data.pastWorkouts);
+      if (Array.isArray(data.penalties)) setPenalties(data.penalties);
+      if (Array.isArray(data.achievements)) setAchievements(data.achievements);
+      if (Array.isArray(data.dailyNutritionRecords)) setDailyNutritionRecords(data.dailyNutritionRecords);
+      if (Array.isArray(data.sleepRecords)) setSleepRecords(data.sleepRecords);
+      if (Array.isArray(data.customFoods)) setCustomFoods(data.customFoods);
+      if (Array.isArray(data.personalRecords)) setPersonalRecords(data.personalRecords);
+      if (Array.isArray(data.customTemplates)) setCustomTemplates(data.customTemplates);
+      hapticNotify('success');
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: `Некорректный JSON: ${err?.message || ''}` };
+    }
+  };
+
   const handleSetTargetRank = (title: string, movementId: string, goalValue: number) => {
     setUser(prev => ({
       ...prev,
@@ -860,6 +920,8 @@ export default function App() {
                   onUpdatePersonalRecord={handleUpdatePersonalRecord}
                   onShareRecordToCommunity={handleShareRecordToCommunity}
                   onResetAllData={handleResetAllData}
+                  onExportData={handleExportData}
+                  onImportData={handleImportData}
                   battles={battles}
                   onAddBattle={handleAddBattle}
                   onUpdateBattleProgress={handleUpdateBattleProgress}

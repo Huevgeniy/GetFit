@@ -46,7 +46,7 @@ interface ProfileViewProps {
   onUpdatePersonalRecord: (recordId: string, newValue: string, notes?: string) => void;
   onShareRecordToCommunity: (record: PersonalRecord) => void;
   onResetAllData: () => void;
-  onExportData?: () => void;
+  onExportData?: () => Promise<{ ok: boolean; size?: number; error?: string }> | void;
   onImportData?: (jsonStr: string) => { success: boolean; error?: string };
   battles?: FriendBattle[];
   onAddBattle?: (battle: FriendBattle) => void;
@@ -100,6 +100,45 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     } else {
       hapticNotify('error');
       setNotifyTest({ status: 'error', message: result.error || 'Не удалось отправить сообщение' });
+    }
+  };
+
+  // Резервная копия: экспорт в буфер, восстановление из вставленного текста
+  const [backupState, setBackupState] = useState<{ status: 'idle' | 'busy' | 'ok' | 'error'; message?: string }>({
+    status: 'idle',
+  });
+  const [showImportArea, setShowImportArea] = useState(false);
+  const [importText, setImportText] = useState('');
+
+  const handleExportClick = async () => {
+    if (!onExportData) return;
+    setBackupState({ status: 'busy' });
+    hapticImpact('light');
+    const raw = await onExportData();
+    const result = (raw ?? null) as { ok: boolean; size?: number; error?: string } | null;
+    if (result?.ok) {
+      hapticNotify('success');
+      setBackupState({
+        status: 'ok',
+        message: `Копия скопирована в буфер (${Math.round((result.size || 0) / 1024)} КБ). Сохрани её в заметках.`,
+      });
+    } else {
+      hapticNotify('error');
+      setBackupState({ status: 'error', message: result?.error || 'Не удалось создать копию' });
+    }
+  };
+
+  const handleImportClick = () => {
+    if (!onImportData || !importText.trim()) return;
+    const result = onImportData(importText.trim());
+    if (result.success) {
+      hapticNotify('success');
+      setBackupState({ status: 'ok', message: 'Данные восстановлены из копии.' });
+      setImportText('');
+      setShowImportArea(false);
+    } else {
+      hapticNotify('error');
+      setBackupState({ status: 'error', message: result.error || 'Не удалось восстановить данные' });
     }
   };
 
@@ -624,6 +663,73 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             )}
             {notifyTest.status === 'error' && (
               <p className="text-[10px] text-amber-400 leading-snug">⚠️ {notifyTest.message}</p>
+            )}
+          </div>
+
+          {/* Резервная копия данных */}
+          <div className="bg-[#101820] border border-[#22303f] rounded-2xl p-3.5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Download className="w-4 h-4 text-cyan-400" />
+              <div>
+                <div className="text-xs font-bold text-slate-200">Резервная копия</div>
+                <div className="text-[10px] text-slate-400">
+                  Все данные приложения одним текстом — можно сохранить и восстановить
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                id="backup-export"
+                onClick={handleExportClick}
+                disabled={backupState.status === 'busy'}
+                className="flex-1 py-2 bg-[#141c24] hover:border-cyan-500/50 disabled:opacity-50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{backupState.status === 'busy' ? 'Готовлю…' : 'Скопировать копию'}</span>
+              </button>
+              <button
+                type="button"
+                id="backup-import-toggle"
+                onClick={() => {
+                  setShowImportArea((prev) => !prev);
+                  setBackupState({ status: 'idle' });
+                }}
+                className="flex-1 py-2 bg-[#141c24] hover:border-cyan-500/50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Восстановить</span>
+              </button>
+            </div>
+
+            {showImportArea && (
+              <div className="space-y-2">
+                <textarea
+                  id="backup-import-text"
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  placeholder="Вставь сюда текст резервной копии"
+                  rows={4}
+                  className="w-full bg-[#0b1016] border border-[#22303f] rounded-xl p-2 text-[10px] font-mono text-slate-300 focus:outline-none focus:border-cyan-500/50"
+                />
+                <button
+                  type="button"
+                  id="backup-import-apply"
+                  onClick={handleImportClick}
+                  disabled={!importText.trim()}
+                  className="w-full py-2 bg-cyan-500/20 hover:bg-cyan-500/30 disabled:opacity-50 border border-cyan-500/40 text-cyan-300 rounded-xl text-xs font-bold transition-colors"
+                >
+                  Применить копию
+                </button>
+              </div>
+            )}
+
+            {backupState.status === 'ok' && (
+              <p className="text-[10px] text-emerald-400 leading-snug">✅ {backupState.message}</p>
+            )}
+            {backupState.status === 'error' && (
+              <p className="text-[10px] text-amber-400 leading-snug">⚠️ {backupState.message}</p>
             )}
           </div>
 
