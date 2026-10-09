@@ -243,6 +243,12 @@ export interface FriendBattle {
     rewardWinner: string;
   };
   status: 'active' | 'user_won' | 'friend_won' | 'pending_friend';
+  /** Поля, которые добавляет сервер: заруба общая для двух участников. */
+  inviteCode?: string;
+  inviteLink?: string;
+  mySide?: 'creator' | 'opponent';
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface FriendBet {

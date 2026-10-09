@@ -26,6 +26,7 @@ import {
   Target
 } from 'lucide-react';
 import { Experiment, TrainingBlock, CustomMetric, UserProfile, WorkoutRecord } from '../types';
+import { apiFetch } from '../lib/api';
 
 interface ResearchLabViewProps {
   user: UserProfile;
@@ -214,7 +215,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
 
   // Load from backend if available
   useEffect(() => {
-    fetch('/api/experiments')
+    apiFetch('/api/experiments')
       .then(res => res.json())
       .then(data => {
         if (data.experiments && data.experiments.length > 0) {
@@ -223,7 +224,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
       })
       .catch(() => {});
 
-    fetch('/api/cycles')
+    apiFetch('/api/cycles')
       .then(res => res.json())
       .then(data => {
         if (data.cycles && data.cycles.length > 0) {
@@ -235,7 +236,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
 
   const handleSaveExperimentToBackend = async (exp: Experiment) => {
     try {
-      await fetch('/api/experiments', {
+      await apiFetch('/api/experiments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(exp),
@@ -318,7 +319,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
     setIsAnalyzing(true);
     setAiAnalysisResult(null);
     try {
-      const res = await fetch('/api/ai/experiment-analyze', {
+      const res = await apiFetch('/api/ai/experiment-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -339,7 +340,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
     setIsPeriodizationLoading(true);
     setPeriodizationRecommendation(null);
     try {
-      const res = await fetch('/api/ai/periodization-recommend', {
+      const res = await apiFetch('/api/ai/periodization-recommend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

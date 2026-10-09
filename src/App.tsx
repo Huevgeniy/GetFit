@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TelegramHeader } from './components/TelegramHeader';
 import { Navigation, NavTab } from './components/Navigation';
 import { WorkoutsHub } from './components/WorkoutsHub';
@@ -15,6 +15,17 @@ import { PeriodizationView } from './components/PeriodizationView';
 import { AiSettingsModal } from './components/AiSettingsModal';
 import { InteractiveTour } from './components/InteractiveTour';
 import { Bot, Mic } from 'lucide-react';
+import { applyTelegramUi, getStartParam, hapticImpact, hapticNotify, setupBackButton } from './lib/telegram';
+import {
+  apiFetch,
+  createBattle,
+  ensureSession,
+  fetchBattles,
+  joinBattle,
+  loadCloudState,
+  saveCloudState,
+  updateBattleProgress,
+} from './lib/api';
 
 import { 
   UserProfile, 
@@ -237,6 +248,145 @@ export default function App() {
     localStorage.setItem('getfit_records', JSON.stringify(personalRecords));
   }, [personalRecords]);
 
+  /* ---------------- Синхронизация с облаком ---------------- */
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'offline' | 'local'>('idle');
+  const [battleNotice, setBattleNotice] = useState<string | null>(null);
+  const hydratedRef = useRef(false);
+  const skipSaveRef = useRef(false);
+  const syncTimerRef = useRef<number | null>(null);
+
+  const buildSyncBlob = () => ({
+    user,
+    workoutPlans,
+    pastWorkouts,
+    penalties,
+    achievements,
+    dailyNutritionRecords,
+    sleepRecords,
+    customFoods,
+    personalRecords,
+    customTemplates,
+  });
+
+  // Старт: сессия -> данные из облака; если облако пустое — заливаем локальные
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const session = await ensureSession();
+      if (cancelled) return;
+      if (!session.authorized) {
+        setSyncStatus('local');
+        hydratedRef.current = true;
+        return;
+      }
+
+      setSyncStatus('syncing');
+      const cloud = await loadCloudState();
+      if (cancelled) return;
+      const data = cloud?.found ? cloud.data : null;
+
+      if (data) {
+        skipSaveRef.current = true;
+        if (data.user) setUser(prev => ({ ...prev, ...data.user }));
+        if (Array.isArray(data.workoutPlans)) setWorkoutPlans(data.workoutPlans);
+        if (Array.isArray(data.pastWorkouts)) setPastWorkouts(data.pastWorkouts);
+        if (Array.isArray(data.penalties)) setPenalties(data.penalties);
+        if (Array.isArray(data.achievements)) setAchievements(data.achievements);
+        if (Array.isArray(data.dailyNutritionRecords)) setDailyNutritionRecords(data.dailyNutritionRecords);
+        if (Array.isArray(data.sleepRecords)) setSleepRecords(data.sleepRecords);
+        if (Array.isArray(data.customFoods)) setCustomFoods(data.customFoods);
+        if (Array.isArray(data.personalRecords)) setPersonalRecords(data.personalRecords);
+        if (Array.isArray(data.customTemplates)) setCustomTemplates(data.customTemplates);
+        setSyncStatus('synced');
+      } else {
+        const ok = await saveCloudState(buildSyncBlob());
+        if (!cancelled) setSyncStatus(ok ? 'synced' : 'offline');
+      }
+      hydratedRef.current = true;
+
+      // Зарубы живут на сервере: их видят оба участника
+      const serverBattles = await fetchBattles();
+      if (!cancelled && serverBattles) setBattles(serverBattles as FriendBattle[]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Автосохранение с задержкой, чтобы не дёргать сервер на каждое нажатие
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    if (skipSaveRef.current) {
+      skipSaveRef.current = false;
+      return;
+    }
+    setSyncStatus('syncing');
+    if (syncTimerRef.current) window.clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = window.setTimeout(async () => {
+      const ok = await saveCloudState(buildSyncBlob());
+      setSyncStatus(ok ? 'synced' : 'offline');
+    }, 1500);
+    return () => {
+      if (syncTimerRef.current) window.clearTimeout(syncTimerRef.current);
+    };
+  }, [
+    user,
+    workoutPlans,
+    pastWorkouts,
+    penalties,
+    achievements,
+    dailyNutritionRecords,
+    sleepRecords,
+    customFoods,
+    personalRecords,
+    customTemplates,
+  ]);
+
+  // Приглашение в зарубу: приложение открыли по deep-link ?startapp=<код>
+  useEffect(() => {
+    const startParam = getStartParam();
+    if (!startParam || !/^[A-Za-z0-9_-]{6,32}$/.test(startParam)) return;
+    (async () => {
+      const session = await ensureSession();
+      if (!session.authorized) return;
+      const res = await joinBattle(startParam);
+      if (res?.battle) {
+        setBattles(prev => [res.battle, ...prev.filter(b => b.id !== res.battle.id)]);
+        hapticNotify('success');
+        setCurrentTab('battles');
+        setBattleNotice(`Ты принял зарубу «${res.battle.title || 'Заруба'}»!`);
+      }
+    })();
+  }, []);
+
+  // Внешний вид Mini App (тема, высота вьюпорта, отключение свайпа-закрытия)
+  useEffect(() => {
+    applyTelegramUi();
+  }, []);
+
+  // Кнопка «Назад» в шапке Telegram закрывает верхний модальный экран
+  const anyModalOpen = isTourOpen || isGlobalAiChatOpen || isAiSettingsOpen || isLiveWorkoutOpen;
+  useEffect(() => {
+    if (!anyModalOpen) return;
+    const cleanup = setupBackButton(true, () => {
+      if (isLiveWorkoutOpen) setIsLiveWorkoutOpen(false);
+      else if (isGlobalAiChatOpen) setIsGlobalAiChatOpen(false);
+      else if (isAiSettingsOpen) setIsAiSettingsOpen(false);
+      else if (isTourOpen) setIsTourOpen(false);
+    });
+    return () => {
+      cleanup();
+      setupBackButton(false, () => undefined);
+    };
+  }, [anyModalOpen, isLiveWorkoutOpen, isGlobalAiChatOpen, isAiSettingsOpen, isTourOpen]);
+
+  // Уведомление о принятой зарубе само скрывается
+  useEffect(() => {
+    if (!battleNotice) return;
+    const timer = window.setTimeout(() => setBattleNotice(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [battleNotice]);
+
   // Handlers
   const handleStartPlan = (plan: WorkoutPlan) => {
     setActiveWorkoutPlan(plan);
@@ -315,24 +465,40 @@ export default function App() {
     }));
   };
 
-  const handleAddBattle = (battle: FriendBattle) => {
-    setBattles(prev => [battle, ...prev]);
+  // Зарубы: источник истины — сервер, поэтому обе стороны видят один прогресс
+  const handleAddBattle = async (battle: FriendBattle): Promise<FriendBattle | null> => {
+    const res = await createBattle(battle as any);
+    if (res?.battle) {
+      setBattles(prev => [res.battle, ...prev.filter(b => b.id !== res.battle.id)]);
+      hapticNotify('success');
+      return res.battle as FriendBattle;
+    }
+    hapticNotify('error');
+    setBattleNotice('Не удалось создать зарубу — проверь связь');
+    return null;
   };
 
-  const handleUpdateBattleProgress = (battleId: string, amount: number) => {
+  const handleUpdateBattleProgress = async (battleId: string, amount: number) => {
+    hapticImpact('medium');
+    // Оптимистично двигаем прогресс, затем подтверждаем ответом сервера
     setBattles(prev =>
-      prev.map(b => {
-        if (b.id === battleId) {
-          const newProg = b.userProgress + amount;
-          return {
-            ...b,
-            userProgress: newProg,
-            friendProgress: b.friendProgress + Math.round(amount * 0.8),
-          };
-        }
-        return b;
-      })
+      prev.map(b =>
+        b.id === battleId
+          ? { ...b, userProgress: Math.min(b.targetGoal > 0 ? b.targetGoal : Infinity, b.userProgress + amount) }
+          : b,
+      ),
     );
+    const res = await updateBattleProgress(battleId, amount);
+    if (res?.battle) {
+      setBattles(prev => prev.map(b => (b.id === battleId ? (res.battle as FriendBattle) : b)));
+      if (res.battle.status === 'user_won') {
+        hapticNotify('success');
+        setBattleNotice(`🏆 Заруба «${res.battle.title || 'Заруба'}» выиграна!`);
+      }
+    } else {
+      hapticNotify('error');
+      setBattleNotice('Прогресс не сохранился — нет связи с сервером');
+    }
   };
 
   const handleSetTargetRank = (title: string, movementId: string, goalValue: number) => {
@@ -490,7 +656,7 @@ export default function App() {
       };
       list.unshift(newExp);
       localStorage.setItem('getfit_experiments', JSON.stringify(list));
-      fetch('/api/experiments', {
+      apiFetch('/api/experiments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newExp),
@@ -728,6 +894,35 @@ export default function App() {
             setIsAiSettingsOpen(true);
           }}
         />
+
+        {/* Индикатор облачной синхронизации */}
+        {syncStatus !== 'idle' && (
+          <div
+            className={`fixed bottom-[74px] left-4 z-30 px-2 py-1 rounded-lg border text-[10px] font-mono backdrop-blur-sm pointer-events-none ${
+              syncStatus === 'synced'
+                ? 'border-emerald-500/40 bg-emerald-950/70 text-emerald-300'
+                : syncStatus === 'syncing'
+                  ? 'border-sky-500/40 bg-sky-950/70 text-sky-300'
+                  : 'border-amber-500/40 bg-amber-950/70 text-amber-300'
+            }`}
+            title="Состояние синхронизации с облаком"
+          >
+            {syncStatus === 'synced'
+              ? '✓ в облаке'
+              : syncStatus === 'syncing'
+                ? '☁ синхронизация…'
+                : syncStatus === 'local'
+                  ? '⚠ только на устройстве'
+                  : '⚠ нет связи'}
+          </div>
+        )}
+
+        {/* Всплывающее уведомление о зарубе */}
+        {battleNotice && (
+          <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 max-w-[92%] px-3 py-2 rounded-xl bg-emerald-500 text-slate-950 text-xs font-bold shadow-xl">
+            {battleNotice}
+          </div>
+        )}
 
         {/* Fixed Bottom Navigation */}
         <Navigation

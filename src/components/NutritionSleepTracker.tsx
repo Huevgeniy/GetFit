@@ -33,6 +33,7 @@ import {
   WorkoutRecord 
 } from '../types';
 import { BASE_FOODS_DATABASE } from '../data/foodsData';
+import { apiFetch } from '../lib/api';
 
 interface NutritionSleepTrackerProps {
   user: UserProfile;
@@ -364,7 +365,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
     setAiAnalysisLoading(true);
     try {
       // Call server endpoint or smart local synergy engine
-      const response = await fetch('/api/ai/cross-analysis', {
+      const response = await apiFetch('/api/ai/cross-analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

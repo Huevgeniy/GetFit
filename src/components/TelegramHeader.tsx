@@ -35,7 +35,7 @@ export const TelegramHeader: React.FC<TelegramHeaderProps> = ({
   const userDiscipline = disciplineScore ?? user?.disciplineScore ?? 100;
 
   return (
-    <header className="sticky top-0 z-40 bg-[#0b0f12]/95 backdrop-blur-md border-b border-[#1a242f] px-4 py-2.5">
+    <header className="safe-top sticky top-0 z-40 bg-[#0b0f12]/95 backdrop-blur-md border-b border-[#1a242f] px-4 py-2.5">
       {/* Telegram simulated frame top bar */}
       <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5 select-none">
         <div className="flex items-center gap-1.5 font-mono">

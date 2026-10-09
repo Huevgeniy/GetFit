@@ -17,6 +17,9 @@ data/cloud_db.json
 # Local npm cache
 .npm-cache/
 
+# Временный вывод тестов клиента
+.tmp-libtest/
+
 # Python
 __pycache__/
 *.pyc

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { AiSettingsModal } from './AiSettingsModal';
+import { apiFetch } from '../lib/api';
 
 interface ActionExecuted {
   type: string;
@@ -168,7 +169,7 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
     setIsLoading(true);
 
     try {
-      const res = await fetch('/api/ai/concierge', {
+      const res = await apiFetch('/api/ai/concierge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

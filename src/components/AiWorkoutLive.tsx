@@ -31,6 +31,7 @@ import {
 import confetti from 'canvas-confetti';
 import { WorkoutPlan, WorkoutRecord, CompletedSet, ExerciseLog, ChatMessage, UserProfile, PlannedExercise, ExerciseComparison } from '../types';
 import { calculateOneRepMax, calculateNormalizedReps } from '../utils/oneRepMax';
+import { apiFetch } from '../lib/api';
 
 interface AiWorkoutLiveProps {
   plan: WorkoutPlan;
@@ -452,7 +453,7 @@ export const AiWorkoutLive: React.FC<AiWorkoutLiveProps> = ({
         userProfile: user,
       };
 
-      const response = await fetch('/api/ai/chat', {
+      const response = await apiFetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { copyToClipboard, hapticImpact, shareToTelegram } from '../lib/telegram';
 import { 
   Swords, 
   Users, 
@@ -33,7 +34,9 @@ interface FriendsAndBattlesViewProps {
   user: UserProfile;
   onUpdateUser: (updated: Partial<UserProfile>) => void;
   battles?: FriendBattle[];
-  onAddBattle?: (battle: FriendBattle) => void;
+  // Может вернуть созданную зарубу (с кодом приглашения) — обёртки в других
+  // экранах возвращают void, поэтому тип допускает оба варианта.
+  onAddBattle?: (battle: FriendBattle) => Promise<FriendBattle | null> | FriendBattle | null | void;
   onUpdateBattleProgress?: (battleId: string, amount: number) => void;
 }
 
@@ -41,7 +44,7 @@ export const FriendsAndBattlesView: React.FC<FriendsAndBattlesViewProps> = ({
   user,
   onUpdateUser,
   battles = [],
-  onAddBattle = () => {},
+  onAddBattle = () => null,
   onUpdateBattleProgress = () => {},
 }) => {
   // Friends state - start clean and purge any legacy fake/mock friends
@@ -117,6 +120,11 @@ export const FriendsAndBattlesView: React.FC<FriendsAndBattlesViewProps> = ({
 
   // Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Панель с ссылкой-приглашением после создания зарубы
+  const [invitePanel, setInvitePanel] = useState<
+    { link: string; friendName: string; username: string; title?: string } | null
+  >(null);
 
   useEffect(() => {
     try {
@@ -201,7 +209,7 @@ export const FriendsAndBattlesView: React.FC<FriendsAndBattlesViewProps> = ({
   };
 
   // Create Battle Submit
-  const handleCreateBattleSubmit = (e: React.FormEvent) => {
+  const handleCreateBattleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const friend = friends.find(f => f.id === battleFriendId) || friends[0];
     if (!friend) return;
@@ -248,9 +256,15 @@ export const FriendsAndBattlesView: React.FC<FriendsAndBattlesViewProps> = ({
       status: 'pending_friend',
     };
 
-    onAddBattle(newBattle);
+    // Зарубу создаёт сервер: он выдаёт код и ссылку-приглашение для друга
+    const saved = (await onAddBattle(newBattle)) as FriendBattle | null | undefined;
     setShowCreateBattleModal(false);
-    showToast(`Приглашение на зарубу отправлено ${friend.name} (${friend.username})!`);
+    if (saved?.inviteLink) {
+      setInvitePanel({ link: saved.inviteLink, friendName: friend.name, username: friend.username, title: saved.title });
+      showToast(`Ссылка-приглашение для ${friend.name} готова!`);
+    } else {
+      showToast('Не удалось создать зарубу — проверь связь');
+    }
     confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
   };
 
@@ -287,14 +301,21 @@ export const FriendsAndBattlesView: React.FC<FriendsAndBattlesViewProps> = ({
     confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
   };
 
-  // Simulate friend accepting battle
-  const handleSimulateAcceptBattle = (battleId: string) => {
-    const battle = battles.find(b => b.id === battleId);
-    if (!battle) return;
-
-    battle.status = 'active';
-    showToast(`⚔️ ${battle.friendName} принял(а) зарубу! Погнали!`);
-    confetti({ particleCount: 60, spread: 70, origin: { y: 0.5 } });
+  // Отправка приглашения в зарубу (deep-link в Mini App)
+  const shareInvite = (battle: FriendBattle) => {
+    const extra = battle as FriendBattle & { inviteLink?: string; inviteCode?: string };
+    const link = extra.inviteLink || (extra.inviteCode ? `https://t.me/get_fitbot?startapp=${extra.inviteCode}` : '');
+    if (!link) {
+      showToast('У этой зарубы нет ссылки-приглашения');
+      return;
+    }
+    const text = `⚔️ Вызываю тебя на зарубу «${battle.title}»!\nЦель: ${battle.targetGoal} ${battle.unit}\nНа кону: ${battle.wagerTerms?.penaltyLoser || 'честь и уважение'}`;
+    hapticImpact('medium');
+    if (extra.inviteLink) {
+      shareToTelegram(extra.inviteLink, text);
+    } else {
+      copyToClipboard(link).then((ok) => showToast(ok ? 'Ссылка скопирована — отправь другу!' : link));
+    }
   };
 
   // Complete bet
@@ -603,9 +624,9 @@ export const FriendsAndBattlesView: React.FC<FriendsAndBattlesViewProps> = ({
                 <div className="flex items-center gap-2 pt-1">
                   {isPending ? (
                     <button
-                      onClick={() => handleSimulateAcceptBattle(b.id)}
+                      onClick={() => shareInvite(b)}
                       className="w-full py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs rounded-xl border border-amber-500/40 transition-all flex items-center justify-center gap-1.5"
-                      title="Симулировать принятие другом"
+                      title="Отправить другу ссылку-приглашение в Telegram"
                     >
                       <Check className="w-4 h-4" />
                       <span>Друг принял вызов (начать зарубу)</span>
@@ -1033,6 +1054,53 @@ export const FriendsAndBattlesView: React.FC<FriendsAndBattlesViewProps> = ({
                 Заключить пари 🤝
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Панель со ссылкой-приглашением: друг принимает зарубу по deep-link */}
+      {invitePanel && (
+        <div className="safe-bottom fixed inset-x-0 bottom-0 z-50 p-3 bg-[#0b0f12]/95 border-t border-emerald-500/40 backdrop-blur-md">
+          <div className="max-w-lg mx-auto space-y-2">
+            <div className="text-xs font-bold text-emerald-300">
+              Приглашение для {invitePanel.friendName} ({invitePanel.username}) готово
+            </div>
+            <div className="text-[11px] text-slate-400 break-all font-mono bg-[#141c24] border border-[#22303f] rounded-lg p-2">
+              {invitePanel.link}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  hapticImpact('medium');
+                  shareToTelegram(
+                    invitePanel.link,
+                    `⚔️ Заруба «${invitePanel.title || 'GetFit'}» — принимай вызов!`,
+                  );
+                }}
+                className="flex-1 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl transition-all active:scale-95"
+              >
+                Отправить в Telegram
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  copyToClipboard(invitePanel.link).then((ok) =>
+                    showToast(ok ? 'Ссылка скопирована' : 'Не удалось скопировать'),
+                  )
+                }
+                className="px-3 py-2 bg-[#141c24] border border-[#22303f] text-slate-200 font-bold text-xs rounded-xl"
+              >
+                Копировать
+              </button>
+              <button
+                type="button"
+                onClick={() => setInvitePanel(null)}
+                className="px-3 py-2 bg-[#141c24] border border-[#22303f] text-slate-400 font-bold text-xs rounded-xl"
+              >
+                Закрыть
+              </button>
+            </div>
           </div>
         </div>
       )}

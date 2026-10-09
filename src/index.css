@@ -1,1 +1,33 @@
 @import "tailwindcss";
+
+/*
+ * Telegram Mini App: 100vh внутри WebView не совпадает с реальной высотой,
+ * а верх/низ могут перекрываться чёлкой и системным индикатором.
+ * Значения проставляет src/lib/telegram.ts.
+ */
+:root {
+  --app-height: 100vh;
+  --tg-safe-top: 0px;
+  --tg-safe-bottom: 0px;
+}
+
+html,
+body {
+  min-height: var(--app-height);
+  background-color: #070a0d;
+}
+
+/* Отступы под чёлку/индикатор Telegram */
+.safe-top {
+  padding-top: var(--tg-safe-top);
+}
+
+.safe-bottom {
+  padding-bottom: var(--tg-safe-bottom);
+}
+
+/* Убираем «резиновый» скролл и подсветку тапов внутри Mini App */
+body {
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}

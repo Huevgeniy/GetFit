@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { InBodyRecord, UserProfile } from '../types';
+import { apiFetch } from '../lib/api';
 
 interface InBodyTrackerProps {
   records: InBodyRecord[];
@@ -108,7 +109,7 @@ export const InBodyTracker: React.FC<InBodyTrackerProps> = ({
     setScanError(null);
 
     try {
-      const response = await fetch('/api/ai/parse-inbody', {
+      const response = await apiFetch('/api/ai/parse-inbody', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

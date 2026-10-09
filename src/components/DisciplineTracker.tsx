@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { UserProfile, DisciplinePenalty, WorkoutPlan } from '../types';
+import { apiFetch } from '../lib/api';
 
 interface DisciplineTrackerProps {
   user: UserProfile;
@@ -95,7 +96,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
     setArbitratorLoading(true);
 
     try {
-      const res = await fetch('/api/ai/concierge', {
+      const res = await apiFetch('/api/ai/concierge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
