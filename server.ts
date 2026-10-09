@@ -108,7 +108,9 @@ async function callUnifiedAI(options: CallAIOptions): Promise<CallAIResult> {
       const endpoint = isGroq 
         ? 'https://api.groq.com/openai/v1/chat/completions' 
         : 'https://api.x.ai/v1/chat/completions';
-      const model = isGroq ? 'llama-3.3-70b-versatile' : 'grok-2-latest';
+      const model = isGroq
+        ? process.env.GROQ_MODEL || 'qwen/qwen3.8-27b'
+        : process.env.XAI_MODEL || 'grok-2-latest';
 
       const grokSystem = isJson 
         ? `${fullSystemInstruction}\n\nCRITICAL: Output valid JSON only, without markdown wraps if possible.` 
@@ -152,7 +154,7 @@ async function callUnifiedAI(options: CallAIOptions): Promise<CallAIResult> {
     if (!ai) return null;
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: process.env.GEMINI_MODEL || 'gemini-flash-latest',
         contents: prompt,
         config: {
           systemInstruction: fullSystemInstruction,
@@ -867,7 +869,7 @@ app.post('/api/ai/parse-inbody', async (req, res) => {
     if (ai) {
       try {
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: process.env.GEMINI_MODEL || 'gemini-flash-latest',
           contents,
           config: {
             systemInstruction,
