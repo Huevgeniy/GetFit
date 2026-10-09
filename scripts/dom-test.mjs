@@ -189,6 +189,64 @@ if (reactRoot) {
   });
 }
 
+/* ---------------- Сценарий 2: приглашение в зарубу по deep-link ---------------- */
+const INVITE_CODE = 'ABC123XY';
+window.history.replaceState({}, '', `/?startapp=${INVITE_CODE}`);
+container.innerHTML = '';
+requests.length = 0;
+// Сервер после принятия приглашения отдаёт зарубу в списке — как в реальности
+let joined = false;
+const JOINED_BATTLE = {
+  id: 'joined-battle', title: 'Заруба по приглашению', friendName: 'Аня', friendTelegram: '@anya', avatarBg: '',
+  challengeType: 'steps', duration: '1 неделя', startDate: '2026-03-01', endDate: '2026-03-08',
+  userProgress: 0, friendProgress: 0, targetGoal: 50, unit: 'км',
+  wagerTerms: { condition: 'кто больше', penaltyLoser: 'кофе', rewardWinner: '+250' },
+  status: 'active', mySide: 'opponent',
+};
+
+globalThis.fetch = async (url, init = {}) => {
+  const target = String(url);
+  requests.push({ url: target, method: init.method || 'GET', body: init.body });
+  if (target === '/api/auth/telegram') return json({ valid: true, userId: 'tg:777', token: 'dom-token-2', devMode: false });
+  if (target === '/api/me') return json({ userId: 'tg:777', storage: 'postgres' });
+  if (target === '/api/db/sync' && (init.method || 'GET') === 'GET') return json({ found: false });
+  if (target === '/api/db/sync') return json({ success: true, lastSyncedAt: new Date().toISOString() });
+  if (target === '/api/battles/join') {
+    joined = true;
+    return json({ success: true, battle: JOINED_BATTLE });
+  }
+  if (target === '/api/battles') return json({ battles: joined ? [JOINED_BATTLE] : [] });
+  return json({});
+};
+window.fetch = globalThis.fetch;
+
+let inviteError = null;
+try {
+  await act(async () => {
+    reactRoot = createRoot(container);
+    reactRoot.render(React.createElement(AppComponent));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  });
+} catch (err) {
+  inviteError = err;
+}
+
+const joinCall = requests.find((r) => r.url === '/api/battles/join');
+check('сценарий приглашения: приложение монтируется', !inviteError, inviteError ? inviteError.message : '');
+check('приглашение принято автоматически (POST /api/battles/join)', Boolean(joinCall), JSON.stringify(requests.map((r) => r.url)));
+check('в запрос ушёл код из ссылки', String(joinCall?.body || '').includes(INVITE_CODE), String(joinCall?.body));
+check('показано уведомление о принятой зарубе', text().includes('принял зарубу'), text().slice(0, 120));
+check('принятая заруба видна в списке (её не перетёр устаревший список)', text().includes('Аня') && text().includes('Заруба по приглашению'), text().slice(0, 160));
+check('повторный запрос приглашения не уходит', requests.filter((r) => r.url === '/api/battles/join').length === 1);
+
+if (reactRoot) {
+  await act(async () => {
+    reactRoot.unmount();
+  });
+}
+
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log(`\n${failures === 0 ? 'DOM-ПРОВЕРКИ ПРОЙДЕНЫ' : `ПРОВАЛОВ: ${failures}`}`);
 process.exit(failures === 0 ? 0 : 1);

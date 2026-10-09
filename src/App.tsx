@@ -256,6 +256,8 @@ export default function App() {
   const hydratedRef = useRef(false);
   const skipSaveRef = useRef(false);
   const syncTimerRef = useRef<number | null>(null);
+  /** true, если по deep-link только что приняли зарубу (защита от устаревшего списка) */
+  const joinedBattleRef = useRef(false);
 
   const buildSyncBlob = () => ({
     user,
@@ -310,9 +312,10 @@ export default function App() {
       }
       hydratedRef.current = true;
 
-      // Зарубы живут на сервере: их видят оба участника
+      // Зарубы живут на сервере: их видят оба участника.
+      // Если приглашение уже принято, не перетираем результат устаревшим списком.
       const serverBattles = await fetchBattles();
-      if (!cancelled && serverBattles) setBattles(serverBattles as FriendBattle[]);
+      if (!cancelled && serverBattles && !joinedBattleRef.current) setBattles(serverBattles as FriendBattle[]);
     })();
     return () => {
       cancelled = true;
@@ -367,7 +370,11 @@ export default function App() {
         localStorage.setItem(processedKey, startParam);
       } catch { /* ignore */ }
       if (res?.battle && !res.alreadyMember) {
+        joinedBattleRef.current = true;
         setBattles(prev => [res.battle, ...prev.filter(b => b.id !== res.battle.id)]);
+        // Список мог быть запрошен до присоединения — берём свежий с сервера
+        const fresh = await fetchBattles();
+        if (fresh) setBattles(fresh as FriendBattle[]);
         hapticNotify('success');
         setCurrentTab('battles');
         setBattleNotice({ text: `Ты принял зарубу «${res.battle.title || 'Заруба'}»!` });
