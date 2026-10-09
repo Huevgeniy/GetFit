@@ -17,6 +17,9 @@ data/cloud_db.json
 # Local npm cache
 .npm-cache/
 
+# Bun-локфайл не используем: Render из-за него переключался на bun и не ставил зависимости
+bun.lock
+
 # Временный вывод тестов клиента
 .tmp-libtest/
 .tmp-render/

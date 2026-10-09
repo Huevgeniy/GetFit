@@ -36,6 +36,14 @@ postgresql://postgres.abcdefgh:ТВОЙ_ПАРОЛЬ@aws-0-eu-central-1.pooler.s
 
 1. В Render: **New** → **Blueprint** → подключи репозиторий `Huevgeniy/GetFit`.
    Файл `render.yaml` уже в репозитории: Render сам создаст web-сервис (free, Frankfurt, health-check `/api/health`).
+
+> ⚠️ **Если сервис создан вручную (Web Service), а не через Blueprint**, `render.yaml` игнорируется — проверь в **Settings** сервиса:
+> - **Build Command:** `npm install --include=dev && npm run build`
+> - **Start Command:** `npm start`
+> - **Health Check Path:** `/api/health`
+> - **Node version:** 24 (или оставь `engines` из package.json)
+>
+> Симптом неверной настройки — `sh: 1: vite: not found` в логе сборки: значит установка зависимостей не запускалась. В `package.json` установка теперь встроена прямо в `npm run build`, поэтому сборка работает даже с одной командой `npm run build`.
 2. Render попросит заполнить переменные окружения (те, что помечены `sync: false`):
 
 | Переменная | Значение |
@@ -193,6 +201,7 @@ curl "https://api.telegram.org/bot<ТОКЕН>/getWebhookInfo"
 
 | Симптом | Причина | Решение |
 |---|---|---|
+| `sh: 1: vite: not found` при сборке | Render не запускал установку зависимостей (Build Command = только `npm run build`) | Обнови код: установка встроена в `npm run build`. Либо задай Build Command `npm install --include=dev && npm run build` |
 | `Application failed to respond` / долгая загрузка | Сервис спал | Подожди минуту и обнови |
 | В приложении `⚠ только на устройстве` | Не прошла авторизация | Открой приложение именно из Telegram; проверь `TELEGRAM_BOT_TOKEN` в Render |
 | `401 unauthorized` в логах | Устаревшая сессия | Закрой и открой Mini App заново |

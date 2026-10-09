@@ -7,14 +7,14 @@ services:
     plan: free
     region: frankfurt
     branch: main
-    # --include=dev обязателен: vite/esbuild/typescript лежат в devDependencies
+    # Шаг установки обязателен: Render с пустым buildCommand запускает только сборку
     buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
-        value: 22.14.0
+        value: 24.19.0
       - key: NODE_ENV
         value: production
       - key: TELEGRAM_BOT_TOKEN
