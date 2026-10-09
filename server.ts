@@ -5,18 +5,41 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import {
+  SESSION_TTL_SECONDS,
+  issueSession,
+  readBearerToken,
+  userIdForTelegram,
+  validateTelegramInitData,
+  verifySession,
+} from './server/auth.ts';
+import {
+  generateInviteCode,
+  getBattleById,
+  getBattleByInvite,
+  getUserState,
+  initStorage,
+  listCollection,
+  listUserBattles,
+  saveBattle,
+  saveUserState,
+  storageMode,
+  upsertCollectionItem,
+  type BattleRecord,
+} from './server/storage.ts';
 
 dotenv.config();
-if (!process.env.GROQ_API_KEY && fs.existsSync('.env.example')) {
-  dotenv.config({ path: '.env.example' });
-}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+// Хостинги (Render, Railway, Fly) передают порт через переменную окружения
+const PORT = Number(process.env.PORT) || 3000;
+// Дев-режим: Vite-middleware + вход без Telegram (только локально, запускается через `npm run dev`)
+const IS_DEV = process.argv.includes('--dev') || process.env.NODE_ENV === 'development';
 
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '15mb' }));
 
 // Lazy-initialize Gemini client
@@ -168,167 +191,347 @@ async function callUnifiedAI(options: CallAIOptions): Promise<CallAIResult> {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
+    mode: IS_DEV ? 'development' : 'production',
+    devAuthAllowed: IS_DEV,
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
     hasGrokKey: Boolean(GROK_KEY),
     hasTelegramToken: Boolean(process.env.TELEGRAM_BOT_TOKEN),
   });
 });
 
-// Server-side persistent storage (Cloud Database)
-const DB_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DB_DIR, 'cloud_db.json');
+/* ------------------------------------------------------------------ */
+/* Хранилище                                                           */
+/* Postgres (Supabase) при наличии DATABASE_URL, иначе JSON-файл для    */
+/* локальной разработки. Инициализируется в startServer().              */
+/* ------------------------------------------------------------------ */
 
-function initDb() {
-  try {
-    if (!fs.existsSync(DB_DIR)) {
-      fs.mkdirSync(DB_DIR, { recursive: true });
+/* ------------------------------------------------------------------ */
+/* Авторизация Telegram Mini App                                       */
+/* ------------------------------------------------------------------ */
+
+interface AuthedRequest extends express.Request {
+  userId?: string;
+  session?: { sub: string; exp: number; dev?: boolean; name?: string; username?: string };
+}
+
+function getAuthedUserId(req: express.Request): string {
+  return (req as AuthedRequest).userId as string;
+}
+
+function getAuthedSession(req: express.Request) {
+  return (req as AuthedRequest).session;
+}
+
+const PUBLIC_API_PATHS = new Set(['/api/health', '/api/auth/telegram', '/api/telegram/webhook']);
+
+// Все /api/* требуют сессию, кроме публичных путей
+app.use('/api', (req, res, next) => {
+  const pathOnly = req.originalUrl.split('?')[0];
+  if (PUBLIC_API_PATHS.has(pathOnly)) return next();
+  const session = verifySession(readBearerToken(req.headers.authorization));
+  if (!session) {
+    return res.status(401).json({ error: 'unauthorized', message: 'Требуется вход через Telegram' });
+  }
+  (req as AuthedRequest).userId = session.sub;
+  (req as AuthedRequest).session = session;
+  next();
+});
+
+// Ограничитель частоты для дорогих ИИ-запросов: защищает бесплатную квоту Gemini/Groq
+const aiUsage = new Map<string, number[]>();
+const AI_WINDOW_MS = 5 * 60 * 1000;
+const AI_MAX_REQUESTS = Number(process.env.AI_RATE_LIMIT) || 40;
+
+app.use('/api/ai', (req, res, next) => {
+  const userId = getAuthedUserId(req);
+  const now = Date.now();
+  const recent = (aiUsage.get(userId) || []).filter((ts) => now - ts < AI_WINDOW_MS);
+  if (recent.length >= AI_MAX_REQUESTS) {
+    const retryAfterSec = Math.ceil((AI_WINDOW_MS - (now - recent[0])) / 1000);
+    res.setHeader('Retry-After', String(retryAfterSec));
+    return res.status(429).json({
+      error: 'rate_limited',
+      message: `Слишком много ИИ-запросов. Попробуйте через ${Math.ceil(retryAfterSec / 60)} мин.`,
+    });
+  }
+  recent.push(now);
+  aiUsage.set(userId, recent);
+  if (aiUsage.size > 500) {
+    for (const [key, stamps] of aiUsage) {
+      if (!stamps.some((ts) => now - ts < AI_WINDOW_MS)) aiUsage.delete(key);
     }
-    if (!fs.existsSync(DB_FILE)) {
-      fs.writeFileSync(DB_FILE, JSON.stringify({ users: {}, battles: [], experiments: [], cycles: [], customMetrics: [] }, null, 2), 'utf-8');
-    }
-  } catch (e) {
-    console.error('Error initializing cloud db:', e);
   }
-}
-initDb();
+  next();
+});
 
-function getDb(): { users: Record<string, any>; battles: any[]; experiments: any[]; cycles: any[]; customMetrics: any[] } {
-  try {
-    if (!fs.existsSync(DB_FILE)) return { users: {}, battles: [], experiments: [], cycles: [], customMetrics: [] };
-    const content = fs.readFileSync(DB_FILE, 'utf-8');
-    const parsed = JSON.parse(content);
-    return {
-      users: parsed.users || {},
-      battles: parsed.battles || [],
-      experiments: parsed.experiments || [],
-      cycles: parsed.cycles || [],
-      customMetrics: parsed.customMetrics || [],
-    };
-  } catch {
-    return { users: {}, battles: [], experiments: [], cycles: [], customMetrics: [] };
-  }
-}
-
-function saveDb(data: { users: Record<string, any>; battles: any[]; experiments?: any[]; cycles?: any[]; customMetrics?: any[] }) {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
-  } catch (e) {
-    console.error('Error saving cloud db:', e);
-  }
-}
-
-
-// Telegram WebApp initData HMAC-SHA256 Cryptographic Verification
-function validateTelegramInitData(initData: string, botToken: string): { valid: boolean; user?: any } {
-  try {
-    if (!initData || !botToken) return { valid: false };
-    const urlParams = new URLSearchParams(initData);
-    const hash = urlParams.get('hash');
-    if (!hash) return { valid: false };
-
-    urlParams.delete('hash');
-    const params: string[] = [];
-    for (const [key, value] of urlParams.entries()) {
-      params.push(`${key}=${value}`);
-    }
-    params.sort();
-    const dataCheckString = params.join('\n');
-
-    const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
-    const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
-
-    const valid = calculatedHash === hash;
-    const userStr = urlParams.get('user');
-    const user = userStr ? JSON.parse(userStr) : null;
-    return { valid, user };
-  } catch {
-    return { valid: false };
-  }
-}
-
-// Telegram WebApp auth & verification endpoint
+// Telegram WebApp auth: обмен initData на сессионный токен
 app.post('/api/auth/telegram', (req, res) => {
-  const { initData } = req.body;
-  const token = process.env.TELEGRAM_BOT_TOKEN || '';
-  if (!initData) {
-    return res.status(400).json({ valid: false, error: 'initData is required' });
+  const initData = typeof req.body?.initData === 'string' ? req.body.initData : '';
+  const botToken = process.env.TELEGRAM_BOT_TOKEN || '';
+
+  if (initData) {
+    const result = validateTelegramInitData(initData, botToken);
+    if (!result.valid || !result.user?.id) {
+      return res.status(401).json({ valid: false, error: result.reason || 'Некорректный initData' });
+    }
+    const userId = userIdForTelegram(result.user.id);
+    console.log(`[auth] вход: ${userId} (@${result.user.username || 'без username'})`);
+    const displayName = [result.user.first_name, result.user.last_name].filter(Boolean).join(' ') || 'Атлет';
+    return res.json({
+      valid: true,
+      userId,
+      user: result.user,
+      token: issueSession(userId, { name: displayName, username: result.user.username }),
+      expiresIn: SESSION_TTL_SECONDS,
+      devMode: false,
+    });
   }
-  const result = validateTelegramInitData(initData, token);
-  res.json(result);
+
+  // Локальная разработка в обычном браузере (вне Telegram): только в дев-режиме
+  if (IS_DEV || process.env.ALLOW_DEV_AUTH === 'true') {
+    const rawId = String(req.body?.devId ?? 'local');
+    const devId = rawId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'local';
+    const userId = `dev:${devId}`;
+    return res.json({
+      valid: true,
+      userId,
+      user: { id: 0, first_name: 'Dev', username: `dev_${devId}` },
+      token: issueSession(userId, { dev: true, name: `Dev ${devId}`, username: `dev_${devId}` }),
+      expiresIn: SESSION_TTL_SECONDS,
+      devMode: true,
+    });
+  }
+
+  res.status(400).json({ valid: false, error: 'initData is required' });
 });
 
-// Cloud Sync endpoints for seamless cross-device persistence
-app.get('/api/db/sync/:userId', (req, res) => {
-  const { userId } = req.params;
-  const db = getDb();
-  const userData = db.users[userId];
-  if (!userData) {
-    return res.json({ found: false });
-  }
-  res.json({ found: true, data: userData });
+app.get('/api/me', (req, res) => {
+  res.json({ userId: getAuthedUserId(req), storage: storageMode() });
 });
 
-app.post('/api/db/sync/:userId', (req, res) => {
-  const { userId } = req.params;
-  const payload = req.body;
-  const db = getDb();
-  db.users[userId] = {
+// Синхронизация состояния пользователя.
+// Идентификатор берётся из подписанной сессии — подставить чужой нельзя.
+app.get('/api/db/sync', async (req, res) => {
+  try {
+    const stored = await getUserState(getAuthedUserId(req));
+    if (!stored) return res.json({ found: false });
+    res.json({ found: true, data: stored.state, updatedAt: stored.updatedAt });
+  } catch (err: any) {
+    console.error('[sync] ошибка чтения:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
+});
+
+app.post('/api/db/sync', async (req, res) => {
+  try {
+    const payload = req.body && typeof req.body === 'object' ? req.body : {};
+    const lastSyncedAt = await saveUserState(getAuthedUserId(req), payload);
+    res.json({ success: true, lastSyncedAt });
+  } catch (err: any) {
+    console.error('[sync] ошибка записи:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Зарубы: одна запись на двоих участников                             */
+/* ------------------------------------------------------------------ */
+
+const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'get_fitbot';
+/** Публичный адрес Mini App (Render домен). Без него бот не сможет открыть приложение. */
+const PUBLIC_APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
+
+function battleInviteLink(inviteCode: string): string {
+  return `https://t.me/${BOT_USERNAME}?startapp=${inviteCode}`;
+}
+
+/** Личное сообщение пользователю (userId формата `tg:<telegram_id>`). */
+async function notifyTelegramUser(userId: string, html: string): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !userId?.startsWith('tg:')) return;
+  const chatId = userId.slice(3);
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: html, parse_mode: 'HTML' }),
+    });
+  } catch (err: any) {
+    console.warn('[telegram] уведомление не отправлено:', err?.message);
+  }
+}
+
+/**
+ * Отдаём зарубу «глазами» запросившего: userProgress — мой прогресс,
+ * friendProgress — соперника. Клиент не знает, создатель он или нет.
+ */
+function battleView(record: BattleRecord, viewerId: string) {
+  const payload = record.payload || {};
+  const isCreator = record.creatorId === viewerId;
+  const theirName = isCreator
+    ? payload.opponentName || payload.friendName || 'Соперник'
+    : payload.creatorName || 'Соперник';
+  const theirUsername = isCreator
+    ? payload.opponentUsername || payload.friendTelegram || ''
+    : payload.creatorUsername || '';
+
+  let status: string = record.opponentId ? 'active' : 'pending_friend';
+  if (payload.winner) {
+    const winnerIsViewer = payload.winner === (isCreator ? 'creator' : 'opponent');
+    status = winnerIsViewer ? 'user_won' : 'friend_won';
+  }
+
+  return {
     ...payload,
-    lastSyncedAt: new Date().toISOString(),
+    id: record.id,
+    inviteCode: record.inviteCode,
+    inviteLink: battleInviteLink(record.inviteCode),
+    status,
+    mySide: isCreator ? 'creator' : 'opponent',
+    userProgress: Number((isCreator ? payload.creatorProgress : payload.opponentProgress) || 0),
+    friendProgress: Number((isCreator ? payload.opponentProgress : payload.creatorProgress) || 0),
+    friendName: theirName,
+    friendTelegram: theirUsername,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
   };
-  saveDb(db);
-  res.json({ success: true, lastSyncedAt: db.users[userId].lastSyncedAt });
+}
+
+app.get('/api/battles', async (req, res) => {
+  try {
+    const userId = getAuthedUserId(req);
+    const records = await listUserBattles(userId);
+    res.json({ battles: records.map((record) => battleView(record, userId)) });
+  } catch (err: any) {
+    console.error('[battles] ошибка чтения:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
 });
 
-// Multiplayer Friend Battles
-app.get('/api/battles', (req, res) => {
-  const db = getDb();
-  res.json({ battles: db.battles || [] });
+app.post('/api/battles/create', async (req, res) => {
+  try {
+    const userId = getAuthedUserId(req);
+    const session = getAuthedSession(req);
+    const battle = req.body?.battle ?? req.body;
+    if (!battle || typeof battle !== 'object') {
+      return res.status(400).json({ error: 'Invalid battle object' });
+    }
+
+    const id = String(battle.id || `battle_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+    const existing = await getBattleById(id);
+    if (existing && existing.creatorId !== userId) {
+      return res.status(403).json({ error: 'Зарубу создаёт только её автор' });
+    }
+
+    const payload = existing?.payload || {};
+    const record: BattleRecord = {
+      id,
+      creatorId: existing?.creatorId || userId,
+      opponentId: existing?.opponentId ?? null,
+      inviteCode: existing?.inviteCode || generateInviteCode(),
+      status: existing?.opponentId ? 'active' : 'pending',
+      createdAt: existing?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      payload: {
+        ...payload,
+        ...battle,
+        id,
+        creatorName: payload.creatorName || session?.name || 'Атлет',
+        creatorUsername: payload.creatorUsername || session?.username || '',
+        creatorProgress: Number(battle.userProgress ?? payload.creatorProgress ?? 0),
+        opponentProgress: Number(payload.opponentProgress || 0),
+      },
+    };
+
+    const saved = await saveBattle(record);
+    res.json({ success: true, battle: battleView(saved, userId) });
+  } catch (err: any) {
+    console.error('[battles] ошибка создания:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
 });
 
-app.post('/api/battles/create', (req, res) => {
-  const battle = req.body;
-  if (!battle || !battle.id) {
-    return res.status(400).json({ error: 'Invalid battle object' });
+// Присоединение по коду приглашения (deep link ?startapp=КОД)
+app.post('/api/battles/join', async (req, res) => {
+  try {
+    const userId = getAuthedUserId(req);
+    const session = getAuthedSession(req);
+    const raw = String(req.body?.inviteCode || req.body?.battleId || '').trim();
+    if (!raw) return res.status(400).json({ error: 'inviteCode обязателен' });
+
+    const record = /^battle_/.test(raw) ? await getBattleById(raw) : await getBattleByInvite(raw);
+    if (!record) return res.status(404).json({ error: 'Приглашение не найдено или устарело' });
+
+    if (record.creatorId === userId) {
+      return res.json({ success: true, alreadyMember: true, battle: battleView(record, userId) });
+    }
+    if (record.opponentId && record.opponentId !== userId) {
+      return res.status(409).json({ error: 'В этой зарубе уже есть соперник' });
+    }
+
+    record.opponentId = userId;
+    record.status = 'active';
+    record.payload = {
+      ...record.payload,
+      opponentName: session?.name || 'Соперник',
+      opponentUsername: session?.username || '',
+      opponentProgress: Number(record.payload?.opponentProgress || 0),
+      joinedAt: new Date().toISOString(),
+    };
+
+    const saved = await saveBattle(record);
+    const creatorId = saved.creatorId;
+    console.log(`[battles] ${userId} присоединился к зарубе ${saved.id}`);
+    notifyTelegramUser(creatorId, `🤝 <b>${session?.name || 'Соперник'}</b> принял твою зарубу «${saved.payload?.title || 'Заруба'}»!`).catch(() => undefined);
+    res.json({ success: true, battle: battleView(saved, userId) });
+  } catch (err: any) {
+    console.error('[battles] ошибка присоединения:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
   }
-  const db = getDb();
-  const existingIdx = (db.battles || []).findIndex((b: any) => b.id === battle.id);
-  if (existingIdx >= 0) {
-    db.battles[existingIdx] = { ...db.battles[existingIdx], ...battle };
-  } else {
-    db.battles = [battle, ...(db.battles || [])];
-  }
-  saveDb(db);
-  res.json({ success: true, battle });
 });
 
-app.post('/api/battles/join', (req, res) => {
-  const { battleId, friendName, friendAvatar } = req.body;
-  const db = getDb();
-  const battle = (db.battles || []).find((b: any) => b.id === battleId);
-  if (!battle) {
-    return res.status(404).json({ error: 'Заруба не найдена' });
-  }
-  battle.friendName = friendName || battle.friendName;
-  battle.friendAvatar = friendAvatar || battle.friendAvatar;
-  saveDb(db);
-  res.json({ success: true, battle });
-});
+app.post('/api/battles/update-progress', async (req, res) => {
+  try {
+    const userId = getAuthedUserId(req);
+    const battleId = String(req.body?.battleId || '');
+    const amount = Number(req.body?.amount) || 0;
+    const record = await getBattleById(battleId);
+    if (!record) return res.status(404).json({ error: 'Заруба не найдена' });
+    if (record.creatorId !== userId && record.opponentId !== userId) {
+      return res.status(403).json({ error: 'Вы не участник этой зарубы' });
+    }
+    if (amount <= 0) return res.status(400).json({ error: 'amount должен быть больше нуля' });
 
-app.post('/api/battles/update-progress', (req, res) => {
-  const { battleId, isCreator, amount } = req.body;
-  const db = getDb();
-  const battle = (db.battles || []).find((b: any) => b.id === battleId);
-  if (!battle) {
-    return res.status(404).json({ error: 'Заруба не найдена' });
+    // Сторона определяется сессией, а не телом запроса — подделать нельзя
+    const isCreator = record.creatorId === userId;
+    const key = isCreator ? 'creatorProgress' : 'opponentProgress';
+    const rivalKey = isCreator ? 'opponentProgress' : 'creatorProgress';
+    const target = Number(record.payload?.targetGoal ?? record.payload?.targetValue ?? 0);
+
+    const current = Number(record.payload?.[key] || 0);
+    const next = target > 0 ? Math.min(target, current + amount) : current + amount;
+    const payload: Record<string, any> = { ...record.payload, [key]: next };
+
+    if (target > 0 && next >= target && next > Number(payload[rivalKey] || 0)) {
+      payload.winner = isCreator ? 'creator' : 'opponent';
+      payload.finishedAt = new Date().toISOString();
+      record.status = 'finished';
+      const rivalId = isCreator ? record.opponentId : record.creatorId;
+      if (rivalId) {
+        const actorName = getAuthedSession(req)?.name || 'Соперник';
+        notifyTelegramUser(rivalId, `🏆 <b>${actorName}</b> закрыл зарубу «${payload.title || 'Заруба'}» первым!`).catch(
+          () => undefined,
+        );
+      }
+    }
+    record.payload = payload;
+
+    const saved = await saveBattle(record);
+    res.json({ success: true, battle: battleView(saved, userId) });
+  } catch (err: any) {
+    console.error('[battles] ошибка прогресса:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
   }
-  if (isCreator) {
-    battle.userProgress = Math.min(battle.targetValue, (battle.userProgress || 0) + amount);
-  } else {
-    battle.friendProgress = Math.min(battle.targetValue, (battle.friendProgress || 0) + amount);
-  }
-  saveDb(db);
-  res.json({ success: true, battle });
 });
 
 // Push notification / workout report to Telegram
@@ -343,7 +546,7 @@ app.post('/api/telegram/send-workout-report', async (req, res) => {
     return res.status(400).json({ error: 'chatId is required' });
   }
 
-  const appUrl = process.env.APP_URL || 'https://ais-dev-c77vot7gc4jzaawlvpzve5-893965801018.europe-west2.run.app';
+  const appUrl = PUBLIC_APP_URL;
 
   const text = `🏆 *Тренировка завершена!*
   
@@ -460,9 +663,15 @@ app.post('/api/telegram/send', async (req, res) => {
 // Telegram webhook endpoint
 app.post('/api/telegram/webhook', async (req, res) => {
   const token = process.env.TELEGRAM_BOT_TOKEN;
+  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  // Telegram присылает секрет в заголовке — без проверки кто угодно может слать фейковые апдейты
+  if (expectedSecret && req.headers['x-telegram-bot-api-secret-token'] !== expectedSecret) {
+    return res.status(401).send('unauthorized');
+  }
   const update = req.body;
   if (token && update) {
-    await handleTelegramUpdate(token, update);
+    // Отвечаем Telegram сразу, обработку ведём асинхронно
+    handleTelegramUpdate(token, update).catch((err) => console.error('[telegram] webhook error:', err));
   }
   res.status(200).send('OK');
 });
@@ -1038,28 +1247,26 @@ app.post('/api/ai/concierge', async (req, res) => {
   }
 });
 
-// 🔬 Research Lab & Experiments API
-app.get('/api/experiments', (req, res) => {
-  const db = getDb();
-  res.json({ experiments: db.experiments || [] });
+// 🔬 Research Lab & Experiments API (данные привязаны к пользователю сессии)
+app.get('/api/experiments', async (req, res) => {
+  try {
+    res.json({ experiments: await listCollection('experiments', getAuthedUserId(req)) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
 });
 
-app.post('/api/experiments', (req, res) => {
-  const experiment = req.body;
-  if (!experiment || !experiment.id) {
-    return res.status(400).json({ error: 'Experiment id required' });
+app.post('/api/experiments', async (req, res) => {
+  try {
+    const experiment = req.body;
+    if (!experiment || !experiment.id) {
+      return res.status(400).json({ error: 'Experiment id required' });
+    }
+    const saved = await upsertCollectionItem('experiments', getAuthedUserId(req), experiment);
+    res.json({ success: true, experiment: saved });
+  } catch (err: any) {
+    res.status(500).json({ error: 'storage_error', details: err?.message });
   }
-  const db = getDb();
-  const list = db.experiments || [];
-  const idx = list.findIndex((e: any) => e.id === experiment.id);
-  if (idx >= 0) {
-    list[idx] = { ...list[idx], ...experiment };
-  } else {
-    list.unshift(experiment);
-  }
-  db.experiments = list;
-  saveDb(db);
-  res.json({ success: true, experiment });
 });
 
 // AI Scientific Analysis for Experiment (Gemini + Grok Dual Engine)
@@ -1131,27 +1338,25 @@ app.post('/api/ai/experiment-analyze', async (req, res) => {
 });
 
 // 📊 Periodization Blocks & Cycles API
-app.get('/api/cycles', (req, res) => {
-  const db = getDb();
-  res.json({ cycles: db.cycles || [] });
+app.get('/api/cycles', async (req, res) => {
+  try {
+    res.json({ cycles: await listCollection('cycles', getAuthedUserId(req)) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
 });
 
-app.post('/api/cycles', (req, res) => {
-  const cycle = req.body;
-  if (!cycle || !cycle.id) {
-    return res.status(400).json({ error: 'Cycle id required' });
+app.post('/api/cycles', async (req, res) => {
+  try {
+    const cycle = req.body;
+    if (!cycle || !cycle.id) {
+      return res.status(400).json({ error: 'Cycle id required' });
+    }
+    const saved = await upsertCollectionItem('cycles', getAuthedUserId(req), cycle);
+    res.json({ success: true, cycle: saved });
+  } catch (err: any) {
+    res.status(500).json({ error: 'storage_error', details: err?.message });
   }
-  const db = getDb();
-  const list = db.cycles || [];
-  const idx = list.findIndex((c: any) => c.id === cycle.id);
-  if (idx >= 0) {
-    list[idx] = { ...list[idx], ...cycle };
-  } else {
-    list.unshift(cycle);
-  }
-  db.cycles = list;
-  saveDb(db);
-  res.json({ success: true, cycle });
 });
 
 // AI Periodization Recommendations (Gemini + Grok Dual Engine)
@@ -1216,43 +1421,54 @@ app.post('/api/ai/periodization-recommend', async (req, res) => {
 });
 
 // 📐 Custom Metrics API
-app.get('/api/custom-metrics', (req, res) => {
-  const db = getDb();
-  res.json({ customMetrics: db.customMetrics || [] });
+app.get('/api/custom-metrics', async (req, res) => {
+  try {
+    res.json({ customMetrics: await listCollection('custom_metrics', getAuthedUserId(req)) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
 });
 
-app.post('/api/custom-metrics', (req, res) => {
-  const metric = req.body;
-  if (!metric || !metric.id) {
-    return res.status(400).json({ error: 'Metric id required' });
+app.post('/api/custom-metrics', async (req, res) => {
+  try {
+    const metric = req.body;
+    if (!metric || !metric.id) {
+      return res.status(400).json({ error: 'Metric id required' });
+    }
+    const saved = await upsertCollectionItem('custom_metrics', getAuthedUserId(req), metric);
+    res.json({ success: true, metric: saved });
+  } catch (err: any) {
+    res.status(500).json({ error: 'storage_error', details: err?.message });
   }
-  const db = getDb();
-  const list = db.customMetrics || [];
-  const idx = list.findIndex((m: any) => m.id === metric.id);
-  if (idx >= 0) {
-    list[idx] = { ...list[idx], ...metric };
-  } else {
-    list.push(metric);
-  }
-  db.customMetrics = list;
-  saveDb(db);
-  res.json({ success: true, metric });
 });
 
-// Battle verification & witness settling
-app.post('/api/battles/verify', (req, res) => {
-  const { battleId, winnerId, verificationProof, witnessNotes } = req.body;
-  const db = getDb();
-  const battle = (db.battles || []).find((b: any) => b.id === battleId);
-  if (!battle) {
-    return res.status(404).json({ error: 'Заруба не найдена' });
+// Battle verification & witness settling (только для участников зарубы)
+app.post('/api/battles/verify', async (req, res) => {
+  try {
+    const userId = getAuthedUserId(req);
+    const { battleId, winner, verificationProof, witnessNotes } = req.body || {};
+    const record = await getBattleById(String(battleId || ''));
+    if (!record) return res.status(404).json({ error: 'Заруба не найдена' });
+    if (record.creatorId !== userId && record.opponentId !== userId) {
+      return res.status(403).json({ error: 'Вы не участник этой зарубы' });
+    }
+    const winnerSide = winner === 'opponent' ? 'opponent' : winner === 'creator' ? 'creator' : null;
+    if (!winnerSide) return res.status(400).json({ error: "winner должен быть 'creator' или 'opponent'" });
+
+    record.status = 'finished';
+    record.payload = {
+      ...record.payload,
+      winner: winnerSide,
+      verificationProof: verificationProof || record.payload?.verificationProof,
+      witnessNotes: witnessNotes || record.payload?.witnessNotes,
+      settledAt: new Date().toISOString(),
+    };
+    const saved = await saveBattle(record);
+    res.json({ success: true, battle: battleView(saved, userId) });
+  } catch (err: any) {
+    console.error('[battles] ошибка верификации:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
   }
-  battle.status = winnerId === 'user' ? 'user_won' : 'friend_won';
-  battle.verificationProof = verificationProof || battle.verificationProof;
-  battle.witnessNotes = witnessNotes || battle.witnessNotes;
-  battle.settledAt = new Date().toISOString();
-  saveDb(db);
-  res.json({ success: true, battle });
 });
 
 // Telegram Bot Handlers and Polling
@@ -1265,9 +1481,28 @@ async function handleTelegramUpdate(token: string, update: any) {
 
   if (!chatId) return;
 
-  const appUrl = process.env.APP_URL || 'https://ais-dev-c77vot7gc4jzaawlvpzve5-893965801018.europe-west2.run.app';
+  const appUrl = PUBLIC_APP_URL;
 
   if (text.startsWith('/start')) {
+    // Deep link зарубы: https://t.me/<bot>?start=<код> либо ?startapp=<код>
+    const payload = text.split(/\s+/)[1] || '';
+    if (/^[A-Za-z0-9_-]{6,32}$/.test(payload)) {
+      const record = await getBattleByInvite(payload).catch(() => null);
+      if (record && !record.opponentId && record.creatorId !== `tg:${chatId}`) {
+        const inviteUrl = appUrl ? `${appUrl}?startapp=${record.inviteCode}` : '';
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `⚔️ ${record.payload?.creatorName || 'Атлет'} вызывает тебя на зарубу!\n\n«${record.payload?.title || 'Заруба'}»\nЦель: ${record.payload?.targetGoal || '—'} ${record.payload?.unit || ''}\nНа кону: ${record.payload?.wagerTerms?.penaltyLoser || 'честь и уважение'}\n\nПринять вызов можно в приложении 👇`,
+            ...(inviteUrl ? { reply_markup: { inline_keyboard: [[{ text: '⚔️ Принять зарубу', web_app: { url: inviteUrl } }]] } } : {}),
+          }),
+        });
+        return;
+      }
+    }
+
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1330,42 +1565,30 @@ async function handleTelegramUpdate(token: string, update: any) {
   let aiReply = 'Отличный настрой на тренировку! Открой приложение для подробного плана и аналитики.';
   if (text) {
     try {
-      const db = getDb();
-      let userKey = `tg_${chatId}`;
-      let userEntry = db.users[userKey];
-      if (!userEntry && msg.from?.username) {
-        const foundKey = Object.keys(db.users).find(k => db.users[k]?.user?.telegramUsername === msg.from?.username);
-        if (foundKey) {
-          userKey = foundKey;
-          userEntry = db.users[foundKey];
-        }
-      }
-
+      const userId = `tg:${chatId}`;
+      const stored = await getUserState(userId);
+      const userEntry: any = stored?.state;
       const nliResult = await processNaturalLanguageInput(text, userEntry?.user);
       aiReply = nliResult.reply;
 
       // If user performed real data actions via Telegram, persist to database
       if (nliResult.actions && nliResult.actions.length > 0) {
-        if (!db.users[userKey]) {
-          db.users[userKey] = {
-            user: {
-              id: userKey,
-              name: msg.from?.first_name || 'Атлет',
-              telegramUsername: msg.from?.username,
-              disciplineScore: 90,
-              streakDays: 1,
-            },
-            pastWorkouts: [],
-            sleepRecords: [],
-            customMetrics: [],
-            penalties: [],
+        const state: any = userEntry && typeof userEntry === 'object' ? userEntry : {};
+        if (!state.user) {
+          state.user = {
+            id: userId,
+            name: msg.from?.first_name || 'Атлет',
+            telegramUsername: msg.from?.username,
+            disciplineScore: 90,
+            streakDays: 1,
           };
         }
-        const uData = db.users[userKey];
-        if (!uData.pastWorkouts) uData.pastWorkouts = [];
-        if (!uData.sleepRecords) uData.sleepRecords = [];
-        if (!uData.customMetrics) uData.customMetrics = [];
-        if (!uData.penalties) uData.penalties = [];
+        state.pastWorkouts = state.pastWorkouts || [];
+        state.sleepRecords = state.sleepRecords || [];
+        state.customMetrics = state.customMetrics || [];
+        state.penalties = state.penalties || [];
+
+        const uData = state;
 
         const actionNotices: string[] = [];
 
@@ -1443,8 +1666,7 @@ async function handleTelegramUpdate(token: string, update: any) {
             actionNotices.push(`⚠️ Назначено штрафное задание: «${args.penaltyTask}»`);
           } else if (act.function === 'create_experiment') {
             const args = act.args || {};
-            if (!db.experiments) db.experiments = [];
-            db.experiments.unshift({
+            await upsertCollectionItem('experiments', userId, {
               id: `exp_tg_${Date.now()}`,
               title: args.title || 'Эксперимент через Telegram',
               hypothesis: args.hypothesis || '',
@@ -1461,7 +1683,7 @@ async function handleTelegramUpdate(token: string, update: any) {
           }
         }
 
-        saveDb(db);
+        await saveUserState(userId, state);
 
         if (actionNotices.length > 0) {
           aiReply = `✅ **Данные сохранены в GetFit:**\n${actionNotices.join('\n')}\n\n${aiReply}`;
@@ -1488,6 +1710,50 @@ async function handleTelegramUpdate(token: string, update: any) {
 }
 
 let isPollingStarted = false;
+
+/** Регистрируем webhook — единственный рабочий вариант для Render (сервис засыпает, polling умирает). */
+async function registerTelegramWebhook(token: string): Promise<void> {
+  if (!PUBLIC_APP_URL) {
+    console.warn('[telegram] APP_URL не задан — webhook и кнопка Mini App не настроены.');
+    return;
+  }
+  const url = `${PUBLIC_APP_URL}/api/telegram/webhook`;
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url,
+        ...(secret ? { secret_token: secret } : {}),
+        allowed_updates: ['message', 'callback_query'],
+      }),
+    });
+    const data = (await res.json()) as any;
+    if (data.ok) {
+      console.log(`[telegram] webhook установлен: ${url}`);
+      if (!secret) console.warn('[telegram] TELEGRAM_WEBHOOK_SECRET не задан — вебхук принимает любые запросы.');
+    } else {
+      console.error('[telegram] setWebhook error:', data.description);
+    }
+  } catch (err: any) {
+    console.error('[telegram] setWebhook failed:', err?.message);
+  }
+
+  // Кнопка Mini App в меню чата
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/setChatMenuButton`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        menu_button: { type: 'web_app', text: 'Открыть GetFit', web_app: { url: PUBLIC_APP_URL } },
+      }),
+    });
+  } catch (err: any) {
+    console.warn('[telegram] setChatMenuButton failed:', err?.message);
+  }
+}
+
 async function initTelegramBot() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -1519,9 +1785,14 @@ async function initTelegramBot() {
         console.warn('Could not set bot commands:', cmdErr);
       }
 
-      if (!isPollingStarted) {
-        isPollingStarted = true;
-        startTelegramPolling(token);
+      if (IS_DEV) {
+        // Локально Telegram не достучится до localhost — работаем через polling
+        if (!isPollingStarted) {
+          isPollingStarted = true;
+          startTelegramPolling(token);
+        }
+      } else {
+        await registerTelegramWebhook(token);
       }
     } else {
       console.warn('Telegram bot initialization error:', data.description);
@@ -1565,7 +1836,26 @@ async function startTelegramPolling(token: string) {
 
 // Start server with Vite middleware in dev or static serving in production
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  // Хранилище поднимаем до старта: если Postgres недоступен, лучше упасть сразу,
+  // чем молча писать данные в эфемерный файл.
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await initStorage();
+      lastError = null;
+      break;
+    } catch (err) {
+      lastError = err;
+      console.error(`[storage] попытка ${attempt}/3 не удалась:`, (err as Error)?.message);
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+    }
+  }
+  if (lastError) {
+    console.error('[storage] Postgres недоступен. Проверьте DATABASE_URL (Supabase → Session pooler).');
+    process.exit(1);
+  }
+
+  if (IS_DEV) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1581,8 +1871,8 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`GetFitBot server running on port ${PORT}`);
-    initTelegramBot().catch(err => console.error('Telegram bot init error:', err));
+    console.log(`GetFitBot server running on port ${PORT} (${IS_DEV ? 'dev' : 'production'})`);
+    initTelegramBot().catch((err) => console.error('Telegram bot init error:', err));
   });
 }
 

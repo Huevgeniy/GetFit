@@ -1,4 +1,3 @@
-```
 # Dependencies
 node_modules/
 
@@ -11,6 +10,12 @@ target/
 .env
 .env.local
 .env.*
+
+# Runtime data (файловая БД, не коммитим: на хостинге ФС эфемерная)
+data/cloud_db.json
+
+# Local npm cache
+.npm-cache/
 
 # Python
 __pycache__/
@@ -68,7 +73,6 @@ Thumbs.db
 
 # MyPy
 .mypy_cache/
-__pycache__/
 
 # PyTest
 .pytest_cache/
@@ -89,4 +93,3 @@ yarn-error.log*
 
 # TypeScript
 *.tsbuildinfo
-```

@@ -80,8 +80,10 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
     });
 
     const totalTonnage = relevantWorkouts.reduce((sum, w) => sum + (w.totalTonnageKg || 0), 0);
-    const avgRpe = relevantWorkouts.length > 0 
-      ? relevantWorkouts.reduce((sum, w) => sum + (w.exercises?.reduce((eSum, e) => eSum + (e.sets?.reduce((sSum, s) => sSum + (s.rpe || 8), 0) || 0) || 0), 0) / relevantWorkouts.length / (relevantWorkouts[0]?.exercises?.length || 1)
+    const allSets = relevantWorkouts.flatMap(w => (w.exercises || []).flatMap(e => e.sets || []));
+    const rpeSets = allSets.filter(s => typeof s.rpe === 'number' && (s.rpe as number) > 0);
+    const avgRpe = rpeSets.length > 0
+      ? rpeSets.reduce((sum, s) => sum + (s.rpe as number), 0) / rpeSets.length
       : 0;
 
     return {

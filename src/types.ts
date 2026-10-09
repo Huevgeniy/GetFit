@@ -496,6 +496,7 @@ export interface TrainingBlock {
   status?: 'active' | 'completed' | 'planned' | string;
   notes?: string;
   targetRpeRange?: [number, number];
+  createdAt?: string;
   completedWorkoutsCount?: number;
   totalTonnage?: number;
   averageRpe?: number;

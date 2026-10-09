@@ -1,0 +1,35 @@
+# Render Blueprint для GetFitBot (Telegram Mini App)
+# Документация: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: getfitbot
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    # --include=dev обязателен: vite/esbuild/typescript лежат в devDependencies
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0
+      - key: NODE_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      # Строка подключения Supabase (Session pooler, порт 5432)
+      - key: DATABASE_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      # Публичный адрес сервиса, например https://getfitbot.onrender.com
+      - key: APP_URL
+        sync: false

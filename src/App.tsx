@@ -643,7 +643,7 @@ export default function App() {
                   pastWorkouts={pastWorkouts}
                   onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
                 />
-              }
+              )}
 
               {currentTab === 'periodization' && (
                 <PeriodizationView
