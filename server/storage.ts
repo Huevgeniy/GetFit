@@ -129,6 +129,12 @@ async function migratePostgres(): Promise<void> {
       updated_at timestamptz not null default now(),
       primary key (user_id, id)
     );
+    create table if not exists notifications (
+      user_id  text not null,
+      type     text not null,
+      sent_at  timestamptz not null default now(),
+      primary key (user_id, type)
+    );
   `);
 }
 
@@ -149,9 +155,10 @@ interface FileDb {
   experiments: any[];
   cycles: any[];
   customMetrics: any[];
+  notifications?: { userId: string; type: string; sentAt: string }[];
 }
 
-const EMPTY_DB: FileDb = { users: {}, battles: [], experiments: [], cycles: [], customMetrics: [] };
+const EMPTY_DB: FileDb = { users: {}, battles: [], experiments: [], cycles: [], customMetrics: [], notifications: [] };
 
 function ensureFileDb(): void {
   const dir = path.dirname(dbFile);
@@ -173,6 +180,7 @@ function readFileDb(): FileDb {
       experiments: parsed.experiments || [],
       cycles: parsed.cycles || [],
       customMetrics: parsed.customMetrics || [],
+      notifications: parsed.notifications || [],
     };
   } catch {
     return { ...EMPTY_DB };
@@ -339,4 +347,49 @@ export async function upsertCollectionItem(name: CollectionName, userId: string,
     else list.unshift(record);
   });
   return record;
+}
+
+/* ------------------------------------------------------------------ */
+/* Напоминания: отметки об отправке живут отдельно от состояния         */
+/* пользователя, чтобы не перетирать данные клиента при записи.         */
+/* ------------------------------------------------------------------ */
+
+export async function listAllUserStates(): Promise<{ userId: string; state: any }[]> {
+  if (mode === 'postgres' && pool) {
+    const { rows } = await pool.query('select user_id, state from user_state order by updated_at desc limit 5000');
+    return rows.map((row) => ({ userId: row.user_id, state: row.state }));
+  }
+  const db = readFileDb();
+  return Object.entries(db.users).map(([userId, state]) => ({ userId, state }));
+}
+
+export async function getLastNotification(userId: string, type: string): Promise<string | null> {
+  if (mode === 'postgres' && pool) {
+    const { rows } = await pool.query('select sent_at from notifications where user_id = $1 and type = $2', [
+      userId,
+      type,
+    ]);
+    return rows.length ? new Date(rows[0].sent_at).toISOString() : null;
+  }
+  const db = readFileDb();
+  const found = (db.notifications || []).find((n) => n.userId === userId && n.type === type);
+  return found?.sentAt || null;
+}
+
+export async function recordNotification(userId: string, type: string): Promise<void> {
+  if (mode === 'postgres' && pool) {
+    await pool.query(
+      `insert into notifications (user_id, type, sent_at) values ($1, $2, now())
+       on conflict (user_id, type) do update set sent_at = now()`,
+      [userId, type],
+    );
+    return;
+  }
+  const sentAt = new Date().toISOString();
+  await writeFileDb((db) => {
+    if (!db.notifications) db.notifications = [];
+    const idx = db.notifications.findIndex((n) => n.userId === userId && n.type === type);
+    if (idx >= 0) db.notifications[idx] = { userId, type, sentAt };
+    else db.notifications.push({ userId, type, sentAt });
+  });
 }

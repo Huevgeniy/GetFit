@@ -30,6 +30,12 @@ services:
         generateValue: true
       - key: TELEGRAM_WEBHOOK_SECRET
         generateValue: true
+      # Секрет для внешнего планировщика напоминаний
+      - key: CRON_SECRET
+        generateValue: true
+      # Часовой пояс для напоминаний (Москва = 3)
+      - key: NOTIFY_TZ_OFFSET_HOURS
+        value: 3
       # Публичный адрес сервиса, например https://getfitbot.onrender.com
       - key: APP_URL
         sync: false

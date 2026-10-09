@@ -26,6 +26,7 @@ import {
   upsertCollectionItem,
   type BattleRecord,
 } from './server/storage.ts';
+import { runNotificationCycle } from './server/notifications.ts';
 
 dotenv.config();
 
@@ -224,7 +225,12 @@ function getAuthedSession(req: express.Request) {
   return (req as AuthedRequest).session;
 }
 
-const PUBLIC_API_PATHS = new Set(['/api/health', '/api/auth/telegram', '/api/telegram/webhook']);
+const PUBLIC_API_PATHS = new Set([
+  '/api/health',
+  '/api/auth/telegram',
+  '/api/telegram/webhook',
+  '/api/notifications/run',
+]);
 
 // Все /api/* требуют сессию, кроме публичных путей
 app.use('/api', (req, res, next) => {
@@ -310,6 +316,53 @@ app.post('/api/auth/telegram', (req, res) => {
 app.get('/api/me', (req, res) => {
   res.json({ userId: getAuthedUserId(req), storage: storageMode() });
 });
+
+/* ------------------------------------------------------------------ */
+/* Напоминания: эндпоинт для внешнего планировщика                      */
+/* ------------------------------------------------------------------ */
+
+function safeCompare(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  } catch {
+    return false;
+  }
+}
+
+async function handleNotificationRun(req: express.Request, res: express.Response) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    return res.status(503).json({
+      error: 'disabled',
+      message: 'CRON_SECRET не задан — планировщик напоминаний выключен',
+    });
+  }
+  const provided = String(req.headers['x-cron-secret'] || req.query.key || req.body?.key || '');
+  if (!safeCompare(provided, secret)) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+
+  const dryRun = req.query.dryRun === '1' || req.body?.dryRun === true;
+  try {
+    const result = await runNotificationCycle(
+      (userId, text) => notifyTelegramUser(userId, text),
+      { dryRun },
+    );
+    console.log(
+      `[notify] проверено ${result.checkedUsers}, к отправке ${result.due.length}, отправлено ${result.sent.length}` +
+        (dryRun ? ' (dry-run)' : ''),
+    );
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    console.error('[notify] ошибка прохода:', err?.message);
+    res.status(500).json({ error: 'notify_failed', details: err?.message });
+  }
+}
+
+// Поддерживаем и GET (для планировщиков, умеющих только URL), и POST
+app.get('/api/notifications/run', handleNotificationRun);
+app.post('/api/notifications/run', handleNotificationRun);
 
 // Синхронизация состояния пользователя.
 // Идентификатор берётся из подписанной сессии — подставить чужой нельзя.

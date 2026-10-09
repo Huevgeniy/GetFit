@@ -15,7 +15,8 @@
     "lint": "tsc --noEmit",
     "test:smoke": "node scripts/smoke-test.mjs",
     "test:client": "node scripts/client-test.mjs",
-    "test:pg": "node scripts/pg-test.mjs"
+    "test:pg": "node scripts/pg-test.mjs",
+    "test:notify": "node scripts/notifications-test.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

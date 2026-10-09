@@ -120,5 +120,22 @@ const oldHash = createHmac('sha256', secretKey).update(oldCheck).digest('hex');
 const expired = await call('/api/auth/telegram', { method: 'POST', body: { initData: new URLSearchParams({ ...oldFields, hash: oldHash }).toString() } });
 check('просроченный initData (3 дня) = 401', expired.status === 401, expired.json?.error);
 
+// 13. Планировщик напоминаний закрыт секретом.
+// Полная проверка требует запуска сервера с CRON_SECRET=test-cron-secret.
+const notifyNoSecret = await call('/api/notifications/run');
+if (notifyNoSecret.status === 503) {
+  console.log('SKIP  планировщик напоминаний выключен (CRON_SECRET не задан на сервере)');
+} else {
+  check('планировщик без секрета = 401', notifyNoSecret.status === 401, String(notifyNoSecret.status));
+  const notifyWrong = await call('/api/notifications/run?key=wrong-secret');
+  check('планировщик с неверным секретом = 401', notifyWrong.status === 401, String(notifyWrong.status));
+  const notifyDry = await call('/api/notifications/run?dryRun=1&key=test-cron-secret');
+  check(
+    'планировщик с верным секретом отвечает (dry-run)',
+    notifyDry.status === 200 && notifyDry.json?.dryRun === true && Array.isArray(notifyDry.json?.due),
+    JSON.stringify({ status: notifyDry.status, checked: notifyDry.json?.checkedUsers, due: notifyDry.json?.due?.length }),
+  );
+}
+
 console.log(`\n${failures === 0 ? 'ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ' : `ПРОВАЛОВ: ${failures}`}`);
 process.exit(failures === 0 ? 0 : 1);
