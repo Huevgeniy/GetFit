@@ -19,6 +19,8 @@ data/cloud_db.json
 
 # Временный вывод тестов клиента
 .tmp-libtest/
+.tmp-render/
+.tmp-dom/
 
 # Python
 __pycache__/

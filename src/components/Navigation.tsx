@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dumbbell, Utensils, LineChart, FlaskConical, Award, ShieldCheck, User, Layers } from 'lucide-react';
+import { Dumbbell, Utensils, LineChart, FlaskConical, Award, ShieldCheck, User, Layers, Swords } from 'lucide-react';
 import { hapticSelect } from '../lib/telegram';
 
 export type NavTab = 'workouts' | 'nutrition' | 'charts' | 'lab' | 'periodization' | 'ranks' | 'discipline' | 'profile' | 'battles';
@@ -28,6 +28,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       icon: ShieldCheck,
       badge: pendingPenaltiesCount > 0 ? pendingPenaltiesCount : undefined 
     },
+    { id: 'battles' as NavTab, label: 'Зарубы', icon: Swords },
     { id: 'profile' as NavTab, label: 'Профиль', icon: User },
   ];
 

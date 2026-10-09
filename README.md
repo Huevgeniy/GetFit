@@ -41,6 +41,7 @@ npm run test:client  # логика входа и синхронизации —
 npm run test:pg      # Postgres-ветка хранилища на in-memory Postgres — 21 проверка
 npm run test:css     # сборка Tailwind v4 из src/index.css — 15 проверок
 npm run test:render  # рендер приложения и всех 16 экранов — 24 проверки
+npm run test:dom     # DOM (jsdom): гидратация из облака и переключение вкладок — 17 проверок
 npm run test:notify  # логика напоминаний — 17 проверок
 npm run test:smoke   # API целиком — 38 проверок, нужен запущенный сервер
 ```
