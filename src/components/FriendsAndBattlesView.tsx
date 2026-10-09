@@ -121,11 +121,6 @@ export const FriendsAndBattlesView: React.FC<FriendsAndBattlesViewProps> = ({
   // Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Панель с ссылкой-приглашением после создания зарубы
-  const [invitePanel, setInvitePanel] = useState<
-    { link: string; friendName: string; username: string; title?: string } | null
-  >(null);
-
   useEffect(() => {
     try {
       localStorage.setItem('getfit_friends_list', JSON.stringify(friends));
@@ -260,7 +255,6 @@ export const FriendsAndBattlesView: React.FC<FriendsAndBattlesViewProps> = ({
     const saved = (await onAddBattle(newBattle)) as FriendBattle | null | undefined;
     setShowCreateBattleModal(false);
     if (saved?.inviteLink) {
-      setInvitePanel({ link: saved.inviteLink, friendName: friend.name, username: friend.username, title: saved.title });
       showToast(`Ссылка-приглашение для ${friend.name} готова!`);
     } else {
       showToast('Не удалось создать зарубу — проверь связь');
@@ -1054,53 +1048,6 @@ export const FriendsAndBattlesView: React.FC<FriendsAndBattlesViewProps> = ({
                 Заключить пари 🤝
               </button>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* Панель со ссылкой-приглашением: друг принимает зарубу по deep-link */}
-      {invitePanel && (
-        <div className="safe-bottom fixed inset-x-0 bottom-0 z-50 p-3 bg-[#0b0f12]/95 border-t border-emerald-500/40 backdrop-blur-md">
-          <div className="max-w-lg mx-auto space-y-2">
-            <div className="text-xs font-bold text-emerald-300">
-              Приглашение для {invitePanel.friendName} ({invitePanel.username}) готово
-            </div>
-            <div className="text-[11px] text-slate-400 break-all font-mono bg-[#141c24] border border-[#22303f] rounded-lg p-2">
-              {invitePanel.link}
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  hapticImpact('medium');
-                  shareToTelegram(
-                    invitePanel.link,
-                    `⚔️ Заруба «${invitePanel.title || 'GetFit'}» — принимай вызов!`,
-                  );
-                }}
-                className="flex-1 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl transition-all active:scale-95"
-              >
-                Отправить в Telegram
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  copyToClipboard(invitePanel.link).then((ok) =>
-                    showToast(ok ? 'Ссылка скопирована' : 'Не удалось скопировать'),
-                  )
-                }
-                className="px-3 py-2 bg-[#141c24] border border-[#22303f] text-slate-200 font-bold text-xs rounded-xl"
-              >
-                Копировать
-              </button>
-              <button
-                type="button"
-                onClick={() => setInvitePanel(null)}
-                className="px-3 py-2 bg-[#141c24] border border-[#22303f] text-slate-400 font-bold text-xs rounded-xl"
-              >
-                Закрыть
-              </button>
-            </div>
           </div>
         </div>
       )}

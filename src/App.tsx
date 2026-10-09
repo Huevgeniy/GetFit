@@ -15,7 +15,7 @@ import { PeriodizationView } from './components/PeriodizationView';
 import { AiSettingsModal } from './components/AiSettingsModal';
 import { InteractiveTour } from './components/InteractiveTour';
 import { Bot, Mic } from 'lucide-react';
-import { applyTelegramUi, closeMiniApp, getStartParam, hapticImpact, hapticNotify, setupBackButton } from './lib/telegram';
+import { applyTelegramUi, closeMiniApp, copyToClipboard, getStartParam, hapticImpact, hapticNotify, setupBackButton, shareToTelegram } from './lib/telegram';
 import {
   apiFetch,
   createBattle,
@@ -250,7 +250,7 @@ export default function App() {
 
   /* ---------------- Синхронизация с облаком ---------------- */
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'offline' | 'local'>('idle');
-  const [battleNotice, setBattleNotice] = useState<string | null>(null);
+  const [battleNotice, setBattleNotice] = useState<{ text: string; link?: string } | null>(null);
   const hydratedRef = useRef(false);
   const skipSaveRef = useRef(false);
   const syncTimerRef = useRef<number | null>(null);
@@ -354,7 +354,7 @@ export default function App() {
         setBattles(prev => [res.battle, ...prev.filter(b => b.id !== res.battle.id)]);
         hapticNotify('success');
         setCurrentTab('battles');
-        setBattleNotice(`Ты принял зарубу «${res.battle.title || 'Заруба'}»!`);
+        setBattleNotice({ text: `Ты принял зарубу «${res.battle.title || 'Заруба'}»!` });
       }
     })();
   }, []);
@@ -380,10 +380,10 @@ export default function App() {
     };
   }, [anyModalOpen, isLiveWorkoutOpen, isGlobalAiChatOpen, isAiSettingsOpen, isTourOpen]);
 
-  // Уведомление о принятой зарубе само скрывается
+  // Уведомление о зарубе само скрывается (со ссылкой держим дольше — её копируют)
   useEffect(() => {
     if (!battleNotice) return;
-    const timer = window.setTimeout(() => setBattleNotice(null), 6000);
+    const timer = window.setTimeout(() => setBattleNotice(null), battleNotice.link ? 20000 : 6000);
     return () => window.clearTimeout(timer);
   }, [battleNotice]);
 
@@ -471,10 +471,17 @@ export default function App() {
     if (res?.battle) {
       setBattles(prev => [res.battle, ...prev.filter(b => b.id !== res.battle.id)]);
       hapticNotify('success');
+      // Ссылку показываем сразу: друг принимает зарубу по этой ссылке
+      if (res.battle.inviteLink) {
+        setBattleNotice({
+          text: `Заруба «${res.battle.title || 'Заруба'}» создана. Отправь другу ссылку-приглашение:`,
+          link: res.battle.inviteLink,
+        });
+      }
       return res.battle as FriendBattle;
     }
     hapticNotify('error');
-    setBattleNotice('Не удалось создать зарубу — проверь связь');
+    setBattleNotice({ text: 'Не удалось создать зарубу — проверь связь' });
     return null;
   };
 
@@ -493,11 +500,11 @@ export default function App() {
       setBattles(prev => prev.map(b => (b.id === battleId ? (res.battle as FriendBattle) : b)));
       if (res.battle.status === 'user_won') {
         hapticNotify('success');
-        setBattleNotice(`🏆 Заруба «${res.battle.title || 'Заруба'}» выиграна!`);
+        setBattleNotice({ text: `🏆 Заруба «${res.battle.title || 'Заруба'}» выиграна!` });
       }
     } else {
       hapticNotify('error');
-      setBattleNotice('Прогресс не сохранился — нет связи с сервером');
+      setBattleNotice({ text: 'Прогресс не сохранился — нет связи с сервером' });
     }
   };
 
@@ -918,10 +925,41 @@ export default function App() {
           </div>
         )}
 
-        {/* Всплывающее уведомление о зарубе */}
+        {/* Всплывающее уведомление о зарубе (со ссылкой-приглашением, если есть) */}
         {battleNotice && (
-          <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 max-w-[92%] px-3 py-2 rounded-xl bg-emerald-500 text-slate-950 text-xs font-bold shadow-xl">
-            {battleNotice}
+          <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-md px-3 py-2 rounded-xl bg-emerald-500 text-slate-950 text-xs font-bold shadow-xl space-y-1.5">
+            <div>{battleNotice.text}</div>
+            {battleNotice.link && (
+              <div className="flex items-center gap-2">
+                <span className="flex-1 truncate font-mono text-[10px] bg-emerald-950/20 rounded px-1.5 py-1">
+                  {battleNotice.link}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    hapticImpact('medium');
+                    shareToTelegram(battleNotice.link as string, '⚔️ Принимай вызов — заруба в GetFit!');
+                  }}
+                  className="px-2 py-1 rounded-lg bg-slate-950 text-emerald-300 text-[10px] font-bold"
+                >
+                  Отправить
+                </button>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(battleNotice.link as string)}
+                  className="px-2 py-1 rounded-lg bg-slate-950 text-emerald-300 text-[10px] font-bold"
+                >
+                  Копировать
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBattleNotice(null)}
+                  className="px-2 py-1 rounded-lg bg-slate-950/20 text-slate-900 text-[10px] font-bold"
+                >
+                  ОК
+                </button>
+              </div>
+            )}
           </div>
         )}
 
