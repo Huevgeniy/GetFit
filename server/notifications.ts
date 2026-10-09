@@ -23,6 +23,7 @@ export interface NotificationRunResult {
   checkedUsers: number;
   due: ReminderDecision[];
   sent: ReminderDecision[];
+  failed: ReminderDecision[];
   skippedByCooldown: number;
   dryRun: boolean;
   nowLocal: string;
@@ -121,10 +122,10 @@ export function decideReminders(userId: string, state: any, now: Date = new Date
 
 /**
  * Полный проход: собрать решения, отфильтровать по «остыванию» и отправить.
- * @param send функция отправки сообщения пользователю
+ * @param send функция отправки: возвращает false, если доставить не удалось
  */
 export async function runNotificationCycle(
-  send: (userId: string, text: string) => Promise<void>,
+  send: (userId: string, text: string) => Promise<boolean | void>,
   options: { dryRun?: boolean; now?: Date } = {},
 ): Promise<NotificationRunResult> {
   const now = options.now || new Date();
@@ -148,14 +149,21 @@ export async function runNotificationCycle(
   }
 
   const sent: ReminderDecision[] = [];
+  const failed: ReminderDecision[] = [];
   if (!dryRun) {
     for (const decision of due) {
       try {
-        await send(decision.userId, decision.text);
+        const delivered = await send(decision.userId, decision.text);
+        if (delivered === false) {
+          // Не отмечаем как отправленное: следующая попытка — в ближайший проход
+          failed.push(decision);
+          continue;
+        }
         await recordNotification(decision.userId, decision.type);
         sent.push(decision);
       } catch (err: any) {
         console.error(`[notify] не отправлено ${decision.userId}/${decision.type}:`, err?.message);
+        failed.push(decision);
       }
     }
   }
@@ -165,6 +173,7 @@ export async function runNotificationCycle(
     checkedUsers: users.length,
     due,
     sent,
+    failed,
     skippedByCooldown,
     dryRun,
     nowLocal: `${dateKey} ${String(hour).padStart(2, '0')}:00 (UTC+${tzOffsetHours()})`,

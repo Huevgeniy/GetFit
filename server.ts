@@ -350,7 +350,8 @@ async function handleNotificationRun(req: express.Request, res: express.Response
       { dryRun },
     );
     console.log(
-      `[notify] проверено ${result.checkedUsers}, к отправке ${result.due.length}, отправлено ${result.sent.length}` +
+      `[notify] проверено ${result.checkedUsers}, к отправке ${result.due.length}, ` +
+        `отправлено ${result.sent.length}, не доставлено ${result.failed.length}` +
         (dryRun ? ' (dry-run)' : ''),
     );
     res.json({ success: true, ...result });
@@ -407,19 +408,27 @@ function battleInviteLink(inviteCode: string): string {
   return `https://t.me/${BOT_USERNAME}?start=${inviteCode}`;
 }
 
-/** Личное сообщение пользователю (userId формата `tg:<telegram_id>`). */
-async function notifyTelegramUser(userId: string, html: string): Promise<void> {
+/** Личное сообщение пользователю (userId формата `tg:<telegram_id>`). true — Telegram принял. */
+async function notifyTelegramUser(userId: string, html: string): Promise<boolean> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token || !userId?.startsWith('tg:')) return;
+  if (!token || !userId?.startsWith('tg:')) return false;
   const chatId = userId.slice(3);
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text: html, parse_mode: 'HTML' }),
     });
+    const data = (await res.json().catch(() => null)) as any;
+    if (!res.ok || !data?.ok) {
+      // Частые причины: пользователь не запускал бота или заблокировал его
+      console.warn(`[telegram] сообщение для ${userId} не доставлено: ${data?.description || res.status}`);
+      return false;
+    }
+    return true;
   } catch (err: any) {
     console.warn('[telegram] уведомление не отправлено:', err?.message);
+    return false;
   }
 }
 

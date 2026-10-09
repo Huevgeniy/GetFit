@@ -112,8 +112,25 @@ const tomorrow = new Date(NOW.getTime() + dayMs);
 check('на следующий день напоминание снова уместно', typesFor(planUser, tomorrow).includes('workout'), JSON.stringify(typesFor(planUser, tomorrow)));
 
 // 11. Пользователи без Telegram пропускаются
-check('dev-пользователю не пишем', !real.due.some((d) => d.userId === 'dev:local') && !dry.due.some((d) => d.userId === 'dev:local'));
-check('состояние пользователя не перетёрто напоминаниями', (await storage.getUserState('tg:1001'))?.state?.workoutPlans?.length === 1);
+check('dev-пользователю не пишем', !real.due.some((d) => d.userId === 'dev:local') && !dry.due.some((d) => d.userId === 'dev:local'));check('состояние пользователя не перетёрто напоминаниями', (await storage.getUserState('tg:1001'))?.state?.workoutPlans?.length === 1);
+
+// 12. Неудачная доставка: отметка не ставится, попытка повторится
+const dataDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'getfit-notify2-'));
+fs.writeFileSync(
+  path.join(dataDir2, 'cloud_db.json'),
+  JSON.stringify({ users: { 'tg:2002': planUser }, battles: [], experiments: [], cycles: [], customMetrics: [], notifications: [] }, null, 2),
+  'utf-8',
+);
+process.env.DATA_DIR = dataDir2;
+await storage.initStorage(); // переключаем файловое хранилище на новый каталог
+
+const failedCycle = await notify.runNotificationCycle(async () => false, { now: NOW });
+check('недоставленное попадает в failed, а не в sent', failedCycle.failed.length === 1 && failedCycle.sent.length === 0, JSON.stringify({ sent: failedCycle.sent.length, failed: failedCycle.failed.length }));
+check('при неудаче отметка не ставится (напоминание не «сгорает»)', (await storage.getLastNotification('tg:2002', 'workout')) === null);
+const retryCycle = await notify.runNotificationCycle(async () => true, { now: NOW });
+check('повторный проход доставляет то же напоминание', retryCycle.sent.length === 1, JSON.stringify(retryCycle.sent.map((d) => d.type)));
+
+fs.rmSync(dataDir2, { recursive: true, force: true });
 
 fs.rmSync(dataDir, { recursive: true, force: true });
 console.log(`\n${failures === 0 ? 'ВСЕ ПРОВЕРКИ НАПОМИНАНИЙ ПРОЙДЕНЫ' : `ПРОВАЛОВ: ${failures}`}`);
