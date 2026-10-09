@@ -2,7 +2,6 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import {
@@ -30,8 +29,9 @@ import {
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Внимание: __dirname/import.meta.url здесь использовать нельзя.
+// Прод-бандл собирается в CJS (esbuild --format=cjs), где import.meta.url === undefined,
+// и обращение к нему падает при загрузке модуля. Базовый каталог берём из process.cwd().
 
 const app = express();
 // Хостинги (Render, Railway, Fly) передают порт через переменную окружения

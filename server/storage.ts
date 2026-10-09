@@ -48,9 +48,21 @@ export function generateInviteCode(): string {
 /* Инициализация                                                       */
 /* ------------------------------------------------------------------ */
 
-export async function initStorage(): Promise<StorageMode> {
+/**
+ * Инициализация хранилища.
+ * @param options.pool — готовый пул (используется тестами с in-memory Postgres).
+ */
+export async function initStorage(options: { pool?: Pool } = {}): Promise<StorageMode> {
   const url = process.env.DATABASE_URL?.trim();
   dbFile = path.join(process.env.DATA_DIR || path.join(process.cwd(), 'data'), 'cloud_db.json');
+
+  if (options.pool) {
+    pool = options.pool;
+    await migratePostgres();
+    mode = 'postgres';
+    console.log('[storage] режим: postgres (внешний пул)');
+    return mode;
+  }
 
   if (url) {
     const isLocal = /@(localhost|127\.0\.0\.1|\[::1\])/.test(url);
@@ -60,7 +72,7 @@ export async function initStorage(): Promise<StorageMode> {
       ssl: isLocal ? undefined : { rejectUnauthorized: false },
       connectionTimeoutMillis: 15000,
     });
-    pool.on('error', (err) => console.error('[storage] ошибка пула Postgres:', err.message));
+    pool.on?.('error', (err: Error) => console.error('[storage] ошибка пула Postgres:', err.message));
     await migratePostgres();
     mode = 'postgres';
     console.log('[storage] режим: postgres');
