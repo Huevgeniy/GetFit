@@ -113,13 +113,15 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({
           </div>
           <div className="text-xs">
             <div className="flex items-center gap-2 font-bold text-white">
-              <span>Двухъядерный ИИ-движок активен</span>
+              <span>ИИ-движок активен</span>
               <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 Синхронизировано
               </span>
             </div>
             <p className="text-slate-300 mt-1 leading-relaxed">
-              <strong className="text-cyan-400">Gemini (DeepMind)</strong> + <strong className="text-emerald-400">Grok (xAI)</strong> работают в паре. Запросы обрабатываются мгновенно, с автоматическим резервным переключением без задержек.
+              Основной провайдер — <strong className="text-emerald-400">Groq</strong> (модель Qwen 3.8 27B), резервный —{' '}
+              <strong className="text-cyan-400">Gemini Flash</strong>. Если оба недоступны, приложение отвечает встроенным
+              разбором без ИИ. Ключи хранятся на сервере, в браузер не попадают.
             </p>
           </div>
         </div>

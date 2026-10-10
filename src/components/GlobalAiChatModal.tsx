@@ -74,7 +74,7 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
       sender: 'ai',
       text: `Привет, ${user.name || 'Атлет'}! Я твой интеллектуальный ИИ-ассистент GetFitBot с Natural Language Interface.\n\nВместо заполнения форм просто напиши или надиктуй голосом:\n«Сегодня сделал жим 100 на 5 раз, чувствовалось тяжело, спал всего 5 часов. Еще замерил талию 82 см.»\n\nЯ сам распознаю упражнения, замеры, сон и внесу всё в твои графики и профиль!`,
       timestamp: 'Сейчас',
-      aiProvider: 'groq/llama-3.3',
+      aiProvider: 'ждать сообщения',
     },
   ]);
 
@@ -501,8 +501,17 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
               <div className="flex items-center gap-1.5 text-[9px] font-mono text-slate-500 mt-1 px-1">
                 <span>{msg.timestamp}</span>
                 {msg.aiProvider && (
-                  <span className="text-[8px] px-1 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/50">
-                    {msg.aiProvider}
+                  <span
+                    className="text-[8px] px-1 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/50"
+                    title="Кто подготовил ответ: Groq — основной ИИ, Gemini — резерв, встроенный разбор — без ИИ"
+                  >
+                    {msg.aiProvider === 'groq'
+                      ? 'ответил: Groq'
+                      : msg.aiProvider === 'gemini'
+                        ? 'ответил: Gemini'
+                        : msg.aiProvider === 'heuristic'
+                          ? 'встроенный разбор'
+                          : msg.aiProvider}
                   </span>
                 )}
               </div>

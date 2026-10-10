@@ -235,6 +235,37 @@ function scheduleStorageRetry(): void {
   timer.unref?.();
 }
 
+/**
+ * Напоминания без внешнего cron: проход раз в 30 минут, пока сервис бодрствует.
+ * На бесплатном Render сервис засыпает, поэтому надёжнее внешний планировщик —
+ * но и здесь напоминания уходят, как только сервис разбужен (повторы исключает
+ * 20-часовой cooldown в notifications.ts).
+ */
+function scheduleReminders(): void {
+  if ((process.env.REMINDERS_IN_PROCESS || 'true').toLowerCase() === 'false') return;
+
+  let running = false;
+  const tick = async () => {
+    if (running || !storageReady) return;
+    running = true;
+    try {
+      const result = await runNotificationCycle((userId, text) => notifyTelegramUser(userId, text), {});
+      if (result.sent.length > 0) {
+        console.log(`[notify] плановый проход: отправлено ${result.sent.length}`);
+      }
+    } catch (err: any) {
+      console.warn('[notify] ошибка планового прохода:', err?.message);
+    } finally {
+      running = false;
+    }
+  };
+
+  const timer = setInterval(tick, 30 * 60 * 1000);
+  timer.unref?.();
+  const first = setTimeout(tick, 60 * 1000);
+  first.unref?.();
+}
+
 // Пока базы нет, отвечаем понятной ошибкой вместо невнятного 500
 app.use('/api', (req, res, next) => {
   if (storageReady) return next();
@@ -2056,6 +2087,7 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`GetFitBot server running on port ${PORT} (${IS_DEV ? 'dev' : 'production'})`);
     initTelegramBot().catch((err) => console.error('Telegram bot init error:', err));
+    scheduleReminders();
 
     (async () => {
       for (let attempt = 1; attempt <= 3; attempt += 1) {
