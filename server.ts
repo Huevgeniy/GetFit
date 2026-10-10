@@ -190,15 +190,60 @@ async function callUnifiedAI(options: CallAIOptions): Promise<CallAIResult> {
   return { text: '', provider: 'heuristic' };
 }
 
+/**
+ * Доступна ли база. false — сервер работает, но данные недоступны
+ * (например, бесплатный проект Supabase ушёл в паузу).
+ */
+let storageReady = false;
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
-    status: 'ok',
+    status: storageReady ? 'ok' : 'degraded',
     mode: IS_DEV ? 'development' : 'production',
     devAuthAllowed: IS_DEV,
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
     hasGrokKey: Boolean(GROK_KEY),
     hasTelegramToken: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+    storage: storageReady ? storageMode() : 'unavailable',
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Доступность хранилища                                               */
+/* ------------------------------------------------------------------ */
+
+async function initStorageOnce(): Promise<boolean> {
+  try {
+    await initStorage();
+    storageReady = true;
+    return true;
+  } catch (err: any) {
+    storageReady = false;
+    console.error('[storage] инициализация не удалась:', err?.message);
+    return false;
+  }
+}
+
+/** Повторные попытки подключения к базе в фоне (раз в 2 минуты). */
+function scheduleStorageRetry(): void {
+  const timer = setInterval(async () => {
+    if (storageReady) return;
+    console.log('[storage] повторная попытка подключения к базе…');
+    if (await initStorageOnce()) console.log('[storage] база снова доступна.');
+  }, 2 * 60 * 1000);
+  timer.unref?.();
+}
+
+// Пока базы нет, отвечаем понятной ошибкой вместо невнятного 500
+app.use('/api', (req, res, next) => {
+  if (storageReady) return next();
+  const pathOnly = req.originalUrl.split('?')[0];
+  if (PUBLIC_API_PATHS.has(pathOnly) || pathOnly === '/api/me') return next();
+  res.status(503).json({
+    error: 'storage_unavailable',
+    message:
+      'База данных недоступна. Если это бесплатный Supabase — проект мог уйти в паузу: открой дашборд Supabase и нажми Resume project.',
   });
 });
 
@@ -314,7 +359,11 @@ app.post('/api/auth/telegram', (req, res) => {
 });
 
 app.get('/api/me', (req, res) => {
-  res.json({ userId: getAuthedUserId(req), storage: storageMode() });
+  res.json({
+    userId: getAuthedUserId(req),
+    name: getAuthedSession(req)?.name,
+    storage: storageReady ? storageMode() : 'unavailable',
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -328,6 +377,23 @@ function safeCompare(a: string, b: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Сервер знает, кто пришёл, из подписанной сессии, поэтому пустые поля профиля
+ * заполняет сам. Так имя и ник появляются в шапке даже у старой версии клиента
+ * (Telegram кэширует JS и обновление приложения доходит не сразу).
+ */
+function applyTelegramProfile(state: any, session?: { name?: string; username?: string }): any {
+  if (!state || typeof state !== 'object' || Array.isArray(state) || !session) return state;
+  const user = state.user && typeof state.user === 'object' ? state.user : {};
+  const patch: Record<string, string> = {};
+  if (!String(user.name || '').trim() && session.name) patch.name = session.name;
+  if (!String(user.telegramUsername || '').trim() && session.username) {
+    patch.telegramUsername = session.username.startsWith('@') ? session.username : `@${session.username}`;
+  }
+  if (Object.keys(patch).length === 0) return state;
+  return { ...state, user: { ...user, ...patch } };
 }
 
 async function handleNotificationRun(req: express.Request, res: express.Response) {
@@ -395,7 +461,11 @@ app.get('/api/db/sync', async (req, res) => {
   try {
     const stored = await getUserState(getAuthedUserId(req));
     if (!stored) return res.json({ found: false });
-    res.json({ found: true, data: stored.state, updatedAt: stored.updatedAt });
+    res.json({
+      found: true,
+      data: applyTelegramProfile(stored.state, getAuthedSession(req)),
+      updatedAt: stored.updatedAt,
+    });
   } catch (err: any) {
     console.error('[sync] ошибка чтения:', err?.message);
     res.status(500).json({ error: 'storage_error', details: err?.message });
@@ -405,7 +475,10 @@ app.get('/api/db/sync', async (req, res) => {
 app.post('/api/db/sync', async (req, res) => {
   try {
     const payload = req.body && typeof req.body === 'object' ? req.body : {};
-    const lastSyncedAt = await saveUserState(getAuthedUserId(req), payload);
+    const lastSyncedAt = await saveUserState(
+      getAuthedUserId(req),
+      applyTelegramProfile(payload, getAuthedSession(req)),
+    );
     res.json({ success: true, lastSyncedAt });
   } catch (err: any) {
     console.error('[sync] ошибка записи:', err?.message);
@@ -1961,25 +2034,8 @@ async function startTelegramPolling(token: string) {
 
 // Start server with Vite middleware in dev or static serving in production
 async function startServer() {
-  // Хранилище поднимаем до старта: если Postgres недоступен, лучше упасть сразу,
-  // чем молча писать данные в эфемерный файл.
-  let lastError: unknown = null;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      await initStorage();
-      lastError = null;
-      break;
-    } catch (err) {
-      lastError = err;
-      console.error(`[storage] попытка ${attempt}/3 не удалась:`, (err as Error)?.message);
-      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
-    }
-  }
-  if (lastError) {
-    console.error('[storage] Postgres недоступен. Проверьте DATABASE_URL (Supabase → Session pooler).');
-    process.exit(1);
-  }
-
+  // Пробуем поднять базу до старта, но НЕ падаем, если она недоступна:
+  // бесплатный Supabase уходит в паузу, и тогда лучше показать понятную причину.
   if (IS_DEV) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
@@ -1995,9 +2051,24 @@ async function startServer() {
     });
   }
 
+  // Порт открываем сразу, а базу поднимаем в фоне: иначе при спящем Supabase
+  // сервис не успевает ответить хостингу и выглядит мёртвым.
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`GetFitBot server running on port ${PORT} (${IS_DEV ? 'dev' : 'production'})`);
     initTelegramBot().catch((err) => console.error('Telegram bot init error:', err));
+
+    (async () => {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        if (await initStorageOnce()) return;
+        console.error(`[storage] попытка подключения ${attempt}/3 не удалась`);
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+      }
+      console.error(
+        '[storage] база недоступна. Сервер работает: приложение откроется и покажет причину. ' +
+          'Проверьте DATABASE_URL (Supabase → Session pooler) и не на паузе ли проект.',
+      );
+      scheduleStorageRetry();
+    })().catch((err) => console.error('[storage] фоновая инициализация упала:', err?.message));
   });
 }
 

@@ -251,7 +251,7 @@ export default function App() {
 
   /* ---------------- Синхронизация с облаком ---------------- */
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'offline' | 'local'>('idle');
-  const [storageMode, setStorageMode] = useState<'postgres' | 'file' | null>(null);
+  const [storageMode, setStorageMode] = useState<'postgres' | 'file' | 'unavailable' | null>(null);
   const [battleNotice, setBattleNotice] = useState<{ text: string; link?: string } | null>(null);
   const hydratedRef = useRef(false);
   const skipSaveRef = useRef(false);
@@ -1002,29 +1002,35 @@ export default function App() {
         {syncStatus !== 'idle' && (
           <div
             className={`fixed bottom-[74px] left-4 z-30 px-2 py-1 rounded-lg border text-[10px] font-mono backdrop-blur-sm pointer-events-none ${
-              storageMode === 'file'
-                ? 'border-amber-500/60 bg-amber-950/80 text-amber-300'
-                : syncStatus === 'synced'
-                  ? 'border-emerald-500/40 bg-emerald-950/70 text-emerald-300'
-                  : syncStatus === 'syncing'
-                    ? 'border-sky-500/40 bg-sky-950/70 text-sky-300'
-                    : 'border-amber-500/40 bg-amber-950/70 text-amber-300'
+              storageMode === 'unavailable'
+                ? 'border-rose-500/60 bg-rose-950/80 text-rose-300'
+                : storageMode === 'file'
+                  ? 'border-amber-500/60 bg-amber-950/80 text-amber-300'
+                  : syncStatus === 'synced'
+                    ? 'border-emerald-500/40 bg-emerald-950/70 text-emerald-300'
+                    : syncStatus === 'syncing'
+                      ? 'border-sky-500/40 bg-sky-950/70 text-sky-300'
+                      : 'border-amber-500/40 bg-amber-950/70 text-amber-300'
             }`}
             title={
-              storageMode === 'file'
-                ? 'Сервер работает без базы данных: данные исчезнут при перезапуске. Подключи DATABASE_URL (Supabase)'
-                : 'Состояние синхронизации с облаком'
+              storageMode === 'unavailable'
+                ? 'Сервер не может подключиться к базе данных. Если это бесплатный Supabase — проект мог уйти в паузу: открой дашборд Supabase и нажми Resume project'
+                : storageMode === 'file'
+                  ? 'Сервер работает без базы данных: данные исчезнут при перезапуске. Подключи DATABASE_URL (Supabase)'
+                  : 'Состояние синхронизации с облаком'
             }
           >
-            {storageMode === 'file'
-              ? '⚠ без базы данных'
-              : syncStatus === 'synced'
-                ? '✓ в облаке'
-                : syncStatus === 'syncing'
-                  ? '☁ синхронизация…'
-                  : syncStatus === 'local'
-                    ? '⚠ только на устройстве'
-                    : '⚠ нет связи'}
+            {storageMode === 'unavailable'
+              ? '⛔ база недоступна'
+              : storageMode === 'file'
+                ? '⚠ без базы данных'
+                : syncStatus === 'synced'
+                  ? '✓ в облаке'
+                  : syncStatus === 'syncing'
+                    ? '☁ синхронизация…'
+                    : syncStatus === 'local'
+                      ? '⚠ только на устройстве'
+                      : '⚠ нет связи'}
           </div>
         )}
 

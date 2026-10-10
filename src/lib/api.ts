@@ -145,9 +145,11 @@ export interface CloudStateResponse {
   updatedAt?: string;
 }
 
-/** Кто мы для сервера и куда он пишет данные (postgres | file). */
-export async function fetchMe(): Promise<{ userId: string; storage: 'postgres' | 'file' } | null> {
-  return apiJson<{ userId: string; storage: 'postgres' | 'file' }>('/api/me');
+export type StorageMode = 'postgres' | 'file' | 'unavailable';
+
+/** Кто мы для сервера и куда он пишет данные. */
+export async function fetchMe(): Promise<{ userId: string; name?: string; storage: StorageMode } | null> {
+  return apiJson<{ userId: string; name?: string; storage: StorageMode }>('/api/me');
 }
 
 export async function loadCloudState(): Promise<CloudStateResponse | null> {

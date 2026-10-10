@@ -109,6 +109,16 @@ check(
 check('вложенные числа не превратились в строки', restored.user?.currentWeight === 63.5 && restored.pastWorkouts?.[0]?.exercises?.[0]?.sets?.[0]?.rpe === 8.5);
 check('кириллица не побилась', restored.penalties?.[0]?.penaltyTask === '50 бурпи' && restored.personalRecords?.[0]?.value === '105 кг × 8');
 
+// 6c. Сервер сам заполняет пустые поля профиля из подписанной сессии
+await call('/api/db/sync', { method: 'POST', token: A, body: { user: { name: '', telegramUsername: '' }, workoutPlans: [], pastWorkouts: [] } });
+const patched = await call('/api/db/sync', { token: A });
+check('пустое имя заполнено из сессии', patched.json?.data?.user?.name === 'Dev alice', JSON.stringify(patched.json?.data?.user));
+check('пустой ник заполнен из сессии', String(patched.json?.data?.user?.telegramUsername || '').startsWith('@'), patched.json?.data?.user?.telegramUsername);
+
+await call('/api/db/sync', { method: 'POST', token: A, body: { user: { name: 'СвоёИмя', telegramUsername: '@custom' } } });
+const kept = await call('/api/db/sync', { token: A });
+check('заполненный профиль сервер не перезаписывает', kept.json?.data?.user?.name === 'СвоёИмя' && kept.json?.data?.user?.telegramUsername === '@custom', JSON.stringify(kept.json?.data?.user));
+
 // 7. Заруба: создаёт A, присоединяется B
 const created = await call('/api/battles/create', {
   method: 'POST', token: A,
