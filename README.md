@@ -47,6 +47,7 @@ npm run test:smoke   # API целиком — 41 проверка, нужен з
 npm run test:deploy  # проверка развёрнутого сервиса: webhook, меню, health, закрытость API
 npm run test:live    # сквозной прогон по живому серверу и реальной базе (с уборкой данных)
 npm run test:live-ui # клиентский код в DOM против живого сервера и Supabase
+npm run test:ai      # какой ИИ реально отвечает на развёрнутом сервере
 ```
 
 **Развёрнутое приложение:** https://getfit-kqhi.onrender.com · бот: [@get_fitbot](https://t.me/get_fitbot)
