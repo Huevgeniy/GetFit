@@ -27,6 +27,7 @@ import {
   type BattleRecord,
 } from './server/storage.ts';
 import { runNotificationCycle } from './server/notifications.ts';
+import { extractInBodyNumbers } from './server/inbody.ts';
 
 dotenv.config();
 
@@ -996,35 +997,9 @@ app.post('/api/ai/parse-inbody', async (req, res) => {
 
     const ai = getGeminiClient();
 
-    // Fallback if no Gemini client available
-    if (!ai) {
-      const defaultWeight = userProfile?.currentWeight || 84.5;
-      const smm = Math.round(defaultWeight * 0.485 * 10) / 10;
-      const fatMass = Math.round(defaultWeight * 0.155 * 10) / 10;
-      const fatPercent = Math.round((fatMass / defaultWeight) * 1000) / 10;
-      const water = Math.round(defaultWeight * 0.62 * 10) / 10;
-      const protein = Math.round(defaultWeight * 0.14 * 10) / 10;
-      const minerals = Math.round(defaultWeight * 0.048 * 10) / 10;
-
-      return res.json({
-        success: true,
-        record: {
-          id: `inbody_${Date.now()}`,
-          date: new Date().toISOString().split('T')[0],
-          weightKg: defaultWeight,
-          skeletalMuscleMassKg: smm,
-          bodyFatMassKg: fatMass,
-          bodyFatPercent: fatPercent,
-          totalBodyWaterL: water,
-          proteinKg: protein,
-          mineralsKg: minerals,
-          visceralFatLevel: 5,
-          bmrKcal: Math.round(88.36 + (13.4 * defaultWeight) + (4.8 * 180) - (5.7 * 26)),
-          inBodyScore: 82,
-          coachNotes: 'Отличное соотношение мышечной массы к жиру (D-образный атлетический профиль). Водный баланс и минералы в норме. Рекомендуется удерживать текущую калорийность с акцентом на прогрессивную перегрузку.',
-        },
-      });
-    }
+    // Числа, которые человек указал явно, разбираем сами: модель иногда
+    // «досчитывает» правдоподобное значение вместо указанного (жир 15.1 → 18.8).
+    const explicit = text ? extractInBodyNumbers(String(text)) : {};
 
     const systemInstruction = `Ты — эксперт спортивной медицины и биоимпедансного анализа InBody (InBody 770 / 570 / 270).
 Твоя задача — извлечь точные численные показатели из фотографии/скана распечатки теста InBody или текстового описания, а также дать лаконичный спортивный вердикт тренера.
@@ -1044,7 +1019,10 @@ app.post('/api/ai/parse-inbody', async (req, res) => {
   "coachNotes": "Экспертное заключение тренера на русском языке (3-4 предложения): тип профиля (C, I или D-образный), процент жира, рекомендации по питанию и тренировочной фазе."
 }
 
-Если какой-то второстепенный параметр неразборчив, рассчитай физиологически достоверное значение на основе веса, SMM и жира.`;
+Если какой-то параметр отсутствует в данных — верни для него null. НИЧЕГО НЕ ВЫСЧИТЫВАЙ:
+не определяй процент жира из массы жира, не выводи SMM из веса, не «дооценивай» оценку InBody.
+Числа, написанные в тексте или на изображении, копируй ровно как есть, с той же точностью
+(например, «жир 15.1» → bodyFatPercent = 15.1, а не пересчитанное значение).`;
 
     const contents: any[] = [];
 
@@ -1063,7 +1041,8 @@ app.post('/api/ai/parse-inbody', async (req, res) => {
     }
 
     let responseText = '';
-    if (ai) {
+    let provider = 'none';
+    if (imageBase64 && ai) {
       try {
         const response = await ai.models.generateContent({
           model: process.env.GEMINI_MODEL || 'gemini-flash-latest',
@@ -1075,20 +1054,22 @@ app.post('/api/ai/parse-inbody', async (req, res) => {
           },
         });
         responseText = response.text || '';
+        provider = 'gemini';
       } catch (err) {
-        console.warn('InBody Gemini scan failed, falling back to Groq/Grok if text available...', err);
+        console.warn('InBody: распознавание изображения не удалось:', err);
       }
     }
 
     if (!responseText && text) {
-      const grokRes = await callUnifiedAI({
+      const unified = await callUnifiedAI({
         systemInstruction,
         prompt: `Распознай показатели InBody из следующего текста и сформируй JSON: "${text}"`,
         isJson: true,
-        temperature: 0.2,
+        temperature: 0.1,
         userProfile,
       });
-      responseText = grokRes.text;
+      responseText = unified.text;
+      provider = unified.provider;
     }
 
     let parsedData: any = {};
@@ -1098,24 +1079,63 @@ app.post('/api/ai/parse-inbody', async (req, res) => {
       parsedData = {};
     }
 
-    const record = {
+    // Явно указанные человеком числа важнее ответа модели
+    const merged = { ...parsedData, ...explicit };
+    const num = (value: unknown): number | undefined => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : undefined;
+    };
+
+    const record: Record<string, unknown> = {
       id: `inbody_${Date.now()}`,
       date: new Date().toISOString().split('T')[0],
-      weightKg: Number(parsedData.weightKg) || userProfile?.currentWeight || 80,
-      skeletalMuscleMassKg: Number(parsedData.skeletalMuscleMassKg) || 38,
-      bodyFatMassKg: Number(parsedData.bodyFatMassKg) || 12,
-      bodyFatPercent: Number(parsedData.bodyFatPercent) || 15,
-      totalBodyWaterL: Number(parsedData.totalBodyWaterL) || 50,
-      proteinKg: Number(parsedData.proteinKg) || 11.5,
-      mineralsKg: Number(parsedData.mineralsKg) || 4.0,
-      visceralFatLevel: Number(parsedData.visceralFatLevel) || 5,
-      bmrKcal: Number(parsedData.bmrKcal) || 1850,
-      inBodyScore: Number(parsedData.inBodyScore) || 80,
-      coachNotes: parsedData.coachNotes || 'Биометрические показатели зафиксированы.',
+      weightKg: num(merged.weightKg),
+      skeletalMuscleMassKg: num(merged.skeletalMuscleMassKg),
+      bodyFatMassKg: num(merged.bodyFatMassKg),
+      bodyFatPercent: num(merged.bodyFatPercent),
+      totalBodyWaterL: num(merged.totalBodyWaterL),
+      proteinKg: num(merged.proteinKg),
+      mineralsKg: num(merged.mineralsKg),
+      visceralFatLevel: num(merged.visceralFatLevel),
+      bmrKcal: num(merged.bmrKcal),
+      inBodyScore: num(merged.inBodyScore),
     };
+    for (const key of Object.keys(record)) {
+      if (record[key] === undefined) delete record[key];
+    }
+
+    const coreFields = ['weightKg', 'skeletalMuscleMassKg', 'bodyFatPercent'];
+    const foundCore = coreFields.filter((field) => record[field] !== undefined).length;
+    if (foundCore === 0) {
+      return res.status(422).json({
+        success: false,
+        provider,
+        error: imageBase64
+          ? 'Не удалось распознать показатели на изображении. Введи данные текстом, например: «вес 80.5, мышцы 37.2, жир 15.1».'
+          : 'В тексте не нашлось ни одного показателя. Напиши, например: «вес 80.5, мышцы 37.2, жир 15.1».',
+      });
+    }
+
+    const missing = coreFields.filter((field) => record[field] === undefined);
+    record.partial = missing.length > 0;
+    record.coachNotes =
+      (typeof merged.coachNotes === 'string' && merged.coachNotes.trim()) ||
+      (record.partial
+        ? 'Распознана часть показателей — остальные можно внести вручную.'
+        : 'Показатели зафиксированы.');
+    if (record.partial) {
+      const names: Record<string, string> = {
+        weightKg: 'вес',
+        skeletalMuscleMassKg: 'скелетно-мышечная масса',
+        bodyFatPercent: 'процент жира',
+      };
+      record.coachNotes = `Не распознано: ${missing.map((f) => names[f]).join(', ')}. Остальные значения взяты как указано. ${record.coachNotes}`;
+    }
 
     res.json({
       success: true,
+      provider,
+      explicitNumbersUsed: Object.keys(explicit),
       record,
     });
   } catch (error: any) {
