@@ -51,12 +51,16 @@ export function generateInviteCode(): string {
 /**
  * Инициализация хранилища.
  * @param options.pool — готовый пул (используется тестами с in-memory Postgres).
+ *
+ * Переменная STORAGE=file принудительно включает локальный файл, даже если задан
+ * DATABASE_URL: так проверки можно гонять, не задевая боевую базу.
  */
 export async function initStorage(options: { pool?: Pool } = {}): Promise<StorageMode> {
   const url = process.env.DATABASE_URL?.trim();
+  const forceFile = (process.env.STORAGE || '').trim().toLowerCase() === 'file';
   dbFile = path.join(process.env.DATA_DIR || path.join(process.cwd(), 'data'), 'cloud_db.json');
 
-  if (options.pool) {
+  if (!forceFile && options.pool) {
     pool = options.pool;
     await migratePostgres();
     mode = 'postgres';
@@ -64,7 +68,7 @@ export async function initStorage(options: { pool?: Pool } = {}): Promise<Storag
     return mode;
   }
 
-  if (url) {
+  if (!forceFile && url) {
     const isLocal = /@(localhost|127\.0\.0\.1|\[::1\])/.test(url);
     pool = new Pool({
       connectionString: url,
@@ -82,7 +86,9 @@ export async function initStorage(options: { pool?: Pool } = {}): Promise<Storag
   mode = 'file';
   ensureFileDb();
   console.warn(
-    `[storage] режим: file (${dbFile}). DATABASE_URL не задан — данные не переживут деплой/рестарт хостинга.`,
+    forceFile
+      ? `[storage] режим: file (${dbFile}) — принудительно через STORAGE=file, Postgres не используется.`
+      : `[storage] режим: file (${dbFile}). DATABASE_URL не задан — данные не переживут деплой/рестарт хостинга.`,
   );
   return mode;
 }
