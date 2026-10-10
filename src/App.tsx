@@ -1,19 +1,54 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { TelegramHeader } from './components/TelegramHeader';
 import { Navigation, NavTab } from './components/Navigation';
 import { WorkoutsHub } from './components/WorkoutsHub';
-import { AiWorkoutLive } from './components/AiWorkoutLive';
-import { ProgressCharts } from './components/ProgressCharts';
-import { SportsRanks } from './components/SportsRanks';
-import { FriendBattles } from './components/FriendBattles';
-import { DisciplineTracker } from './components/DisciplineTracker';
-import { ProfileView } from './components/ProfileView';
-import { NutritionSleepTracker } from './components/NutritionSleepTracker';
-import { GlobalAiChatModal } from './components/GlobalAiChatModal';
-import { ResearchLabView } from './components/ResearchLabView';
-import { PeriodizationView } from './components/PeriodizationView';
-import { AiSettingsModal } from './components/AiSettingsModal';
-import { InteractiveTour } from './components/InteractiveTour';
+
+/**
+ * Экраны и тяжёлые модалки грузим по требованию: в стартовый бандл попадает
+ * только то, что нужно для первого экрана («Тренировки»), остальное подтягивается
+ * при переходе. Вместе с разделением вендоров это заметно ускоряет первый запуск.
+ */
+const AiWorkoutLive = lazy(() =>
+  import('./components/AiWorkoutLive').then(m => ({ default: m.AiWorkoutLive })),
+);
+const ProgressCharts = lazy(() =>
+  import('./components/ProgressCharts').then(m => ({ default: m.ProgressCharts })),
+);
+const SportsRanks = lazy(() => import('./components/SportsRanks').then(m => ({ default: m.SportsRanks })));
+const FriendBattles = lazy(() => import('./components/FriendBattles').then(m => ({ default: m.FriendBattles })));
+const DisciplineTracker = lazy(() =>
+  import('./components/DisciplineTracker').then(m => ({ default: m.DisciplineTracker })),
+);
+const ProfileView = lazy(() => import('./components/ProfileView').then(m => ({ default: m.ProfileView })));
+const NutritionSleepTracker = lazy(() =>
+  import('./components/NutritionSleepTracker').then(m => ({ default: m.NutritionSleepTracker })),
+);
+const GlobalAiChatModal = lazy(() =>
+  import('./components/GlobalAiChatModal').then(m => ({ default: m.GlobalAiChatModal })),
+);
+const ResearchLabView = lazy(() =>
+  import('./components/ResearchLabView').then(m => ({ default: m.ResearchLabView })),
+);
+const PeriodizationView = lazy(() =>
+  import('./components/PeriodizationView').then(m => ({ default: m.PeriodizationView })),
+);
+const AiSettingsModal = lazy(() =>
+  import('./components/AiSettingsModal').then(m => ({ default: m.AiSettingsModal })),
+);
+const InteractiveTour = lazy(() =>
+  import('./components/InteractiveTour').then(m => ({ default: m.InteractiveTour })),
+);
+
+/** Заглушка на время подгрузки экрана. */
+const ScreenLoader: React.FC = () => (
+  <div className="flex-1 flex items-center justify-center py-16 text-slate-500 text-xs font-mono">
+    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-2" />
+    загружаю экран…
+  </div>
+);
+
+const suspense = (node: React.ReactNode) => <Suspense fallback={<ScreenLoader />}>{node}</Suspense>;
+
 import { Bot, Mic } from 'lucide-react';
 import { applyTelegramUi, closeMiniApp, copyToClipboard, getStartParam, hapticImpact, hapticNotify, setupBackButton, shareToTelegram } from './lib/telegram';
 import {
@@ -820,6 +855,7 @@ export default function App() {
         {/* Main Tab Content */}
         <main className="flex-1 px-3 pt-3 overflow-y-auto">
           {isLiveWorkoutOpen && activeWorkoutPlan ? (
+            suspense(
             <AiWorkoutLive
               plan={activeWorkoutPlan}
               user={user}
@@ -828,7 +864,9 @@ export default function App() {
               onClose={() => setIsLiveWorkoutOpen(false)}
               onSaveAsTemplate={handleSaveCustomTemplate}
             />
+            )
           ) : (
+            <Suspense fallback={<ScreenLoader />}>
             <>
               {currentTab === 'workouts' && (
                 <WorkoutsHub
@@ -939,6 +977,7 @@ export default function App() {
                 />
               )}
             </>
+            </Suspense>
           )}
         </main>
 
@@ -959,6 +998,7 @@ export default function App() {
         )}
 
         {/* Global AI Chat / Natural Language Interface Modal */}
+        {suspense(
         <GlobalAiChatModal
           isOpen={isGlobalAiChatOpen}
           onClose={() => setIsGlobalAiChatOpen(false)}
@@ -970,16 +1010,20 @@ export default function App() {
           onLogDailyState={handleLogDailyStateFromAi}
           onCreateExperiment={handleCreateExperimentFromAi}
         />
+        )}
 
         {/* AI Brain & Personal Prompt Settings Modal */}
+        {suspense(
         <AiSettingsModal
           isOpen={isAiSettingsOpen}
           onClose={() => setIsAiSettingsOpen(false)}
           user={user}
           onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
         />
+        )}
 
         {/* Interactive Onboarding First-Time User Guide & Help Tour */}
+        {suspense(
         <InteractiveTour
           isOpen={isTourOpen}
           onClose={() => {
@@ -997,6 +1041,7 @@ export default function App() {
             setIsAiSettingsOpen(true);
           }}
         />
+        )}
 
         {/* Индикатор облачной синхронизации */}
         {syncStatus !== 'idle' && (
