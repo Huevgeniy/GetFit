@@ -21,7 +21,9 @@
     "test:css": "node scripts/css-check.mjs",
     "test:render": "node scripts/render-test.mjs",
     "test:dom": "node scripts/dom-test.mjs",
-    "test:notify": "node scripts/notifications-test.mjs"
+    "test:notify": "node scripts/notifications-test.mjs",
+    "test:deploy": "node scripts/live-check.mjs",
+    "test:live": "node scripts/live-e2e.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

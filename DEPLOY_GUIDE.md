@@ -60,10 +60,21 @@ postgresql://postgres.abcdefgh:ТВОЙ_ПАРОЛЬ@aws-0-eu-central-1.pooler.s
 
 ### Что произойдёт при старте автоматически
 
-- выполнятся миграции Postgres (таблицы `user_state`, `battles`, `experiments`, `cycles`, `custom_metrics`);
+- выполнятся миграции Postgres (таблицы `user_state`, `battles`, `experiments`, `cycles`, `custom_metrics`, `notifications`);
 - у бота установится webhook на `APP_URL/api/telegram/webhook` с секретным заголовком;
 - в меню чата с ботом появится кнопка **«Открыть GetFit»**;
 - выставится список команд (`/start`, `/help`, `/ranks`).
+
+### Проверка уже развёрнутого сервиса
+
+```bash
+npm run test:deploy   # webhook, кнопка в меню, health, закрытость API — 14 проверок
+npm run test:live     # сквозной прогон по живому серверу и реальной базе (с уборкой данных)
+```
+
+`test:live` работает как настоящее приложение: подписывает `initData` токеном бота, входит,
+сохраняет состояние в Postgres, создаёт зарубу между двумя пользователями, проверяет
+изоляцию данных — и **удаляет свои тестовые записи** из базы в конце.
 
 ---
 

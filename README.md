@@ -43,8 +43,12 @@ npm run test:css     # сборка Tailwind v4 из src/index.css — 15 про
 npm run test:render  # рендер приложения и всех 16 экранов — 24 проверки
 npm run test:dom     # DOM (jsdom): гидратация из облака и переключение вкладок — 37 проверок
 npm run test:notify  # логика напоминаний — 17 проверок
-npm run test:smoke   # API целиком — 38 проверок, нужен запущенный сервер
+npm run test:smoke   # API целиком — 41 проверка, нужен запущенный сервер
+npm run test:deploy  # проверка развёрнутого сервиса: webhook, меню, health, закрытость API
+npm run test:live    # сквозной прогон по живому серверу и реальной базе (с уборкой данных)
 ```
+
+**Развёрнутое приложение:** https://getfit-kqhi.onrender.com · бот: [@get_fitbot](https://t.me/get_fitbot)
 
 ## Архитектура
 
