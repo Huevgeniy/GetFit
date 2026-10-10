@@ -79,10 +79,33 @@ const fullLoad = await call('/api/db/sync', { token: A });
 const restored = fullLoad.json?.data || {};
 const missingKeys = Object.keys(fullBlob).filter((key) => !(key in restored));
 check('все 10 ключей состояния вернулись', missingKeys.length === 0, missingKeys.length ? `потеряны: ${missingKeys.join(', ')}` : '');
+
+// jsonb в Postgres не сохраняет порядок ключей объекта, поэтому сравниваем
+// канонически (с сортировкой ключей), а порядок массивов проверяем отдельно.
+const canon = (value) => {
+  if (Array.isArray(value)) return value.map(canon);
+  if (value && typeof value === 'object') {
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = canon(value[key]);
+        return acc;
+      }, {});
+  }
+  return value;
+};
 const mismatched = Object.keys(fullBlob).filter(
-  (key) => JSON.stringify(restored[key]) !== JSON.stringify(fullBlob[key]),
+  (key) => JSON.stringify(canon(restored[key])) !== JSON.stringify(canon(fullBlob[key])),
 );
-check('содержимое совпадает побайтово (вложенные объекты и массивы)', mismatched.length === 0, mismatched.join(', '));
+check('содержимое совпадает полностью (с учётом порядка ключей jsonb)', mismatched.length === 0, mismatched.join(', '));
+check(
+  'порядок и длина массивов сохранены',
+  Array.isArray(restored.pastWorkouts) &&
+    restored.pastWorkouts.length === fullBlob.pastWorkouts.length &&
+    restored.pastWorkouts[0]?.exercises?.[0]?.sets?.length === 1 &&
+    restored.workoutPlans?.[0]?.exercises?.[0]?.name === 'Присед',
+  JSON.stringify({ workouts: restored.pastWorkouts?.length, sets: restored.pastWorkouts?.[0]?.exercises?.[0]?.sets?.length }),
+);
 check('вложенные числа не превратились в строки', restored.user?.currentWeight === 63.5 && restored.pastWorkouts?.[0]?.exercises?.[0]?.sets?.[0]?.rpe === 8.5);
 check('кириллица не побилась', restored.penalties?.[0]?.penaltyTask === '50 бурпи' && restored.personalRecords?.[0]?.value === '105 кг × 8');
 

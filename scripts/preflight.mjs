@@ -74,21 +74,29 @@ else {
       const model = env('GROQ_MODEL') || 'qwen/qwen3.8-27b';
       if (ids.includes(model)) ok('Groq-ключ рабочий', `модель ${model} доступна`);
       else fail('модель Groq недоступна для ключа', `${model}; доступны: ${ids.filter((i) => !/whisper|tts|guard|orpheus|embed/i.test(i)).slice(0, 5).join(', ')}`);
+    } else if (res.status === 401) {
+      fail('Groq-ключ отклонён', 'ключ недействителен — создай новый на console.groq.com/keys');
     } else {
-      fail('Groq-ключ отклонён', `HTTP ${res.status}`);
+      warn(
+        'не удалось проверить Groq',
+        `HTTP ${res.status} — обычно так отвечает сеть/провайдер при блокировке, ключ тут ни при чём`,
+      );
     }
   } catch (err) {
     warn('не удалось проверить Groq', err.message);
   }
 }
 if (env('GEMINI_API_KEY')) {
-  notes.push('GEMINI_API_KEY задан: из России и с датацентр-IP Gemini API недоступен, он остаётся резервом');
+  notes.push('GEMINI_API_KEY задан: это резервный провайдер. Из части сетей Gemini отвечает «location is not supported» — тогда работает Groq');
 }
 
 // --- Публичный адрес ---
 const appUrl = env('APP_URL');
 if (!appUrl) {
-  fail('APP_URL не задан', 'без него бот не поставит webhook, а ссылки-приглашения в зарубы будут нерабочими');
+  warn(
+    'APP_URL не задан',
+    'локально не нужен; НА ХОСТИНГЕ обязателен — иначе бот не поставит webhook и приложение нельзя открыть из Telegram',
+  );
 } else if (!appUrl.startsWith('https://')) {
   fail('APP_URL должен быть https', `сейчас: ${appUrl}`);
 } else if (/localhost|127\.0\.0\.1/.test(appUrl)) {
