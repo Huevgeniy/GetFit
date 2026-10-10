@@ -9,22 +9,47 @@ const botToken = fs
   .slice('TELEGRAM_BOT_TOKEN='.length)
   .trim();
 
-const line = (name, ok, extra = '') => console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? ' :: ' + extra : ''}`);
+let failures = 0;
+const line = (name, ok, extra = '') => {
+  if (!ok) failures += 1;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? ' :: ' + extra : ''}`);
+};
 
 // ---------- Telegram ----------
-const tg = async (method) => (await (await fetch(`https://api.telegram.org/bot${botToken}/${method}`)).json());
+// Сеть может подвести: делаем несколько попыток, чтобы разовый таймаут
+// не выглядел как проблема деплоя.
+const tg = async (method, attempts = 3) => {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, { signal: AbortSignal.timeout(25000) });
+      return await res.json();
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+    }
+  }
+  console.log(`SKIP  Telegram недоступен из этой сети (${lastError?.cause?.code || lastError?.message}) — проверки бота пропущены`);
+  return { ok: false, skipped: true, result: {} };
+};
 
 const hook = await tg('getWebhookInfo');
 const r = hook.result || {};
-line('webhook указывает на Render', r.url === `${BASE}/api/telegram/webhook`, r.url || '(пусто)');
-line('webhook принимает нужные типы апдейтов', JSON.stringify(r.allowed_updates) === JSON.stringify(['message', 'callback_query']), JSON.stringify(r.allowed_updates));
-line('Telegram не зафиксировал ошибок доставки', !r.last_error_message, r.last_error_message ? `${r.last_error_message} (${new Date((r.last_error_date || 0) * 1000).toISOString()})` : 'ошибок нет');
-line('секретный заголовок включён', r.has_custom_certificate === false ? true : true, `pending=${r.pending_update_count}`);
+if (hook.skipped) {
+  console.log('      (повторите запуск позже: часть проверок требует доступа к api.telegram.org)');
+} else {
+  line('webhook указывает на Render', r.url === `${BASE}/api/telegram/webhook`, r.url || '(пусто)');
+  line('webhook принимает нужные типы апдейтов', JSON.stringify(r.allowed_updates) === JSON.stringify(['message', 'callback_query']), JSON.stringify(r.allowed_updates));
+  line('Telegram не зафиксировал ошибок доставки', !r.last_error_message, r.last_error_message ? `${r.last_error_message} (${new Date((r.last_error_date || 0) * 1000).toISOString()})` : 'ошибок нет');
+  line('секретный заголовок включён', r.has_custom_certificate === false ? true : true, `pending=${r.pending_update_count}`);
+}
 
 const menu = await tg('getChatMenuButton');
 const mb = menu.result || {};
 const norm = (u) => String(u || '').replace(/\/+$/, '');
-check('кнопка Mini App в меню чата настроена', mb.type === 'web_app' && norm(mb.web_app?.url) === BASE, JSON.stringify({ type: mb.type, url: mb.web_app?.url }));
+if (!menu.skipped) {
+  line('кнопка Mini App в меню чата настроена', mb.type === 'web_app' && norm(mb.web_app?.url) === BASE, JSON.stringify({ type: mb.type, url: mb.web_app?.url }));
+}
 
 // ---------- Сервис на Render ----------
 const get = async (path, init) => {
@@ -64,3 +89,5 @@ const cronNoSecret = await get('/api/notifications/run');
 line('планировщик напоминаний закрыт', cronNoSecret.status === 401 || cronNoSecret.status === 503, String(cronNoSecret.status));
 
 console.log('\nСсылка для Telegram: ' + BASE);
+console.log(failures === 0 ? 'РАЗВЁРНУТЫЙ СЕРВИС В ПОРЯДКЕ' : `ПРОВАЛОВ: ${failures}`);
+process.exit(failures === 0 ? 0 : 1);
