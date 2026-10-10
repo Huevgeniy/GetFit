@@ -23,7 +23,8 @@
     "test:dom": "node scripts/dom-test.mjs",
     "test:notify": "node scripts/notifications-test.mjs",
     "test:deploy": "node scripts/live-check.mjs",
-    "test:live": "node scripts/live-e2e.mjs"
+    "test:live": "node scripts/live-e2e.mjs",
+    "test:live-ui": "node scripts/live-ui-test.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

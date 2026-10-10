@@ -70,6 +70,7 @@ postgresql://postgres.abcdefgh:ТВОЙ_ПАРОЛЬ@aws-0-eu-central-1.pooler.s
 ```bash
 npm run test:deploy   # webhook, кнопка в меню, health, закрытость API — 14 проверок
 npm run test:live     # сквозной прогон по живому серверу и реальной базе (с уборкой данных)
+npm run test:live-ui  # клиентский код в DOM против живого сервера и Supabase (15 проверок)
 ```
 
 `test:live` работает как настоящее приложение: подписывает `initData` токеном бота, входит,

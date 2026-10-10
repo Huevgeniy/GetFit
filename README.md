@@ -46,6 +46,7 @@ npm run test:notify  # логика напоминаний — 17 проверо
 npm run test:smoke   # API целиком — 41 проверка, нужен запущенный сервер
 npm run test:deploy  # проверка развёрнутого сервиса: webhook, меню, health, закрытость API
 npm run test:live    # сквозной прогон по живому серверу и реальной базе (с уборкой данных)
+npm run test:live-ui # клиентский код в DOM против живого сервера и Supabase
 ```
 
 **Развёрнутое приложение:** https://getfit-kqhi.onrender.com · бот: [@get_fitbot](https://t.me/get_fitbot)

@@ -14,6 +14,7 @@ export interface SessionInfo {
   userId: string | null;
   devMode: boolean;
   name?: string;
+  username?: string;
   error?: string;
 }
 
@@ -68,11 +69,14 @@ export async function ensureSession(force = false): Promise<SessionInfo> {
       const data = await res.json().catch(() => null);
       if (res.ok && data?.token) {
         setToken(data.token);
+        const firstName = data.user?.first_name ? String(data.user.first_name) : undefined;
+        const lastName = data.user?.last_name ? String(data.user.last_name) : undefined;
         sessionInfo = {
           authorized: true,
           userId: data.userId ?? null,
           devMode: Boolean(data.devMode),
-          name: data.user?.first_name,
+          name: [firstName, lastName].filter(Boolean).join(' ') || undefined,
+          username: data.user?.username ? String(data.user.username) : undefined,
         };
       } else {
         setToken(null);

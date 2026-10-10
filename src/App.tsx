@@ -285,6 +285,16 @@ export default function App() {
       }
 
       setSyncStatus('syncing');
+      // Нового пользователя заполняем данными из Telegram: иначе в шапке «Атлет @username»
+      const telegramPatch: Partial<UserProfile> = {};
+      if (session.name && !user.name.trim()) telegramPatch.name = session.name;
+      if (session.username && !user.telegramUsername.trim()) {
+        telegramPatch.telegramUsername = `@${session.username.replace(/^@/, '')}`;
+      }
+      if (Object.keys(telegramPatch).length > 0) {
+        setUser(prev => ({ ...prev, ...telegramPatch }));
+      }
+
       // Узнаём, куда сервер пишет данные: без Postgres они не переживут деплой
       const me = await fetchMe();
       if (!cancelled && me?.storage) setStorageMode(me.storage);
@@ -307,7 +317,7 @@ export default function App() {
         if (Array.isArray(data.customTemplates)) setCustomTemplates(data.customTemplates);
         setSyncStatus('synced');
       } else {
-        const ok = await saveCloudState(buildSyncBlob());
+        const ok = await saveCloudState({ ...buildSyncBlob(), user: { ...user, ...telegramPatch } });
         if (!cancelled) setSyncStatus(ok ? 'synced' : 'offline');
       }
       hydratedRef.current = true;
