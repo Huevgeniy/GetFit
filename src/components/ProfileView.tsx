@@ -703,6 +703,27 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </button>
             </div>
 
+            <button
+              type="button"
+              id="export-csv"
+              onClick={handleExportCsv}
+              disabled={exportState.status === 'busy'}
+              className="w-full py-2 bg-[#141c24] hover:border-emerald-500/50 disabled:opacity-50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              title="Бот пришлёт CSV-файл с дневником — он открывается в Google Sheets и Excel"
+            >
+              <Table className="w-3.5 h-3.5" />
+              <span>{exportState.status === 'busy' ? 'Отправляю…' : 'Таблица в чат (Google Sheets)'}</span>
+            </button>
+
+            {exportState.status === 'ok' && (
+              <p className="text-[10px] text-emerald-400 leading-snug">
+                ✅ Файл отправлен в чат с ботом — открой его через Google Sheets (Файл → Импорт).
+              </p>
+            )}
+            {exportState.status === 'error' && (
+              <p className="text-[10px] text-amber-400 leading-snug">⚠️ {exportState.message}</p>
+            )}
+
             {showImportArea && (
               <div className="space-y-2">
                 <textarea

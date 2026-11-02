@@ -860,6 +860,135 @@ app.post('/api/telegram/send', async (req, res) => {
   }
 });
 
+/* ------------------------------------------------------------------ */
+/* Экспорт дневника в таблицу (CSV)                                    */
+/* ------------------------------------------------------------------ */
+
+const csvCell = (value: unknown): string => {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[";\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+const csvRow = (cells: unknown[]): string => cells.map(csvCell).join(';');
+
+/** Собираем один CSV из всего дневника: его открывают в Google Sheets и Excel. */
+function buildDiaryCsv(state: any): { csv: string; rows: number } {
+  const lines: string[] = [];
+  const workouts: any[] = Array.isArray(state?.pastWorkouts) ? state.pastWorkouts : [];
+  const nutrition: any[] = Array.isArray(state?.dailyNutritionRecords) ? state.dailyNutritionRecords : [];
+  const sleep: any[] = Array.isArray(state?.sleepRecords) ? state.sleepRecords : [];
+  const inbody: any[] = Array.isArray(state?.user?.inBodyRecords) ? state.user.inBodyRecords : [];
+
+  lines.push(csvRow(['ТРЕНИРОВКИ']));
+  lines.push(csvRow(['Дата', 'Название', 'Длительность, мин', 'Тоннаж, кг', 'Упражнений', 'Подходов', 'Средний RPE']));
+  for (const w of workouts) {
+    const sets = (w.exercises || []).flatMap((e: any) => e.sets || []);
+    const rpes = sets.map((s: any) => Number(s.rpe)).filter((r: number) => Number.isFinite(r) && r > 0);
+    lines.push(
+      csvRow([
+        (w.completedAt || w.date || w.startedAt || '').slice(0, 10),
+        w.title,
+        w.durationMinutes,
+        w.totalTonnageKg,
+        (w.exercises || []).length,
+        sets.length,
+        rpes.length ? (rpes.reduce((a: number, b: number) => a + b, 0) / rpes.length).toFixed(1) : '',
+      ]),
+    );
+  }
+
+  lines.push('');
+  lines.push(csvRow(['ПОДХОДЫ']));
+  lines.push(csvRow(['Дата', 'Упражнение', 'Вес, кг', 'Повторения', 'RPE', 'Расчётный 1ПМ, кг']));
+  for (const w of workouts) {
+    const date = (w.completedAt || w.date || w.startedAt || '').slice(0, 10);
+    for (const exercise of w.exercises || []) {
+      for (const set of exercise.sets || []) {
+        lines.push(csvRow([date, exercise.name, set.weight, set.reps, set.rpe, set.calculated1RM]));
+      }
+    }
+  }
+
+  lines.push('');
+  lines.push(csvRow(['ПИТАНИЕ']));
+  lines.push(csvRow(['Дата', 'Калории', 'Белок, г', 'Жиры, г', 'Углеводы, г', 'Вес утром, кг']));
+  for (const record of nutrition) {
+    lines.push(csvRow([record.date, record.totalCalories, record.totalProtein, record.totalFat, record.totalCarbs, record.morningWeightKg]));
+  }
+
+  lines.push('');
+  lines.push(csvRow(['СОН']));
+  lines.push(csvRow(['Дата', 'Часов', 'Качество 1-10', 'Отбой', 'Подъём']));
+  for (const record of sleep) {
+    lines.push(csvRow([record.date, record.durationHours, record.qualityScore, record.bedtime, record.wakeTime]));
+  }
+
+  lines.push('');
+  lines.push(csvRow(['INBODY']));
+  lines.push(csvRow(['Дата', 'Вес, кг', 'Скелетные мышцы, кг', 'Жир, %', 'Жир, кг', 'Вода, л', 'Белок, кг', 'Минералы, кг', 'Висцеральный жир', 'BMR, ккал', 'Оценка']));
+  for (const record of inbody) {
+    lines.push(
+      csvRow([
+        record.date,
+        record.weightKg,
+        record.skeletalMuscleMassKg,
+        record.bodyFatPercent,
+        record.bodyFatMassKg,
+        record.totalBodyWaterL,
+        record.proteinKg,
+        record.mineralsKg,
+        record.visceralFatLevel,
+        record.bmrKcal,
+        record.inBodyScore,
+      ]),
+    );
+  }
+
+  // BOM — иначе Excel не покажет кириллицу
+  return { csv: `\uFEFF${lines.join('\r\n')}`, rows: lines.length };
+}
+
+app.post('/api/export/csv', async (req, res) => {
+  const userId = getAuthedUserId(req);
+  if (!userId.startsWith('tg:')) {
+    return res.status(400).json({ sent: false, error: 'Отправка файла доступна только внутри Telegram' });
+  }
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return res.status(503).json({ sent: false, error: 'TELEGRAM_BOT_TOKEN не настроен' });
+
+  try {
+    const stored = await getUserState(userId);
+    if (!stored) return res.status(404).json({ sent: false, error: 'Данных пока нет — сначала поработай в приложении' });
+
+    const { csv, rows } = buildDiaryCsv(stored.state);
+    if (rows < 5) return res.status(404).json({ sent: false, error: 'В дневнике пока нет записей для выгрузки' });
+
+    const fileName = `getfit-diary-${new Date().toISOString().slice(0, 10)}.csv`;
+    const form = new FormData();
+    form.append('chat_id', userId.slice(3));
+    form.append('document', new Blob([csv], { type: 'text/csv;charset=utf-8' }), fileName);
+    form.append(
+      'caption',
+      '📊 Дневник GetFit в таблице.\nОткрой файл в Google Sheets (Файл → Импорт) или в Excel — там все тренировки, подходы, питание, сон и замеры.',
+    );
+
+    const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
+    const data = (await response.json().catch(() => null)) as any;
+    if (!response.ok || !data?.ok) {
+      console.warn('[export] файл не отправлен:', data?.description || response.status);
+      return res.status(502).json({
+        sent: false,
+        error: 'Telegram не принял файл. Открой чат с ботом и нажми /start, затем попробуй снова.',
+      });
+    }
+    console.log(`[export] таблица отправлена ${userId}: строк ${rows}`);
+    res.json({ sent: true, fileName, rows });
+  } catch (err: any) {
+    console.error('[export] ошибка:', err?.message);
+    res.status(500).json({ sent: false, error: err?.message });
+  }
+});
+
 // Telegram webhook endpoint
 app.post('/api/telegram/webhook', async (req, res) => {
   const token = process.env.TELEGRAM_BOT_TOKEN;

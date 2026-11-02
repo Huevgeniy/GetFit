@@ -14,6 +14,7 @@ const AiWorkoutLive = lazy(() =>
 const ProgressCharts = lazy(() =>
   import('./components/ProgressCharts').then(m => ({ default: m.ProgressCharts })),
 );
+const StatsView = lazy(() => import('./components/StatsView').then(m => ({ default: m.StatsView })));
 const SportsRanks = lazy(() => import('./components/SportsRanks').then(m => ({ default: m.SportsRanks })));
 const FriendBattles = lazy(() => import('./components/FriendBattles').then(m => ({ default: m.FriendBattles })));
 const DisciplineTracker = lazy(() =>
@@ -910,6 +911,16 @@ export default function App() {
 
               {currentTab === 'charts' && (
                 <ProgressCharts pastWorkouts={pastWorkouts} user={user} />
+              )}
+
+              {currentTab === 'stats' && (
+                <StatsView
+                  user={user}
+                  pastWorkouts={pastWorkouts}
+                  dailyNutritionRecords={dailyNutritionRecords}
+                  sleepRecords={sleepRecords}
+                  battles={battles}
+                />
               )}
 
               {currentTab === 'ranks' && (

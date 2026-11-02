@@ -191,6 +191,7 @@ const screens = [
   'WorkoutsHub',
   'NutritionSleepTracker',
   'ProgressCharts',
+  'StatsView',
   'ResearchLabView',
   'PeriodizationView',
   'SportsRanks',

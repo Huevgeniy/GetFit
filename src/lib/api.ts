@@ -205,3 +205,18 @@ export async function testNotification(): Promise<{ delivered: boolean; error?: 
     return { delivered: false, error: err?.message || 'network error' };
   }
 }
+
+/** Выгрузка дневника в CSV: сервер отправляет файл в чат с ботом. */
+export async function exportDiaryCsv(): Promise<{ sent: boolean; fileName?: string; error?: string }> {
+  try {
+    const res = await apiFetch('/api/export/csv', { method: 'POST' });
+    const data = await res.json().catch(() => null);
+    return {
+      sent: Boolean(data?.sent),
+      fileName: data?.fileName,
+      error: data?.error || (res.ok ? undefined : `HTTP ${res.status}`),
+    };
+  } catch (err: any) {
+    return { sent: false, error: err?.message || 'network error' };
+  }
+}

@@ -182,6 +182,11 @@ const switched = await clickByText('Зарубы');
 check('переключение на вкладку «Зарубы» не падает', switched && !renderError);
 check('на вкладке видны зарубы с сервера', text().includes('Заруба из облака') || text().includes('Боб'), text().slice(0, 100));
 
+const statsSwitched = await clickByText('Отчёты');
+check('переключение на «Отчёты» не падает', statsSwitched && !renderError);
+check('экран отчётов отрисовался', text().includes('Отчёты и статистика'), text().slice(0, 140));
+check('в отчётах есть периоды', text().includes('30 дней') && text().includes('Всё время'));
+
 const profileSwitched = await clickByText('Профиль');
 check('переключение на «Профиль» не падает', profileSwitched && !renderError);
 check('в профиле видны данные из облака', text().includes(CLOUD_USER));
