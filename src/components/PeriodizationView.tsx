@@ -162,7 +162,10 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
   return (
     <div className="pb-24">
       {/* Header */}
-      <div className="sticky top-0 z-20 bg-[#0b0f12]/95 backdrop-blur-md border-b border-[#1a242f] px-4 py-3">
+      <div
+        id="tour-periodization-header"
+        className="sticky top-0 z-20 bg-[#0b0f12]/95 backdrop-blur-md border-b border-[#1a242f] px-4 py-3"
+      >
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-white flex items-center gap-2">

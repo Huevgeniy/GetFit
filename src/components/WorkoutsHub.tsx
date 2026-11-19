@@ -307,7 +307,10 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
     <div className="space-y-4 pb-20">
       {/* Sub tabs: Тренировки & Планы vs Марафоны целей (марафоны — доп. раздел) */}
       {features?.marathons && (
-        <div className="grid grid-cols-2 gap-2 p-1 bg-[#101720] rounded-2xl border border-[#1e2c3c]">
+        <div
+          id="tour-marathon-tab"
+          className="grid grid-cols-2 gap-2 p-1 bg-[#101720] rounded-2xl border border-[#1e2c3c]"
+        >
           <button
             onClick={() => setSubTab('workouts')}
             className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${

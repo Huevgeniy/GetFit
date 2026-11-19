@@ -786,7 +786,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-3 bg-[#0b1016] border border-[#1b2533] rounded-xl p-3">
+            <div
+              id="tour-feature-mode"
+              className="flex items-center justify-between gap-3 bg-[#0b1016] border border-[#1b2533] rounded-xl p-3"
+            >
               <div className="flex items-center gap-2.5">
                 <div className={`w-8 h-8 rounded-xl flex items-center justify-center border ${
                   !advancedMode

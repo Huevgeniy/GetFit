@@ -1,171 +1,169 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { 
-  Sparkles, 
-  ChevronRight, 
-  ChevronLeft, 
-  X, 
-  Dumbbell, 
-  BrainCircuit, 
-  Apple, 
-  TrendingUp, 
-  FlaskConical, 
-  ShieldCheck, 
-  Swords, 
-  CheckCircle2,
-  Zap,
-  Play,
-  Settings,
-  Trophy,
-  Award,
-  Layers,
-  BarChart3
-} from 'lucide-react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 
 import { NavTab } from './Navigation';
 import { FeatureFlags } from '../lib/features';
+import { hapticImpact } from '../lib/telegram';
+import {
+  buildFocusRect,
+  buildPanelRects,
+  computeCardLayout,
+  computeScrollTarget,
+  CARD_WIDTH,
+  FocusRect,
+  PanelRects,
+  CardLayout,
+} from '../lib/tourGeometry';
 
-export interface TourStep {
+type TourTarget = string | (() => Element | null);
+
+interface TourStep {
   id: string;
-  tab: NavTab;
-  targetSelector?: string;
+  /** На какую вкладку приложения перейти перед показом шага. */
+  tab?: NavTab;
+  target?: TourTarget;
   title: string;
-  badge: string;
   description: string;
-  bulletPoints: string[];
-  icon: React.ReactNode;
+  bullets?: string[];
 }
 
 interface InteractiveTourProps {
   isOpen: boolean;
   onClose: () => void;
   onNavigateTab: (tab: NavTab) => void;
-  onOpenAiSettings?: () => void;
   /** В тур попадают только включённые дополнительные разделы. */
   features?: FeatureFlags;
+}
+
+interface Geometry {
+  focus: FocusRect | null;
+  panels: PanelRects;
+  card: CardLayout;
+  radius: string;
 }
 
 const CORE_STEPS: TourStep[] = [
   {
     id: 'welcome',
-    tab: 'workouts',
-    title: 'Добро пожаловать в GetFit Bot!',
-    badge: 'СТАРТ',
+    title: 'Добро пожаловать в GetFitBot',
     description:
-      'Приложение начинается с базового режима: четыре нижние вкладки и ничего лишнего. Дополнительные разделы можно включить позже в настройках профиля.',
-    bulletPoints: [
-      'Внизу всегда: Тренировки, Питание, Прогресс и Профиль',
-      'Внутри «Тренировок» — планы, свободная тренировка и личные шаблоны',
-      'Внутри «Прогресса» — графики и кнопка «Отчёт за период»',
-      'В «Профиле» — параметры, InBody, рекорды, спорт, напоминания и режим приложения',
+      'Приложение начинается с базового режима: только четыре главные вкладки. Дополнительные разделы можно включить позже в профиле.',
+    bullets: [
+      'Тренировки, питание, прогресс и профиль — внизу',
+      'Базовый режим не перегружает первый экран',
+      'Обучение можно пройти заново через «?» в шапке',
     ],
-    icon: <Sparkles className="w-5 h-5 text-emerald-400" />,
   },
   {
-    id: 'template_builder',
+    id: 'navigation',
+    target: 'nav',
+    title: 'Четыре вкладки внизу',
+    description:
+      'Переключайтесь между тренировками, питанием, прогрессом и профилем. Если включить несколько дополнительных разделов, они прячутся под «Ещё».',
+    bullets: [
+      '«Тренировки» — планы, свободная тренировка и шаблоны',
+      '«Питание» — еда, КБЖУ, вода и сон',
+      '«Прогресс» — графики и отчёт за период',
+      '«Профиль» — параметры, InBody, рекорды и настройки',
+    ],
+  },
+  {
+    id: 'templates',
     tab: 'workouts',
-    targetSelector: '#tour-templates-block',
-    title: 'Конструктор шаблонов & Готовые шаблоны',
-    badge: 'ТРЕНИРОВКИ',
-    description: 'Собери свою тренировку один раз — и запускай её в один клик.',
-    bulletPoints: [
-      'Кнопка «Создать шаблон»: упражнения по группам мышц (грудь, спина, ноги, плечи, руки, кор)',
-      'Меняй очередь упражнений стрелками ⬆️ ⬇️',
-      'Задавай подходы, рабочий вес, повторения и время отдыха',
-      '«Мои шаблоны» хранит библиотеку; оттуда же можно поделиться шаблоном с другом',
+    target: '#tour-templates-block',
+    title: 'Шаблоны тренировок',
+    description:
+      'Соберите тренировку один раз — и запускайте её в один клик. Шаблоны можно хранить у себя или передавать другу ссылкой.',
+    bullets: [
+      'Упражнения по группам мышц, подходы, вес и отдых',
+      'Своя библиотека и готовые шаблоны',
+      'Поделиться можно ссылкой или кодом',
     ],
-    icon: <Dumbbell className="w-5 h-5 text-emerald-400" />,
   },
   {
-    id: 'quick_workout_save',
+    id: 'quick-workout',
     tab: 'workouts',
-    targetSelector: '#tour-quick-workout-btn',
-    title: 'Быстрая тренировка & Сохранение в шаблон',
-    badge: 'LIVE WORKOUT',
-    description: 'Хочешь потренироваться прямо сейчас без подготовки? Нажми «Быстрая тренировка»!',
-    bulletPoints: [
-      'Добавляй упражнения по ходу занятия через каталог или поиск',
-      'Корректируй вес, повторы и таймеры отдыха прямо во время тренировки',
-      'После окончания нажми «Сохранить как шаблон» — тренировка останется в библиотеке',
+    target: '#tour-quick-workout-btn',
+    title: 'Быстрая тренировка',
+    description:
+      'Если плана нет, начните свободную тренировку: добавляйте упражнения по ходу и записывайте подходы.',
+    bullets: [
+      'ИИ распознаёт записи вроде «жим 100 на 10»',
+      'Вес, повторения и таймер отдыха — под рукой',
+      'После финиша тренировку можно сохранить как шаблон',
     ],
-    icon: <Play className="w-5 h-5 text-emerald-400 fill-current" />,
   },
   {
-    id: 'readiness_rpe',
+    id: 'readiness',
     tab: 'workouts',
-    targetSelector: '#tour-readiness-card',
-    title: 'Рекомендация на сегодня & Smart RPE',
-    badge: 'АВТОРЕГУЛЯЦИЯ',
-    description: 'Оцени состояние за 30 секунд: сон, стресс и мышечная боль.',
-    bulletPoints: [
-      'ИИ рассчитает готовность центральной нервной системы',
-      'Подскажет, стоит ли снизить рабочие веса и RPE',
-      'Помогает не уйти в перетренированность и не пропустить травму',
+    target: '#tour-readiness-card',
+    title: 'Готовность и Smart RPE',
+    description:
+      'Оцените сон, стресс и боль за 30 секунд — приложение подскажет, стоит ли снизить рабочие веса.',
+    bullets: [
+      'Корректировка RPE под состояние',
+      'Помогает не уйти в перетренированность',
+      'Работает и без ИИ-ключей — по локальной эвристике',
     ],
-    icon: <Zap className="w-5 h-5 text-cyan-400" />,
   },
   {
-    id: 'ai_brain_prompt',
-    tab: 'profile',
-    targetSelector: '#header-ai-brain-btn',
-    title: 'ИИ Мозг & Личный системный промт',
-    badge: 'DUAL ENGINE AI',
-    description: 'В шапке всегда доступна кнопка «ИИ Мозг» для тонкой настройки интеллекта.',
-    bulletPoints: [
-      'Впиши ограничения, старые травмы и активный спортпит/БАДы',
-      'Задай личный промт (например: «Я лифтер, готовь к пику силы и держи RPE 8-9»).',
-      'Основной провайдер Groq (Qwen), резерв Gemini, крайний случай — встроенный разбор',
-    ],
-    icon: <BrainCircuit className="w-5 h-5 text-cyan-400" />,
-  },
-  {
-    id: 'nutrition_sleep',
+    id: 'nutrition',
     tab: 'nutrition',
-    title: 'Питание, Сон & КБЖУ',
-    badge: 'НУТРИЦИОЛОГИЯ',
-    description: 'Фиксируй приёмы пищи текстом или фотографируй тарелку — ИИ определит калории и белки.',
-    bulletPoints: [
-      'Фото-сканер и текстовый парсинг блюд на русском языке',
-      'Учёт продолжительности и качества сна',
-      'Водный баланс и ежедневный приём креатина',
-    ],
-    icon: <Apple className="w-5 h-5 text-emerald-400" />,
-  },
-  {
-    id: 'progress_charts',
-    tab: 'charts',
-    targetSelector: '#open-period-stats',
-    title: 'Прогресс, графики и отчёт за период',
-    badge: 'АНАЛИТИКА',
-    description: 'Графики прогрессивной перегрузки и отчёт, который считается прямо в приложении.',
-    bulletPoints: [
-      'Честный консенсус 1ПМ (формулы Эпли, Бжицки и Лэндера)',
-      'Нормализация объёма к 100 кг для сравнения сетов',
-      'Кнопка «Отчёт за период»: выбери 7, 30, 90 дней или всё время',
-      'В отчёте: тренировки, тоннаж, подходы, RPE, время, сон, калории, шаги и вес',
-      'Никаких отчётов по расписанию в чат — только когда ты сам нажал',
-    ],
-    icon: <BarChart3 className="w-5 h-5 text-cyan-400" />,
-  },
-  {
-    id: 'settings_modes',
-    tab: 'profile',
-    targetSelector: '#feature-settings',
-    title: 'Базовый и расширенный режим',
-    badge: 'НАСТРОЙКИ',
+    target: '#tour-nutrition-subtabs',
+    title: 'Питание и сон',
     description:
-      'В «Профиле» есть карточка «Режим приложения». Базовый режим оставляет четыре вкладки, расширенный добавляет тумблеры.',
-    bulletPoints: [
-      '«Базовый режим» включён — внизу только Тренировки, Питание, Прогресс, Профиль',
-      'Выключи его, чтобы увидеть шесть переключателей дополнительных разделов',
-      '«Марафоны целей» — серии шагов и упражнений внутри Тренировок',
-      '«Зарубы с друзьями» — вкладка Зарубы и раздел «Друзья & Зарубы» в профиле',
-      '«Дисциплина и штрафы» — вкладка Дисциплина и раздел «Награды»',
-      '«Спортивные разряды» — вкладка Разряды с нормативами WRPF, WSF и других',
-      '«Лаборатория N=1» — вкладка для личных экспериментов (сон, добавки, восстановление)',
-      '«Циклы и периодизация» — вкладка с блоками гипертрофии, силы и делоада',
-      'Кнопка «Пройти обучение заново» запускает этот гид в любой момент',
+      'Калории, белки, жиры, углеводы, вода и сон — в одном разделе. Приёмы пищи можно вносить вручную или текстом.',
+    bullets: [
+      'Дневная цель и остаток по КБЖУ',
+      'Отдельные вкладки для еды, сна и ИИ-анализа',
+      'Данные участвуют в отчёте за период',
     ],
-    icon: <Settings className="w-5 h-5 text-emerald-400" />,
+  },
+  {
+    id: 'progress',
+    tab: 'charts',
+    target: '#open-period-stats',
+    title: 'Прогресс и отчёт за период',
+    description:
+      'Графики показывают динамику, а отчёт считает итоги прямо в приложении — без сообщений бота по расписанию.',
+    bullets: [
+      'Периоды: 7, 30, 90 дней или всё время',
+      'Тоннаж, подходы, RPE, сон, калории, шаги и вес',
+      'Сравнение с предыдущим периодом',
+    ],
+  },
+  {
+    id: 'settings',
+    tab: 'profile',
+    target: '#tour-feature-mode',
+    title: 'Базовый и расширенный режим',
+    description:
+      'В профиле находится переключатель режима. Базовый оставляет четыре вкладки, расширенный показывает тумблеры дополнительных разделов.',
+    bullets: [
+      'Каждый дополнительный раздел включается отдельно',
+      'Больше одного раздела — появляется «Ещё»',
+      'Обучение можно запустить заново в любой момент',
+    ],
+  },
+  {
+    id: 'ai',
+    tab: 'profile',
+    target: '#header-ai-brain-btn',
+    title: 'ИИ-помощник',
+    description:
+      'Кнопка с мозгом в шапке открывает настройки ИИ: личный промт, травмы, ограничения и спортивное питание.',
+    bullets: [
+      'Провайдер и резерв показываются честно',
+      'Без ключей работает локальная эвристика',
+      'Настройки применяются к тренировкам и разбору питания',
+    ],
   },
 ];
 
@@ -173,262 +171,736 @@ const ADVANCED_STEPS: Record<string, TourStep> = {
   marathons: {
     id: 'marathons',
     tab: 'workouts',
+    target: '#tour-marathon-tab',
     title: 'Марафоны целей',
-    badge: 'ДОП. РАЗДЕЛ',
     description:
-      'Внутри «Тренировок» появилась вкладка «Марафоны целей». Ты включил её в настройках профиля.',
-    bulletPoints: [
-      'Серии дней по шагам, отжиманиям, тренировкам и другим целям',
-      'Остаток можно переносить в копилку и не терять серию',
-      'Выключить раздел можно в Профиль → Режим приложения',
-    ],
-    icon: <Trophy className="w-5 h-5 text-amber-400" />,
+      'Дополнительная вкладка внутри «Тренировок»: серии дней по шагам, упражнениям или привычкам.',
+    bullets: ['Остаток можно переносить в копилку', 'Серия не теряется из-за одного пропуска'],
   },
   battles: {
     id: 'battles',
     tab: 'battles',
+    target: '#tour-battles-tabs',
     title: 'Зарубы с друзьями',
-    badge: 'ДОП. РАЗДЕЛ',
     description:
-      'Дуэли 1 на 1 по шагам, жиму, подтягиваниям или дисциплине. Раздел включён тобой в настройках.',
-    bulletPoints: [
-      'Создай вызов и отправь другу ссылку-приглашение',
-      'Обе стороны видят один прогресс, результат хранится на сервере',
-      'В профиле появился раздел «Друзья & Зарубы»',
-      'Выключить раздел можно в Профиль → Режим приложения',
-    ],
-    icon: <Swords className="w-5 h-5 text-amber-400" />,
+      'Дуэли 1 на 1 по шагам, жиму, подтягиваниям или дисциплине. Прогресс видят оба участника.',
+    bullets: ['Создайте вызов и отправьте ссылку', 'Результат хранится на сервере'],
   },
   discipline: {
     id: 'discipline',
     tab: 'discipline',
-    title: 'Дисциплина, штрафы и награды',
-    badge: 'ДОП. РАЗДЕЛ',
+    target: '#tour-discipline-score',
+    title: 'Дисциплина и штрафы',
     description:
-      'Очки за выполненные тренировки и штрафные задания за пропуски. Раздел включён тобой в настройках.',
-    bulletPoints: [
-      'Календарь обязательств и штрафы за пропуск',
-      'Переносы и задания, которые возвращают очки',
-      'В профиле появился раздел «Награды»',
-      'Выключить раздел можно в Профиль → Режим приложения',
-    ],
-    icon: <ShieldCheck className="w-5 h-5 text-amber-400" />,
+      'Очки за выполненные тренировки, календарь обязательств и штрафные задания за пропуски.',
+    bullets: ['Переносы без потери очков', 'ИИ-арбитр подберёт справедливое задание'],
   },
   ranks: {
     id: 'ranks',
     tab: 'ranks',
+    target: '#tour-ranks-banner',
     title: 'Спортивные разряды',
-    badge: 'ДОП. РАЗДЕЛ',
     description:
-      'Нормативы WRPF, WSF, пауэрлифтинга и других федераций — от юношеских разрядов до КМС/МС. Раздел включён тобой.',
-    bulletPoints: [
-      'Выбери движение и свой вес',
-      'Сравни результат с нормативами и увидь прогресс до цели',
-      'Цель по разряду можно сохранить в профиле',
-      'Выключить раздел можно в Профиль → Режим приложения',
-    ],
-    icon: <Award className="w-5 h-5 text-amber-400" />,
+      'Нормативы WRPF, WSF и других федераций — от юношеских разрядов до КМС и МС.',
+    bullets: ['Выберите движение и свой вес', 'Сравните результат и сохраните цель'],
   },
   lab: {
     id: 'lab',
     tab: 'lab',
+    target: '#tour-lab-banner',
     title: 'Лаборатория N=1',
-    badge: 'ДОП. РАЗДЕЛ',
     description:
-      'Личные эксперименты: проверяй сон, добавки и восстановление на себе. Раздел включён тобой в настройках.',
-    bulletPoints: [
-      'Ставь гипотезу и веди дневник показателей',
-      'Сравнивай зависимые и независимые метрики',
-      'ИИ помогает сформулировать вывод по эксперименту',
-      'Выключить раздел можно в Профиль → Режим приложения',
-    ],
-    icon: <FlaskConical className="w-5 h-5 text-emerald-400" />,
+      'Личные эксперименты: проверяйте сон, добавки и восстановление на себе.',
+    bullets: ['Гипотеза и дневник показателей', 'ИИ поможет сформулировать вывод'],
   },
   periodization: {
     id: 'periodization',
     tab: 'periodization',
+    target: '#tour-periodization-header',
     title: 'Циклы и периодизация',
-    badge: 'ДОП. РАЗДЕЛ',
     description:
-      'Блоки гипертрофии, силы и делоада с аналитикой. Раздел включён тобой в настройках профиля.',
-    bulletPoints: [
-      'Тренировки группируются в циклы',
-      'Видно тоннаж и средний RPE по блоку',
-      'ИИ подсказывает, когда переходить к следующему циклу',
-      'Выключить раздел можно в Профиль → Режим приложения',
-    ],
-    icon: <Layers className="w-5 h-5 text-emerald-400" />,
+      'Блоки гипертрофии, силы и делоада с аналитикой тоннажа и среднего RPE.',
+    bullets: ['Тренировки группируются в циклы', 'Видно, когда переходить к следующему блоку'],
   },
 };
+
+const FINAL_STEP: TourStep = {
+  id: 'finish',
+  title: 'Всё готово',
+  description:
+    'Это основные разделы приложения. Начните с тренировки или внесите питание — данные сохранятся и попадут в отчёты.',
+  bullets: [
+    'Обучение всегда доступно по кнопке «?» в шапке',
+    'Дополнительные разделы включаются в профиле',
+    'Закрыть приложение можно обычной кнопкой Telegram',
+  ],
+};
+
+const buildSteps = (features?: FeatureFlags): TourStep[] => {
+  const extra = features
+    ? Object.keys(ADVANCED_STEPS)
+        .filter((key) => Boolean(features[key as keyof FeatureFlags]))
+        .map((key) => ADVANCED_STEPS[key])
+    : [];
+  return [...CORE_STEPS, ...extra, FINAL_STEP];
+};
+
+/* ------------------------------------------------------------------ */
+/* Вспомогательные функции браузера                                    */
+/* ------------------------------------------------------------------ */
+
+const nextFrame = (): Promise<void> =>
+  new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(finish));
+    }
+    // В неактивном окне rAF может не тикать — не зависаем навсегда.
+    setTimeout(finish, 120);
+  });
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const measureViewport = (): { width: number; height: number } => {
+  if (typeof window === 'undefined') return { width: 390, height: 844 };
+  const root = document.documentElement;
+  return {
+    width: root?.clientWidth || window.innerWidth || 390,
+    height: root?.clientHeight || window.innerHeight || 844,
+  };
+};
+
+const prefersReducedMotion = (): boolean => {
+  try {
+    return Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+  } catch {
+    return false;
+  }
+};
+
+const getHeaderHeight = (): number => {
+  const header = document.querySelector('header');
+  return header ? Math.max(0, header.getBoundingClientRect().height) : 0;
+};
+
+const getBottomInset = (): number => {
+  const nav = document.querySelector('nav');
+  if (!nav) return 0;
+  const rect = nav.getBoundingClientRect();
+  if (rect.height <= 0) return 0;
+  return Math.max(0, measureViewport().height - rect.top);
+};
+
+const getBorderRadius = (target: Element): string => {
+  try {
+    const value = getComputedStyle(target).borderRadius;
+    return value && value !== '0px' ? value : '16px';
+  } catch {
+    return '16px';
+  }
+};
+
+const isVisibleTarget = (element: Element | null): element is Element => {
+  if (!element || !(element instanceof Element)) return false;
+  const style = getComputedStyle(element);
+  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+};
+
+const shouldScroll = (element: Element): boolean => {
+  if (!(element instanceof Element)) return false;
+  if (element.closest('header, nav')) return false;
+  try {
+    const style = getComputedStyle(element);
+    if (style.position === 'fixed' || style.position === 'sticky') return false;
+  } catch {
+    /* ignore */
+  }
+  return true;
+};
+
+const animateScrollTo = (targetY: number): Promise<void> => {
+  const startY = window.scrollY || document.documentElement.scrollTop || 0;
+  const distance = targetY - startY;
+  if (Math.abs(distance) < 1 || prefersReducedMotion()) {
+    window.scrollTo(0, targetY);
+    return Promise.resolve();
+  }
+
+  const duration = Math.min(420, Math.max(180, Math.abs(distance) * 0.5));
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      resolve();
+    };
+    const start = performance.now();
+    const step = (now: number) => {
+      if (finished) return;
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      window.scrollTo(0, startY + distance * eased);
+      if (t < 1) requestAnimationFrame(step);
+      else finish();
+    };
+    requestAnimationFrame(step);
+    // Страховка, если rAF заморожен в фоновом окне.
+    setTimeout(finish, duration + 140);
+  });
+};
+
+/* ------------------------------------------------------------------ */
+/* Компонент                                                           */
+/* ------------------------------------------------------------------ */
 
 export const InteractiveTour: React.FC<InteractiveTourProps> = ({
   isOpen,
   onClose,
   onNavigateTab,
-  onOpenAiSettings,
   features,
 }) => {
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [stepIndex, setStepIndex] = useState(0);
+  /** Фиксируем набор шагов на момент открытия: облако не должно менять тур на ходу. */
+  const [tourFeatures, setTourFeatures] = useState<FeatureFlags | undefined>(features);
+  const [geometry, setGeometry] = useState<Geometry | null>(null);
+  const [viewport, setViewport] = useState(measureViewport);
+  const [compact, setCompact] = useState(false);
+  const [scrolling, setScrolling] = useState(false);
 
-  const steps = useMemo(() => {
-    const extra = features
-      ? (Object.keys(ADVANCED_STEPS) as Array<keyof FeatureFlags>)
-          .filter(key => features[key])
-          .map(key => ADVANCED_STEPS[key])
-      : [];
-    return [...CORE_STEPS, ...extra];
-  }, [features]);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const nextButtonRef = useRef<HTMLButtonElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const runIdRef = useRef(0);
+  const positionRafRef = useRef<number | null>(null);
+  const stepRef = useRef<TourStep | null>(null);
+  const onNavigateTabRef = useRef(onNavigateTab);
+  const onCloseRef = useRef(onClose);
 
-  // Каждый показ начинается с первого шага
-  useEffect(() => {
-    if (isOpen) setCurrentStepIndex(0);
-  }, [isOpen]);
+  onNavigateTabRef.current = onNavigateTab;
+  onCloseRef.current = onClose;
 
-  const currentStep = steps[currentStepIndex] || steps[0];
+  const steps = useMemo(() => buildSteps(tourFeatures), [tourFeatures]);
+  const stepsRef = useRef(steps);
+  stepsRef.current = steps;
 
-  // Sync current tab with the step requirement. Зависим от шага, а не от
-  // массива steps: иначе изменение настроек пересоздаёт массив и тур
-  // возвращает пользователя на первую вкладку.
-  useEffect(() => {
-    if (!isOpen || !currentStep) return;
-    onNavigateTab(currentStep.tab);
+  const safeIndex = Math.min(stepIndex, Math.max(0, steps.length - 1));
+  const currentStep = steps[safeIndex] || steps[0];
+  stepRef.current = currentStep;
 
-    if (currentStep.targetSelector) {
-      setTimeout(() => {
-        const el = document.querySelector(currentStep.targetSelector!);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }, 200);
-    }
-  }, [currentStepIndex, isOpen, currentStep?.id, currentStep?.tab, currentStep?.targetSelector]);
+  const isFirst = safeIndex === 0;
+  const isLast = safeIndex === steps.length - 1;
+  const progressPercent = Math.round(((safeIndex + 1) / Math.max(1, steps.length)) * 100);
 
-  if (!isOpen || !currentStep) return null;
-  const isFirst = currentStepIndex === 0;
-  const isLast = currentStepIndex === steps.length - 1;
-  const progressPercent = Math.round(((currentStepIndex + 1) / steps.length) * 100);
-
-  const handleNext = () => {
-    if (isLast) {
-      handleComplete();
-    } else {
-      setCurrentStepIndex(prev => prev + 1);
-    }
-  };
-
-  const handlePrev = () => {
-    if (!isFirst) {
-      setCurrentStepIndex(prev => prev - 1);
-    }
-  };
-
-  const handleComplete = () => {
+  const complete = useCallback(() => {
     try {
       localStorage.setItem('getfit_tour_completed', 'true');
-    } catch {}
-    onClose();
+    } catch {
+      /* приватный режим */
+    }
+    hapticImpact('medium');
+    onCloseRef.current();
+  }, []);
+
+  const next = useCallback(() => {
+    const total = stepsRef.current.length;
+    if (safeIndex >= total - 1) {
+      complete();
+      return;
+    }
+    hapticImpact('light');
+    setStepIndex(safeIndex + 1);
+  }, [complete, safeIndex]);
+
+  const prev = useCallback(() => {
+    if (safeIndex <= 0) return;
+    hapticImpact('light');
+    setStepIndex(safeIndex - 1);
+  }, [safeIndex]);
+
+  const nextRef = useRef(next);
+  const prevRef = useRef(prev);
+  nextRef.current = next;
+  prevRef.current = prev;
+
+  const resolveTarget = useCallback((step: TourStep | null): Element | null => {
+    if (!step?.target) return null;
+    let raw: Element | null = null;
+    try {
+      raw =
+        typeof step.target === 'function'
+          ? step.target()
+          : document.querySelector(step.target);
+    } catch {
+      raw = null;
+    }
+    return isVisibleTarget(raw) ? raw : null;
+  }, []);
+
+  /** Ждём ленивую вкладку/модалку: цель может появиться после перерисовки. */
+  const waitForTarget = useCallback(
+    async (step: TourStep, token: number): Promise<Element | null> => {
+      if (!step.target) return null;
+      let target = resolveTarget(step);
+      if (target) return target;
+      const deadline = Date.now() + 3200;
+      while (Date.now() < deadline) {
+        await sleep(70);
+        if (token !== runIdRef.current) return null;
+        target = resolveTarget(step);
+        if (target) return target;
+      }
+      return null;
+    },
+    [resolveTarget],
+  );
+
+  const positionNow = useCallback((target: Element | null) => {
+    const card = cardRef.current;
+    if (!card) return;
+    const vp = measureViewport();
+    setViewport(vp);
+    const focus = target ? buildFocusRect(target.getBoundingClientRect(), vp) : null;
+    const cardRect = card.getBoundingClientRect();
+    const cardHeight = Math.max(0, card.getBoundingClientRect().height || cardRect.height);
+    const isCompact = card.classList.contains('is-compact');
+    const cardLayout = computeCardLayout({
+      focus,
+      viewport: vp,
+      cardWidth: Math.min(CARD_WIDTH, vp.width - 20),
+      cardHeight,
+      bottomInset: getBottomInset(),
+      compact: isCompact,
+    });
+    setGeometry({
+      focus,
+      panels: buildPanelRects(focus, vp),
+      card: cardLayout,
+      radius: target ? getBorderRadius(target) : '16px',
+    });
+  }, []);
+
+  const schedulePosition = useCallback(() => {
+    if (positionRafRef.current !== null) return;
+    positionRafRef.current = requestAnimationFrame(() => {
+      positionRafRef.current = null;
+      positionNow(resolveTarget(stepRef.current));
+    });
+  }, [positionNow, resolveTarget]);
+
+  // Снимок фич и сброс шага при каждом открытии.
+  useEffect(() => {
+    if (!isOpen) return;
+    setTourFeatures(features);
+    setStepIndex(0);
+    hapticImpact('medium');
+    // Намеренно только на открытие: набор шагов не должен меняться во время тура.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // Основной конвейер шага: навигация -> ожидание DOM -> выравнивание -> отрисовка.
+  useEffect(() => {
+    if (!isOpen) return;
+    const token = ++runIdRef.current;
+    let cancelled = false;
+    setGeometry(null);
+    setCompact(false);
+    setScrolling(false);
+
+    const run = async () => {
+      const step = stepsRef.current[safeIndex];
+      if (!step) return;
+
+      if (step.tab) onNavigateTabRef.current(step.tab);
+      await nextFrame();
+      if (cancelled || token !== runIdRef.current) return;
+
+      let target = await waitForTarget(step, token);
+      if (cancelled || token !== runIdRef.current) return;
+
+      // Даём вкладке дорисоваться и устоять layout.
+      await nextFrame();
+      if (cancelled || token !== runIdRef.current) return;
+      target = resolveTarget(step);
+
+      const card = cardRef.current;
+      if (!card) return;
+
+      // 1) Прокрутку планируем по компактной карточке: именно она должна
+      // поместиться рядом с целью. Иначе на 320×568 карточка «не влезает»,
+      // а цель ещё находится за экраном и её рамка выглядит пустой.
+      if (target && shouldScroll(target)) {
+        card.classList.add('is-compact');
+        const compactHeight = card.getBoundingClientRect().height;
+        card.classList.remove('is-compact');
+
+        const plan = computeScrollTarget({
+          rect: target.getBoundingClientRect(),
+          viewport: measureViewport(),
+          headerHeight: getHeaderHeight(),
+          bottomInset: getBottomInset(),
+          cardHeight: compactHeight,
+          scrollY: window.scrollY || document.documentElement.scrollTop || 0,
+          scrollHeight: Math.max(
+            document.documentElement.scrollHeight,
+            document.body?.scrollHeight || 0,
+          ),
+        });
+        if (plan) {
+          setScrolling(true);
+          await animateScrollTo(plan.scrollTop);
+          if (cancelled || token !== runIdRef.current) return;
+          setScrolling(false);
+          await nextFrame();
+          if (cancelled || token !== runIdRef.current) return;
+          target = resolveTarget(step);
+        }
+      }
+
+      // 2) После прокрутки цель уже видна — окончательно выбираем раскладку.
+      card.classList.remove('is-compact');
+      let cardHeight = card.getBoundingClientRect().height;
+      let focus = target
+        ? buildFocusRect(target.getBoundingClientRect(), measureViewport())
+        : null;
+      let cardLayout = computeCardLayout({
+        focus,
+        viewport: measureViewport(),
+        cardWidth: Math.min(CARD_WIDTH, measureViewport().width - 20),
+        cardHeight,
+        bottomInset: getBottomInset(),
+        compact: false,
+      });
+
+      if (cardLayout.needsCompact) {
+        card.classList.add('is-compact');
+        cardHeight = card.getBoundingClientRect().height;
+        focus = target
+          ? buildFocusRect(target.getBoundingClientRect(), measureViewport())
+          : null;
+        cardLayout = computeCardLayout({
+          focus,
+          viewport: measureViewport(),
+          cardWidth: Math.min(CARD_WIDTH, measureViewport().width - 20),
+          cardHeight,
+          bottomInset: getBottomInset(),
+          compact: true,
+        });
+        setCompact(true);
+      } else {
+        setCompact(false);
+      }
+
+      if (cancelled || token !== runIdRef.current) return;
+      positionNow(target);
+      setScrolling(false);
+
+      // Асинхронные перерисовки вкладок: несколько контрольных замеров.
+      [180, 450, 900].forEach((ms) => {
+        setTimeout(() => {
+          if (cancelled || token !== runIdRef.current) return;
+          positionNow(resolveTarget(step));
+        }, ms);
+      });
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+      if (runIdRef.current === token) runIdRef.current += 1;
+    };
+  }, [isOpen, safeIndex, waitForTarget, resolveTarget, positionNow]);
+
+  // Перепозиционирование при скролле, ресайзе и перерисовке контента.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onViewportChange = () => {
+      setViewport(measureViewport());
+      schedulePosition();
+    };
+    window.addEventListener('scroll', onViewportChange, { passive: true });
+    window.addEventListener('resize', onViewportChange);
+    const visualViewport = window.visualViewport;
+    visualViewport?.addEventListener('resize', onViewportChange);
+    visualViewport?.addEventListener('scroll', onViewportChange);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => schedulePosition());
+      const main = document.querySelector('main');
+      if (main) observer.observe(main);
+      const target = resolveTarget(stepRef.current);
+      if (target) observer.observe(target);
+      const card = cardRef.current;
+      if (card) observer.observe(card);
+    }
+
+    return () => {
+      window.removeEventListener('scroll', onViewportChange);
+      window.removeEventListener('resize', onViewportChange);
+      visualViewport?.removeEventListener('resize', onViewportChange);
+      visualViewport?.removeEventListener('scroll', onViewportChange);
+      observer?.disconnect();
+      if (positionRafRef.current !== null) {
+        cancelAnimationFrame(positionRafRef.current);
+        positionRafRef.current = null;
+      }
+    };
+  }, [isOpen, safeIndex, schedulePosition, resolveTarget]);
+
+  // Блокировка прокрутки страницы событиями, а не overflow: hidden:
+  // иначе ломается position: sticky у шапки и все замеры уезжают.
+  useEffect(() => {
+    if (!isOpen) return;
+    const html = document.documentElement;
+    html.classList.add('tour-active');
+
+    const block = (event: Event) => {
+      const target = event.target as Node | null;
+      const card = cardRef.current;
+      // Внутри карточки скролл разрешён, но только если ей есть что скроллить.
+      if (target && card?.contains(target)) {
+        if (card.scrollHeight > card.clientHeight + 1) return;
+        event.preventDefault();
+        return;
+      }
+      event.preventDefault();
+    };
+
+    window.addEventListener('wheel', block, { passive: false });
+    window.addEventListener('touchmove', block, { passive: false });
+    return () => {
+      html.classList.remove('tour-active');
+      window.removeEventListener('wheel', block);
+      window.removeEventListener('touchmove', block);
+    };
+  }, [isOpen]);
+
+  // Клавиатура и простой focus trap.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        complete();
+        return;
+      }
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        nextRef.current();
+        return;
+      }
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        prevRef.current();
+        return;
+      }
+      if (event.key === 'Tab') {
+        const card = cardRef.current;
+        if (!card) return;
+        const focusable = Array.from(
+          card.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter((element) => element.offsetParent !== null);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
+      if ([' ', 'PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        const active = document.activeElement as HTMLElement | null;
+        const tag = active?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        event.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, complete]);
+
+  // Фокус на основную кнопку шага.
+  useEffect(() => {
+    if (!isOpen) return;
+    nextButtonRef.current?.focus({ preventScroll: true });
+  }, [isOpen, safeIndex]);
+
+  if (!isOpen || !currentStep) return null;
+
+  // В браузере оверлей живёт прямо в body (никаких transform-предков),
+  // а в SSR/рендер-тестах без настоящего DOM отдаём разметку инлайн.
+  const canUsePortal =
+    typeof document !== 'undefined' &&
+    Boolean(document.body) &&
+    document.body.nodeType === 1;
+
+  const fallbackPanels = buildPanelRects(null, viewport);
+  const panels = geometry?.panels || fallbackPanels;
+  const card = geometry?.card;
+  const cardStyle: React.CSSProperties = {
+    left: card ? `${card.left}px` : '0px',
+    top: card ? `${card.top}px` : '0px',
+    width: `${Math.min(CARD_WIDTH, viewport.width - 20)}px`,
+    visibility: geometry ? 'visible' : 'hidden',
   };
 
-  return (
-    <div className="fixed inset-0 z-[100] flex flex-col justify-end sm:justify-center p-3 sm:p-6 pointer-events-auto">
-      {/* Dark overlay backdrop */}
-      <div 
-        onClick={handleComplete}
-        className="fixed inset-0 bg-black/80 backdrop-blur-[3px] transition-opacity" 
+  const root = (
+    <div
+      ref={rootRef}
+      className={`tour-root${scrolling ? ' is-scrolling' : ''}`}
+      data-tour-root
+    >
+      {/* Четыре панели: blur только вне «дырки». */}
+      <div
+        className="tour-panel tour-panel--top"
+        style={panels.top}
+        onClick={next}
+        aria-hidden="true"
+      />
+      <div
+        className="tour-panel tour-panel--bottom"
+        style={panels.bottom}
+        onClick={next}
+        aria-hidden="true"
+      />
+      <div
+        className="tour-panel tour-panel--left"
+        style={panels.left}
+        onClick={next}
+        aria-hidden="true"
+      />
+      <div
+        className="tour-panel tour-panel--right"
+        style={panels.right}
+        onClick={next}
+        aria-hidden="true"
       />
 
-      {/* Spotlight highlight card */}
-      <div className="relative z-10 w-full max-w-lg mx-auto bg-gradient-to-b from-[#131d27] via-[#0f1721] to-[#0c1219] border-2 border-emerald-500/80 rounded-3xl p-5 shadow-2xl shadow-emerald-950/60 space-y-4 animate-in fade-in zoom-in-95 duration-200">
-        
-        {/* Top bar with progress and close button */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-7 h-7 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-              {currentStep.icon}
-            </span>
-            <div>
-              <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-wider bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/30">
-                {currentStep.badge}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-mono text-slate-400">
-              Шаг {currentStepIndex + 1} из {steps.length}
-            </span>
-            <button
-              onClick={handleComplete}
-              className="w-7 h-7 rounded-full bg-[#182330] hover:bg-[#223347] text-slate-400 hover:text-white flex items-center justify-center transition-colors"
-              title="Пропустить обучение"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Progress bar */}
-        <div className="w-full bg-[#162230] h-1.5 rounded-full overflow-hidden">
-          <div 
-            className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full transition-all duration-300 rounded-full"
-            style={{ width: `${progressPercent}%` }}
+      {geometry?.focus && (
+        <>
+          <div
+            className="tour-shield"
+            style={{
+              left: `${geometry.focus.left}px`,
+              top: `${geometry.focus.top}px`,
+              width: `${geometry.focus.width}px`,
+              height: `${geometry.focus.height}px`,
+            }}
+            onClick={next}
+            aria-hidden="true"
           />
-        </div>
+          <div
+            className="tour-ring"
+            style={{
+              left: `${geometry.focus.left}px`,
+              top: `${geometry.focus.top}px`,
+              width: `${geometry.focus.width}px`,
+              height: `${geometry.focus.height}px`,
+              borderRadius: geometry.radius,
+            }}
+            aria-hidden="true"
+          />
+        </>
+      )}
 
-        {/* Title & Description */}
-        <div className="space-y-2">
-          <h3 className="text-base font-extrabold text-slate-100 leading-snug">
-            {currentStep.title}
-          </h3>
-          <p className="text-xs text-slate-300 leading-relaxed">
-            {currentStep.description}
-          </p>
-        </div>
+      {geometry?.card.arrow && (
+        <div
+          className="tour-arrow"
+          style={{
+            left: `${geometry.card.arrow.left}px`,
+            top: `${geometry.card.arrow.top}px`,
+            borderTopWidth: geometry.card.arrow.side === 'top' ? '1px' : '0px',
+            borderLeftWidth: geometry.card.arrow.side === 'top' ? '1px' : '0px',
+            borderRightWidth: geometry.card.arrow.side === 'bottom' ? '1px' : '0px',
+            borderBottomWidth: geometry.card.arrow.side === 'bottom' ? '1px' : '0px',
+          }}
+          aria-hidden="true"
+        />
+      )}
 
-        {/* Key bullet points */}
-        <div className="bg-[#0b1016] border border-[#1d2938] rounded-2xl p-3 space-y-2 max-h-[38vh] overflow-y-auto">
-          {currentStep.bulletPoints.map((point, idx) => (
-            <div key={idx} className="flex items-start gap-2 text-xs text-slate-200">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-              <span className="leading-snug">{point}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Interactive action buttons */}
-        <div className="flex items-center justify-between gap-2 pt-1">
+      <div
+        ref={cardRef}
+        className={`tour-card${compact ? ' is-compact' : ''}`}
+        style={cardStyle}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`tour-title-${currentStep.id}`}
+        aria-describedby={`tour-text-${currentStep.id}`}
+      >
+        <div className="tour-card__top">
+          <span className="tour-card__count">
+            Шаг {safeIndex + 1} из {steps.length}
+          </span>
           <button
             type="button"
-            onClick={handleComplete}
-            className="text-xs text-slate-400 hover:text-slate-200 font-semibold transition-colors px-2 py-1"
+            className="tour-card__skip"
+            onClick={complete}
+            aria-label="Пропустить обучение"
           >
-            Пропустить
+            <X className="h-3.5 w-3.5" />
+            <span>Пропустить</span>
           </button>
+        </div>
 
-          <div className="flex items-center gap-2">
-            {!isFirst && (
-              <button
-                type="button"
-                onClick={handlePrev}
-                className="px-3.5 py-2 rounded-xl bg-[#182433] hover:bg-[#223348] text-slate-200 text-xs font-bold transition-all flex items-center gap-1 active:scale-95"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Назад</span>
-              </button>
-            )}
+        <h2 id={`tour-title-${currentStep.id}`} className="tour-card__title">
+          {currentStep.title}
+        </h2>
+        <p id={`tour-text-${currentStep.id}`} className="tour-card__text">
+          {currentStep.description}
+        </p>
 
+        {currentStep.bullets && currentStep.bullets.length > 0 && (
+          <ul className="tour-card__list">
+            {currentStep.bullets.map((bullet) => (
+              <li key={bullet}>{bullet}</li>
+            ))}
+          </ul>
+        )}
+
+        <div className="tour-card__progress" aria-hidden="true">
+          <span style={{ width: `${progressPercent}%` }} />
+        </div>
+
+        <div className="tour-card__footer">
+          <span className="tour-card__step">{safeIndex + 1} / {steps.length}</span>
+          <div className="tour-card__actions">
             <button
               type="button"
-              onClick={handleNext}
-              className="px-5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 text-xs font-extrabold shadow-lg shadow-emerald-500/25 transition-all flex items-center gap-1.5 active:scale-95"
+              className="tour-btn tour-btn--ghost"
+              onClick={prev}
+              disabled={isFirst}
             >
-              <span>{isLast ? 'Завершить обучение' : 'Далее'}</span>
-              <ChevronRight className="w-4 h-4 stroke-[3]" />
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Назад
+            </button>
+            <button
+              ref={nextButtonRef}
+              type="button"
+              className="tour-btn tour-btn--primary"
+              onClick={next}
+            >
+              {isLast ? 'Готово' : 'Далее'}
+              <ChevronRight className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
-
       </div>
     </div>
   );
+
+  return canUsePortal ? createPortal(root, document.body) : root;
 };

@@ -180,7 +180,10 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
   return (
     <div className="space-y-4 pb-24">
       {/* Discipline Score Overview */}
-      <div className="bg-gradient-to-br from-[#121a22] to-[#0d141b] border border-[#1f2c3a] rounded-2xl p-4 shadow-lg">
+      <div
+        id="tour-discipline-score"
+        className="bg-gradient-to-br from-[#121a22] to-[#0d141b] border border-[#1f2c3a] rounded-2xl p-4 shadow-lg"
+      >
         <div className="flex items-center justify-between">
           <div>
             <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">

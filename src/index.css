@@ -31,3 +31,363 @@ body {
   overscroll-behavior-y: none;
   -webkit-tap-highlight-color: transparent;
 }
+
+/* ------------------------------------------------------------------ */
+/* Onboarding tour                                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Четыре fixed-панели вместо одного box-shadow: blur применяется только
+ * снаружи «дырки», а рамка и карточка остаются чёткими.
+ * Скролл страницы блокируется событиями (см. InteractiveTour), не overflow.
+ */
+.tour-root {
+  --tour-surface: #101a23;
+  --tour-surface-2: #182430;
+  --tour-border: #2a3a4a;
+  --tour-text: #e8eff7;
+  --tour-text-2: #a0b0c2;
+  --tour-accent: #10b981;
+  --tour-goal: #38bdf8;
+
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  pointer-events: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tour-panel {
+  position: fixed;
+  z-index: 0;
+  background: rgba(7, 12, 25, 0.54);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+  pointer-events: auto;
+  transition:
+    left 240ms ease,
+    top 240ms ease,
+    width 240ms ease,
+    height 240ms ease;
+}
+
+.tour-shield {
+  position: fixed;
+  z-index: 1;
+  background: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.tour-ring {
+  position: fixed;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 2px solid rgba(255, 255, 255, 0.94);
+  border-radius: 16px;
+  box-shadow:
+    0 0 0 4px rgba(61, 111, 245, 0.38),
+    0 0 38px rgba(61, 111, 245, 0.5);
+  pointer-events: none;
+  transition:
+    left 240ms ease,
+    top 240ms ease,
+    width 240ms ease,
+    height 240ms ease,
+    border-radius 240ms ease;
+}
+
+.tour-arrow {
+  position: fixed;
+  z-index: 3;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  background: var(--tour-surface);
+  border: 0 solid var(--tour-border);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.tour-card {
+  position: fixed;
+  z-index: 4;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 336px;
+  max-width: calc(100vw - 20px);
+  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
+  padding: 12px 14px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: var(--tour-surface);
+  border: 1px solid var(--tour-border);
+  border-radius: 16px;
+  box-shadow: 0 22px 60px rgba(4, 9, 22, 0.46);
+  color: var(--tour-text);
+  pointer-events: auto;
+  animation: tour-card-in 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.tour-card *,
+.tour-card *::before,
+.tour-card *::after {
+  box-sizing: border-box;
+}
+
+.tour-card::-webkit-scrollbar {
+  width: 4px;
+}
+
+.tour-card::-webkit-scrollbar-thumb {
+  background: #33465a;
+  border-radius: 4px;
+}
+
+.tour-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.tour-card__count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--tour-text-2);
+  text-transform: uppercase;
+}
+
+.tour-card__skip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: -4px -4px -4px 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--tour-text-2);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tour-card__skip:hover,
+.tour-card__skip:focus-visible {
+  color: var(--tour-text);
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+
+.tour-card__title {
+  margin: 0 0 5px;
+  color: var(--tour-text);
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.18;
+  letter-spacing: -0.01em;
+}
+
+.tour-card__text {
+  margin: 0;
+  color: var(--tour-text-2);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.tour-card__text strong {
+  color: var(--tour-text);
+  font-weight: 800;
+}
+
+.tour-card__list {
+  display: grid;
+  gap: 2px;
+  margin: 7px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--tour-text-2);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.tour-card__list li {
+  position: relative;
+  padding-left: 12px;
+}
+
+.tour-card__list li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--tour-accent);
+}
+
+.tour-card__progress {
+  height: 3px;
+  margin: 10px 0 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--tour-surface-2);
+}
+
+.tour-card__progress span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--tour-accent), var(--tour-goal));
+  transition: width 220ms ease;
+}
+
+.tour-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tour-card__step {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--tour-text-2);
+  white-space: nowrap;
+}
+
+.tour-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tour-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease;
+}
+
+.tour-btn:focus-visible {
+  outline: 2px solid var(--tour-goal);
+  outline-offset: 2px;
+}
+
+.tour-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.tour-btn--primary {
+  background: var(--tour-accent);
+  color: #04110c;
+}
+
+.tour-btn--primary:hover:not(:disabled) {
+  background: #34d399;
+}
+
+.tour-btn--ghost {
+  border-color: var(--tour-border);
+  background: transparent;
+  color: var(--tour-text-2);
+}
+
+.tour-btn--ghost:hover:not(:disabled) {
+  border-color: #3b4f63;
+  color: var(--tour-text);
+}
+
+/* Компактный режим: включается, когда карточка не влезает целиком. */
+.tour-card.is-compact {
+  padding: 9px 11px 8px;
+}
+
+.tour-card.is-compact .tour-card__title {
+  margin-bottom: 4px;
+  font-size: 14.5px;
+}
+
+.tour-card.is-compact .tour-card__text,
+.tour-card.is-compact .tour-card__list {
+  font-size: 10px;
+  line-height: 1.38;
+}
+
+.tour-card.is-compact .tour-card__list {
+  margin-top: 5px;
+}
+
+.tour-card.is-compact .tour-card__progress {
+  margin: 7px 0 5px;
+}
+
+.tour-card.is-compact .tour-btn {
+  height: 27px;
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+
+/* Во время программной прокрутки рамка не должна «догонять» элемент. */
+.tour-root.is-scrolling .tour-panel,
+.tour-root.is-scrolling .tour-ring {
+  transition: none;
+}
+
+/*
+ * Блокировка скролла без overflow: hidden — иначе ломается sticky-шапка.
+ * События wheel/touchmove отменяет сам компонент.
+ */
+html.tour-active,
+html.tour-active body {
+  overscroll-behavior: none;
+}
+
+html.tour-active {
+  scroll-behavior: auto !important;
+}
+
+@keyframes tour-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-panel,
+  .tour-ring,
+  .tour-card,
+  .tour-card__progress span {
+    transition: none;
+    animation: none;
+  }
+}

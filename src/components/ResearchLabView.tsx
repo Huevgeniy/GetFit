@@ -361,7 +361,10 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
   return (
     <div className="space-y-4 pb-20 animate-fade-in">
       {/* Top Banner: Research Lab Identity */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-cyan-950/50 via-slate-900 to-indigo-950/40 border border-cyan-500/30 flex items-center justify-between gap-3 shadow-lg">
+      <div
+        id="tour-lab-banner"
+        className="p-4 rounded-2xl bg-gradient-to-r from-cyan-950/50 via-slate-900 to-indigo-950/40 border border-cyan-500/30 flex items-center justify-between gap-3 shadow-lg"
+      >
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0">
             <FlaskConical className="w-6 h-6" />

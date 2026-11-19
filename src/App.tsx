@@ -232,15 +232,11 @@ export default function App() {
     });
   };
 
-  // Interactive Onboarding Tour state
-  const [isTourOpen, setIsTourOpen] = useState(() => {
-    try {
-      const hasCompleted = localStorage.getItem('getfit_tour_completed');
-      return !hasCompleted;
-    } catch {
-      return true;
-    }
-  });
+  // Interactive Onboarding Tour state.
+  // Автостарт включаем только после гидратации данных: иначе тур успевает
+  // открыться на пустом экране и показывает не те разделы.
+  const [isTourOpen, setIsTourOpen] = useState(false);
+  const autoTourStartedRef = useRef(false);
 
   // Отчёт по периодам — модальное окно внутри «Прогресса», не отдельная вкладка
   const [isStatsOpen, setIsStatsOpen] = useState(false);
@@ -315,6 +311,8 @@ export default function App() {
   /* ---------------- Синхронизация с облаком ---------------- */
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'offline' | 'local'>('idle');
   const [storageMode, setStorageMode] = useState<'postgres' | 'file' | 'unavailable' | null>(null);
+  /** Гидратация завершена (включая локальный режим без авторизации). */
+  const [isHydrated, setIsHydrated] = useState(false);
   const [aiProviders, setAiProviders] = useState<AiProvidersInfo | null>(null);
   const [battleNotice, setBattleNotice] = useState<{ text: string; link?: string } | null>(null);
   const hydratedRef = useRef(false);
@@ -347,6 +345,7 @@ export default function App() {
       if (!session.authorized) {
         setSyncStatus('local');
         hydratedRef.current = true;
+        if (!cancelled) setIsHydrated(true);
         return;
       }
 
@@ -409,6 +408,7 @@ export default function App() {
         }
       }
       hydratedRef.current = true;
+      if (!cancelled) setIsHydrated(true);
 
       // Зарубы живут на сервере: их видят оба участника.
       // Если приглашение уже принято, не перетираем результат устаревшим списком.
@@ -525,6 +525,16 @@ export default function App() {
     applyTelegramUi();
   }, []);
 
+  // Закрытие тура всегда фиксируем: иначе автостарт откроет его снова.
+  const handleCloseTour = () => {
+    setIsTourOpen(false);
+    try {
+      localStorage.setItem('getfit_tour_completed', 'true');
+    } catch {
+      /* приватный режим */
+    }
+  };
+
   // Кнопка «Назад» в шапке Telegram закрывает верхний модальный экран
   const anyModalOpen = isTourOpen || isGlobalAiChatOpen || isAiSettingsOpen || isLiveWorkoutOpen || isStatsOpen;
   useEffect(() => {
@@ -534,13 +544,31 @@ export default function App() {
       else if (isStatsOpen) setIsStatsOpen(false);
       else if (isGlobalAiChatOpen) setIsGlobalAiChatOpen(false);
       else if (isAiSettingsOpen) setIsAiSettingsOpen(false);
-      else if (isTourOpen) setIsTourOpen(false);
+      else if (isTourOpen) handleCloseTour();
     });
     return () => {
       cleanup();
       setupBackButton(false, () => undefined);
     };
   }, [anyModalOpen, isLiveWorkoutOpen, isStatsOpen, isGlobalAiChatOpen, isAiSettingsOpen, isTourOpen]);
+
+  // Автостарт обучения: ждём гидратацию и свободный экран.
+  // Набор шагов фиксируется в момент открытия, поэтому тумблеры не «прыгают».
+  useEffect(() => {
+    if (!isHydrated || anyModalOpen || autoTourStartedRef.current) return;
+    let completed = true;
+    try {
+      completed = localStorage.getItem('getfit_tour_completed') === 'true';
+    } catch {
+      completed = false;
+    }
+    if (completed) return;
+    const timer = window.setTimeout(() => {
+      autoTourStartedRef.current = true;
+      setIsTourOpen(true);
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [isHydrated, anyModalOpen]);
 
   // Уведомление о зарубе само скрывается (со ссылкой держим дольше — её копируют)
   useEffect(() => {
@@ -1162,19 +1190,10 @@ export default function App() {
         {suspense(
         <InteractiveTour
           isOpen={isTourOpen}
-          onClose={() => {
-            setIsTourOpen(false);
-            try {
-              localStorage.setItem('getfit_tour_completed', 'true');
-            } catch {}
-          }}
+          onClose={handleCloseTour}
           onNavigateTab={(tab) => {
             setIsLiveWorkoutOpen(false);
             setCurrentTab(tab);
-          }}
-          onOpenAiSettings={() => {
-            setIsTourOpen(false);
-            setIsAiSettingsOpen(true);
           }}
           features={features}
         />

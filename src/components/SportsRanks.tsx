@@ -81,7 +81,10 @@ export const SportsRanks: React.FC<SportsRanksProps> = ({
   return (
     <div className="space-y-4 pb-20">
       {/* Top Banner */}
-      <div className="bg-gradient-to-r from-emerald-950/70 via-[#12181f] to-teal-950/70 border border-emerald-500/30 rounded-2xl p-4">
+      <div
+        id="tour-ranks-banner"
+        className="bg-gradient-to-r from-emerald-950/70 via-[#12181f] to-teal-950/70 border border-emerald-500/30 rounded-2xl p-4"
+      >
         <div className="flex items-center gap-2.5 mb-1.5">
           <Award className="w-5 h-5 text-emerald-400" />
           <h2 className="text-sm font-bold text-slate-100">Спортивные разряды и нормативы</h2>

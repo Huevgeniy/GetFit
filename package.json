@@ -19,6 +19,7 @@
     "test:client": "node scripts/client-test.mjs",
     "test:pg": "node scripts/pg-test.mjs",
     "test:css": "node scripts/css-check.mjs",
+    "test:tour": "node scripts/tour-geometry-test.mjs",
     "test:render": "node scripts/render-test.mjs",
     "test:dom": "node scripts/dom-test.mjs",
     "test:notify": "node scripts/notifications-test.mjs",

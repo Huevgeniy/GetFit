@@ -289,7 +289,10 @@ export const FriendBattles: React.FC<FriendBattlesProps> = ({
       )}
 
       {/* Navigation Sub-Tabs */}
-      <div className="grid grid-cols-3 gap-1 bg-[#12181f] p-1 rounded-xl border border-[#1e293b]">
+      <div
+        id="tour-battles-tabs"
+        className="grid grid-cols-3 gap-1 bg-[#12181f] p-1 rounded-xl border border-[#1e293b]"
+      >
         <button
           onClick={() => setActiveTab('battles')}
           className={`py-2 px-1 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all ${

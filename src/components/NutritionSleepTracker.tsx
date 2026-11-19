@@ -432,7 +432,10 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
   return (
     <div className="space-y-4 pb-24">
       {/* Sub-Tabs Header */}
-      <div className="flex bg-[#0f141a] p-1 rounded-xl border border-[#1d2734] gap-1 text-xs">
+      <div
+        id="tour-nutrition-subtabs"
+        className="flex bg-[#0f141a] p-1 rounded-xl border border-[#1d2734] gap-1 text-xs"
+      >
         <button
           onClick={() => setActiveSubTab('calories')}
           className={`flex-1 py-2 rounded-lg font-semibold transition-all flex items-center justify-center gap-1.5 ${
