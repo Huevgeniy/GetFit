@@ -6,6 +6,7 @@
  */
 import { getInitData } from './telegram';
 import { WorkoutPlan } from '../types';
+import type { AiProvidersInfo } from '../types';
 
 const TOKEN_KEY = 'getfit_session_token';
 const DEV_ID_KEY = 'getfit_dev_id';
@@ -148,9 +149,14 @@ export interface CloudStateResponse {
 
 export type StorageMode = 'postgres' | 'file' | 'unavailable';
 
-/** Кто мы для сервера и куда он пишет данные. */
-export async function fetchMe(): Promise<{ userId: string; name?: string; storage: StorageMode } | null> {
-  return apiJson<{ userId: string; name?: string; storage: StorageMode }>('/api/me');
+/** Кто мы для сервера, куда он пишет данные и какие ключи ИИ настроены. */
+export async function fetchMe(): Promise<{
+  userId: string;
+  name?: string;
+  storage: StorageMode;
+  ai?: AiProvidersInfo;
+} | null> {
+  return apiJson<{ userId: string; name?: string; storage: StorageMode; ai?: AiProvidersInfo }>('/api/me');
 }
 
 export async function loadCloudState(): Promise<CloudStateResponse | null> {

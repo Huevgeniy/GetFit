@@ -43,7 +43,7 @@ postgresql://postgres.abcdefgh:ТВОЙ_ПАРОЛЬ@aws-0-eu-central-1.pooler.s
 > - **Health Check Path:** `/api/health`
 > - **Node version:** 24 (или оставь `engines` из package.json)
 >
-> Симптом неверной настройки — `sh: 1: vite: not found` в логе сборки: значит установка зависимостей не запускалась. В `package.json` установка теперь встроена прямо в `npm run build`, поэтому сборка работает даже с одной командой `npm run build`.
+> Симптом неверной настройки — `sh: 1: vite: not found` в логе сборки: значит зависимости не установились. `npm run build` сам по себе **не** запускает `npm install`, поэтому в Build Command нужна установка с `--include=dev`.
 2. Render попросит заполнить переменные окружения (те, что помечены `sync: false`):
 
 | Переменная | Значение |
@@ -51,7 +51,7 @@ postgresql://postgres.abcdefgh:ТВОЙ_ПАРОЛЬ@aws-0-eu-central-1.pooler.s
 | `TELEGRAM_BOT_TOKEN` | токен от @BotFather |
 | `GROQ_API_KEY` | ключ Groq (`gsk_...`) |
 | `DATABASE_URL` | строка Session pooler из шага 1 |
-| `APP_URL` | публичный адрес сервиса, например `https://getfitbot.onrender.com` |
+| `APP_URL` | публичный адрес сервиса, например `https://getfit-kqhi.onrender.com` |
 
    `SESSION_SECRET` и `TELEGRAM_WEBHOOK_SECRET` Render сгенерирует автоматически — трогать не нужно.
    `GEMINI_API_KEY` можно не заполнять (из России Gemini API недоступен, основной провайдер — Groq).
@@ -68,9 +68,10 @@ postgresql://postgres.abcdefgh:ТВОЙ_ПАРОЛЬ@aws-0-eu-central-1.pooler.s
 ### Проверка уже развёрнутого сервиса
 
 ```bash
-npm run test:deploy   # webhook, кнопка в меню, health, закрытость API — 14 проверок
+npm run test:deploy   # webhook, кнопка в меню, health, закрытость API
 npm run test:live     # сквозной прогон по живому серверу и реальной базе (с уборкой данных)
-npm run test:live-ui  # клиентский код в DOM против живого сервера и Supabase (15 проверок)
+npm run test:live-ui  # клиентский код в DOM против живого сервера и Supabase
+npm run test:ai       # какой провайдер ИИ реально отвечает
 ```
 
 `test:live` работает как настоящее приложение: подписывает `initData` токеном бота, входит,
@@ -91,11 +92,10 @@ npm run doctor
 корректен ли `APP_URL`, не взят ли Direct connection вместо Session pooler,
 и реально ли открывается база (создаёт таблицы сервер сам).
 
-1. `https://<твой-сервис>.onrender.com/api/health` → должен вернуть `{"status":"ok","mode":"production",...}`.
+1. `https://<твой-сервис>.onrender.com/api/health` → должен вернуть `{"status":"ok","mode":"production",...}`. Если сервис давно не открывали, Render free мог заснуть — первый запрос может занять до минуты.
 2. Открой бота @get_fitbot в Telegram → команда `/start` → кнопка **«Открыть GetFit Мини-апп»**.
-3. Внизу слева в приложении — индикатор `✓ в облаке`. Это значит, что данные сохраняются на сервере.
-4. Проверь синхронизацию: измени что-нибудь, закрой и открой приложение снова (или с другого устройства) — изменения на месте.
-5. Внизу слева смотри индикатор: `✓ в облаке` — данные в Postgres; `⚠ без базы данных` — `DATABASE_URL` не подключился, данные исчезнут при перезапуске сервиса (проверь `npm run doctor`).
+3. Проверь синхронизацию: измени что-нибудь, закрой и открой приложение снова (или с другого устройства) — изменения на месте.
+4. В здоровом состоянии (Postgres + данные сохранены) индикатор не показывается и ничего не перекрывает. Если под шапкой появилась полоса `⚠ без базы данных` — `DATABASE_URL` не подключился, данные исчезнут при перезапуске сервиса. `⛔ база недоступна` — Postgres не отвечает (например, Supabase ушёл в паузу, нажми **Resume project**). `⚠ нет связи с облаком` — временная ошибка сети, попробуй ещё раз.
 
 > Webhook ставится только после того, как сервер убедится, что `APP_URL/api/health` действительно отвечает. Если в логах `webhook НЕ установлен` — значит `APP_URL` указан неверно, и бот остался нетронутым: исправь переменную и перезапусти сервис.
 
@@ -161,12 +161,13 @@ npm run dev          # http://localhost:3000, вход без Telegram разр�
 ```bash
 npm run lint         # типы
 npm run test:client  # логика входа и синхронизации (13 проверок)
-npm run test:pg      # Postgres-ветка хранилища на in-memory Postgres (21 проверка)
+npm run test:pg      # Postgres-ветка хранилища на in-memory Postgres (30 проверок)
 npm run test:css     # сборка Tailwind v4 из src/index.css (15 проверок)
-npm run test:render  # рендер приложения и всех экранов (24 проверки)
-npm run test:dom     # DOM: гидратация из облака, переключение вкладок (17 проверок)
+npm run test:render  # рендер приложения и всех экранов (42 проверки)
+npm run test:dom     # DOM: гидратация из облака, вкладки, «Ещё», шаблоны (61 проверка)
 npm run test:notify  # логика напоминаний (17 проверок)
-npm run test:smoke   # API целиком: авторизация, зарубы, хранилище (38 проверок)
+npm run test:inbody  # разбор чисел InBody (19 проверок)
+npm run test:smoke   # API целиком: авторизация, зарубы, хранилище (58 проверок)
 ```
 
 Для полного прогона smoke-теста запусти сервер с секретом планировщика:
@@ -186,7 +187,8 @@ $env:CRON_SECRET='test-cron-secret'; npm run dev   # Windows PowerShell
 
 **Логи:** Render → сервис → **Logs**. Полезные строки: `[storage] режим: postgres`, `[telegram] webhook установлен`, `[auth] вход: tg:...`.
 
-**Сменить токен бота** (например, после утечки):1. @BotFather → `/revoke` → получишь новый токен.
+**Сменить токен бота** (например, после утечки):
+1. @BotFather → `/revoke` → получишь новый токен.
 2. Render → Environment → обнови `TELEGRAM_BOT_TOKEN` → сохранить (сервис перезапустится и переустановит webhook).
 3. ⚠️ При смене токена `SESSION_SECRET`, выведенный из него, изменится — все пользователи перелогинятся автоматически, данные не потеряются.
 
@@ -213,9 +215,9 @@ curl "https://api.telegram.org/bot<ТОКЕН>/getWebhookInfo"
 
 | Симптом | Причина | Решение |
 |---|---|---|
-| `sh: 1: vite: not found` при сборке | Render не запускал установку зависимостей (Build Command = только `npm run build`) | Обнови код: установка встроена в `npm run build`. Либо задай Build Command `npm install --include=dev && npm run build` |
+| `sh: 1: vite: not found` при сборке | Render не установил devDependencies (Build Command = только `npm run build`) | Задай Build Command `npm install --include=dev && npm run build` |
 | `Application failed to respond` / долгая загрузка | Сервис спал | Подожди минуту и обнови |
-| В приложении `⚠ только на устройстве` | Не прошла авторизация | Открой приложение именно из Telegram; проверь `TELEGRAM_BOT_TOKEN` в Render |
+| Под шапкой `⚠ локальный режим` | Не прошла авторизация | Открой приложение именно из Telegram; проверь `TELEGRAM_BOT_TOKEN` в Render |
 | `401 unauthorized` в логах | Устаревшая сессия | Закрой и открой Mini App заново |
 | Сервис падает при старте, в логах `[storage] Postgres недоступен` | Неверный `DATABASE_URL` или взят Direct вместо Session pooler | Возьми строку Session pooler (порт 5432) |
 | Бот не отвечает на `/start` | Webhook не установлен | Проверь, что `APP_URL` совпадает с фактическим адресом сервиса, и перезапусти сервис |

@@ -18,6 +18,7 @@ export const INITIAL_USER_PROFILE: UserProfile = {
   weightGoalType: 'maintain',
   stepGoalEnabled: true,
   dailyStepGoal: 10000,
+  dailySteps: {},
   disciplineScore: 100,
   streakDays: 0,
   longestStreak: 0,

@@ -403,6 +403,12 @@ app.get('/api/me', (req, res) => {
     userId: getAuthedUserId(req),
     name: getAuthedSession(req)?.name,
     storage: storageReady ? storageMode() : 'unavailable',
+    ai: {
+      groq: Boolean(GROK_KEY),
+      gemini: Boolean(process.env.GEMINI_API_KEY),
+      groqModel: process.env.GROQ_MODEL || 'qwen/qwen3.8-27b',
+      geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-latest',
+    },
   });
 });
 

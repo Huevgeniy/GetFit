@@ -301,6 +301,54 @@ if (advancedToggle) {
 // Возвращаемся в профиль: настройки напоминаний и резервная копия
 await clickNav('Профиль');
 
+// 4a-2. Много дополнительных разделов: нижняя панель не разрастается
+const enableAll = buttons().find((el) => (el.textContent || '').trim() === 'Включить всё');
+check('в профиле есть кнопка включить все разделы', Boolean(enableAll));
+if (enableAll) {
+  await act(async () => {
+    enableAll.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  });
+  check(
+    'при многих разделах внизу пять кнопок и «Ещё»',
+    navLabels().length === 5 && navLabels().some((label) => label.includes('Ещё')),
+    JSON.stringify(navLabels()),
+  );
+  check(
+    'дополнительные разделы убраны в «Ещё»',
+    !['Зарубы', 'Дисциплина', 'Разряды', 'Лаборатория', 'Циклы'].some((label) =>
+      navLabels().some((item) => item.includes(label)),
+    ),
+    JSON.stringify(navLabels()),
+  );
+  const moreButton = navButton('Ещё');
+  if (moreButton) {
+    await act(async () => {
+      moreButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+    check(
+      'меню «Ещё» показывает все включённые разделы',
+      ['Зарубы', 'Дисциплина', 'Разряды', 'Лаборатория', 'Циклы'].every((label) => text().includes(label)),
+      text().slice(-260),
+    );
+    const closeMore = container.querySelector('[role="dialog"] [aria-label="Закрыть"]');
+    if (closeMore) {
+      await act(async () => {
+        closeMore.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      });
+      check('меню «Ещё» закрывается', !text().includes('Ещё разделы'));
+    }
+  }
+}
+
 // 4b. Напоминания: переключатель и проверка доставки
 const toggle = container.querySelector('#notifications-toggle');
 check('в профиле есть переключатель напоминаний', Boolean(toggle));

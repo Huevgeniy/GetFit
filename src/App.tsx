@@ -51,7 +51,7 @@ const ScreenLoader: React.FC = () => (
 const suspense = (node: React.ReactNode) => <Suspense fallback={<ScreenLoader />}>{node}</Suspense>;
 
 import { Bot, Mic } from 'lucide-react';
-import { applyTelegramUi, closeMiniApp, copyToClipboard, getStartParam, hapticImpact, hapticNotify, setupBackButton, shareToTelegram } from './lib/telegram';
+import { applyTelegramUi, copyToClipboard, getStartParam, hapticImpact, hapticNotify, setupBackButton, shareToTelegram } from './lib/telegram';
 import {
   apiFetch,
   createBattle,
@@ -65,6 +65,7 @@ import {
   updateBattleProgress,
 } from './lib/api';
 import { getFeatureFlags } from './lib/features';
+import { readLegacyStepLog } from './lib/steps';
 
 import { 
   UserProfile, 
@@ -76,7 +77,8 @@ import {
   DailyNutritionRecord,
   SleepRecord,
   FoodItem,
-  PersonalRecord
+  PersonalRecord,
+  AiProvidersInfo
 } from './types';
 import { 
   INITIAL_USER_PROFILE, 
@@ -313,9 +315,12 @@ export default function App() {
   /* ---------------- Синхронизация с облаком ---------------- */
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'offline' | 'local'>('idle');
   const [storageMode, setStorageMode] = useState<'postgres' | 'file' | 'unavailable' | null>(null);
+  const [aiProviders, setAiProviders] = useState<AiProvidersInfo | null>(null);
   const [battleNotice, setBattleNotice] = useState<{ text: string; link?: string } | null>(null);
   const hydratedRef = useRef(false);
   const skipSaveRef = useRef(false);
+  /** Старые шаги из localStorage нашли в облаке впервые — их нужно сразу сохранить. */
+  const stepsMigrationRef = useRef(false);
   const syncTimerRef = useRef<number | null>(null);
   /** true, если по deep-link только что приняли зарубу (защита от устаревшего списка) */
   const joinedBattleRef = useRef(false);
@@ -359,6 +364,7 @@ export default function App() {
       // Узнаём, куда сервер пишет данные: без Postgres они не переживут деплой
       const me = await fetchMe();
       if (!cancelled && me?.storage) setStorageMode(me.storage);
+      if (!cancelled && me?.ai) setAiProviders(me.ai);
 
       const cloud = await loadCloudState();
       if (cancelled) return;
@@ -366,7 +372,19 @@ export default function App() {
 
       if (data) {
         skipSaveRef.current = true;
-        if (data.user) setUser(prev => ({ ...prev, ...data.user }));
+        if (data.user) {
+          const legacySteps = readLegacyStepLog(120);
+          const cloudSteps = (data.user.dailySteps || {}) as Record<string, number>;
+          stepsMigrationRef.current = Object.keys(legacySteps).some(
+            (key) => legacySteps[key] > 0 && !(key in cloudSteps),
+          );
+          setUser(prev => {
+            const cloudUser = data.user as Partial<UserProfile>;
+            // Старые шаги жили только в localStorage — переносим их в профиль.
+            const mergedSteps = { ...legacySteps, ...(cloudUser.dailySteps || {}) };
+            return { ...prev, ...cloudUser, dailySteps: mergedSteps };
+          });
+        }
         if (Array.isArray(data.workoutPlans)) setWorkoutPlans(data.workoutPlans);
         if (Array.isArray(data.pastWorkouts)) setPastWorkouts(data.pastWorkouts);
         if (Array.isArray(data.penalties)) setPenalties(data.penalties);
@@ -378,8 +396,17 @@ export default function App() {
         if (Array.isArray(data.customTemplates)) setCustomTemplates(data.customTemplates);
         setSyncStatus('synced');
       } else {
-        const ok = await saveCloudState({ ...buildSyncBlob(), user: { ...user, ...telegramPatch } });
-        if (!cancelled) setSyncStatus(ok ? 'synced' : 'offline');
+        const legacySteps = readLegacyStepLog(120);
+        const mergedUser = {
+          ...user,
+          ...telegramPatch,
+          dailySteps: { ...legacySteps, ...(user.dailySteps || {}) },
+        };
+        const ok = await saveCloudState({ ...buildSyncBlob(), user: mergedUser });
+        if (!cancelled) {
+          setUser(mergedUser);
+          setSyncStatus(ok ? 'synced' : 'offline');
+        }
       }
       hydratedRef.current = true;
 
@@ -398,7 +425,10 @@ export default function App() {
     if (!hydratedRef.current) return;
     if (skipSaveRef.current) {
       skipSaveRef.current = false;
-      return;
+      // Обычная гидратация уже актуальна в облаке. Исключение — перенос
+      // старых шагов: его надо один раз записать, иначе он останется только здесь.
+      if (!stepsMigrationRef.current) return;
+      stepsMigrationRef.current = false;
     }
     setSyncStatus('syncing');
     if (syncTimerRef.current) window.clearTimeout(syncTimerRef.current);
@@ -880,6 +910,21 @@ export default function App() {
 
   const pendingPenaltiesCount = penalties.filter(p => p.status === 'pending').length;
 
+  const storageWarning =
+    storageMode === 'unavailable'
+      ? '⛔ база недоступна — данные не сохраняются'
+      : storageMode === 'file'
+        ? '⚠ без базы данных — данные не переживут перезапуск сервера'
+        : syncStatus === 'offline'
+          ? '⚠ нет связи с облаком — изменения пока на устройстве'
+          : syncStatus === 'local'
+            ? '⚠ локальный режим — открой приложение через Telegram'
+            : null;
+  const storageWarningClass =
+    storageMode === 'unavailable'
+      ? 'border-rose-500/40 bg-rose-950/70 text-rose-300'
+      : 'border-amber-500/40 bg-amber-950/70 text-amber-300';
+
   return (
     <div className="min-h-screen bg-[#070a0d] text-slate-100 flex justify-center selection:bg-emerald-500 selection:text-slate-950 font-sans antialiased">
       {/* Mobile container constrained to 480px width (Telegram Mini App viewport standard) */}
@@ -893,16 +938,32 @@ export default function App() {
           disciplineScore={user?.disciplineScore}
           streakDays={user?.streakDays}
           isWorkoutActive={Boolean(activeWorkoutPlan)}
+          showDiscipline={features.discipline}
           onOpenLiveWorkout={() => setIsLiveWorkoutOpen(true)}
           onProfileClick={() => setCurrentTab('profile')}
           onOpenAiSettings={() => setIsAiSettingsOpen(true)}
           onOpenTutorial={() => setIsTourOpen(true)}
-          onCloseApp={closeMiniApp}
         />
+
+        {/* Постоянное предупреждение о хранилище: в потоке, а не поверх контента */}
+        {storageWarning && (
+          <div
+            className={`relative z-10 border-b px-3 py-1.5 text-[10px] font-mono ${storageWarningClass}`}
+            title={
+              storageMode === 'unavailable'
+                ? 'Сервер не может подключиться к базе. Если это бесплатный Supabase — проект мог уйти в паузу: открой дашборд Supabase и нажми Resume project'
+                : storageMode === 'file'
+                  ? 'Сервер работает без Postgres: данные исчезнут при перезапуске. Подключи DATABASE_URL (Supabase)'
+                  : 'Состояние синхронизации с облаком'
+            }
+          >
+            {storageWarning}
+          </div>
+        )}
 
         {/* Floating banner if active workout is currently minimized */}
         {activeWorkoutPlan && !isLiveWorkoutOpen && (
-          <div className="sticky top-[58px] z-20 bg-emerald-500 text-slate-950 px-4 py-2 flex items-center justify-between shadow-md">
+          <div className="relative z-10 bg-emerald-500 text-slate-950 px-4 py-2 flex items-center justify-between shadow-md">
             <div className="flex items-center gap-2 text-xs font-bold">
               <span className="w-2 h-2 rounded-full bg-slate-950 animate-ping" />
               <span>Идет тренировка: {activeWorkoutPlan.title}</span>
@@ -917,7 +978,7 @@ export default function App() {
         )}
 
         {/* Main Tab Content */}
-        <main className="flex-1 px-3 pt-3 overflow-y-auto">
+        <main className="flex-1 px-3 pt-3 pb-12 overflow-y-auto">
           {isLiveWorkoutOpen && activeWorkoutPlan ? (
             suspense(
             <AiWorkoutLive
@@ -1048,6 +1109,7 @@ export default function App() {
                   onUpdateBattleProgress={handleUpdateBattleProgress}
                   onOpenAiSettings={() => setIsAiSettingsOpen(true)}
                   onRestartTour={() => setIsTourOpen(true)}
+                  aiProviders={aiProviders}
                 />
               )}
             </>
@@ -1132,42 +1194,6 @@ export default function App() {
                 onClose={() => setIsStatsOpen(false)}
               />
             </div>
-          </div>
-        )}
-
-        {/* Индикатор облачной синхронизации */}
-        {syncStatus !== 'idle' && (
-          <div
-            className={`fixed bottom-[74px] left-4 z-30 px-2 py-1 rounded-lg border text-[10px] font-mono backdrop-blur-sm pointer-events-none ${
-              storageMode === 'unavailable'
-                ? 'border-rose-500/60 bg-rose-950/80 text-rose-300'
-                : storageMode === 'file'
-                  ? 'border-amber-500/60 bg-amber-950/80 text-amber-300'
-                  : syncStatus === 'synced'
-                    ? 'border-emerald-500/40 bg-emerald-950/70 text-emerald-300'
-                    : syncStatus === 'syncing'
-                      ? 'border-sky-500/40 bg-sky-950/70 text-sky-300'
-                      : 'border-amber-500/40 bg-amber-950/70 text-amber-300'
-            }`}
-            title={
-              storageMode === 'unavailable'
-                ? 'Сервер не может подключиться к базе данных. Если это бесплатный Supabase — проект мог уйти в паузу: открой дашборд Supabase и нажми Resume project'
-                : storageMode === 'file'
-                  ? 'Сервер работает без базы данных: данные исчезнут при перезапуске. Подключи DATABASE_URL (Supabase)'
-                  : 'Состояние синхронизации с облаком'
-            }
-          >
-            {storageMode === 'unavailable'
-              ? '⛔ база недоступна'
-              : storageMode === 'file'
-                ? '⚠ без базы данных'
-                : syncStatus === 'synced'
-                  ? '✓ в облаке'
-                  : syncStatus === 'syncing'
-                    ? '☁ синхронизация…'
-                    : syncStatus === 'local'
-                      ? '⚠ только на устройстве'
-                      : '⚠ нет связи'}
           </div>
         )}
 

@@ -125,12 +125,12 @@ if (html) {
     ['вкладка «Питание»', 'Питание'],
     ['вкладка «Прогресс»', 'Прогресс'],
     ['вкладка «Профиль»', 'Профиль'],
-    ['индикатор дисциплины', 'Дисциплина'],
     ['MINI APP бейдж', 'MINI APP'],
   ]) {
     check(`в разметке есть ${name}`, html.includes(needle));
   }
   check('базовый режим: нет вкладки «Отчёты»', !html.includes('Отчёты'));
+  check('базовый режим: индикатор дисциплины скрыт', !html.includes('Дисциплина'));
   check(
     'базовый режим: нет дополнительных вкладок',
     !['Лаборатория', 'Циклы', 'Разряды', 'Зарубы'].some((label) => html.includes(label)),
@@ -154,6 +154,9 @@ const userStub = {
   selectedDisciplines: ['powerlifting'],
   inBodyRecords: [],
 };
+
+const nowDate = new Date();
+const todayKey = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}-${String(nowDate.getDate()).padStart(2, '0')}`;
 
 const baseProps = {
   user: userStub,
@@ -259,6 +262,17 @@ check(
   'в базовом профиле нет вкладки «Друзья &amp; Зарубы»',
   !basicProfileHtml.includes('Друзья &amp; Зарубы') && !basicProfileHtml.includes('Друзья & Зарубы'),
 );
+const stepsProfileHtml = renderToString(
+  React.createElement(
+    ProfileViewMod.ProfileView,
+    propsFor({ user: { ...userStub, dailySteps: { [todayKey]: 12345 } } }),
+  ),
+);
+check(
+  'профиль показывает шаги из синхронизированного журнала',
+  stepsProfileHtml.includes('12\u00A0345'),
+  stepsProfileHtml.slice(0, 160),
+);
 
 const advancedUser = {
   ...userStub,
@@ -314,7 +328,6 @@ check('при включении марафонов появляется вкл�
 
 const StatsMod = require_(path.join(outDir, 'components', 'StatsView.js'));
 const nowIso = new Date().toISOString();
-const todayKey = nowIso.slice(0, 10);
 const statsWorkout = {
   id: 'w_stats',
   title: 'Тестовая тренировка',
@@ -371,6 +384,7 @@ const statsHtml = renderToString(
   React.createElement(
     StatsMod.StatsView,
     propsFor({
+      user: { ...userStub, dailySteps: { [todayKey]: 12345 } },
       pastWorkouts: [statsWorkout],
       dailyNutritionRecords: [statsFood],
       sleepRecords: [statsSleep],
@@ -386,6 +400,7 @@ check(
   statsHtml.slice(0, 200),
 );
 check('в базовом отчёте нет блока заруб', !statsHtml.includes('Зарубы'));
+check('отчёт берёт шаги из синхронизированного профиля', statsHtml.includes('12\u00A0345'), statsHtml.slice(0, 200));
 
 if (broken.length > 0) {
   console.log('\nТребуют ручного разбора:');

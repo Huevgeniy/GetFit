@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Activity, BarChart3, Calendar, Flame, Footprints, Moon, Scale, TrendingDown, TrendingUp, Trophy, Dumbbell, Utensils, X } from 'lucide-react';
 import { DailyNutritionRecord, FriendBattle, InBodyRecord, SleepRecord, UserProfile, WorkoutRecord } from '../types';
 import { hapticSelect } from '../lib/telegram';
+import { localDayKey, readLegacyStepLog } from '../lib/steps';
 
 interface StatsViewProps {
   user: UserProfile;
@@ -26,7 +27,19 @@ const PERIODS: { key: PeriodKey; label: string; days: number | null }[] = [
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const dayKey = (value: Date) => value.toISOString().slice(0, 10);
+const dayKey = localDayKey;
+
+const shortDate = (value: Date): string =>
+  `${String(value.getDate()).padStart(2, '0')}.${String(value.getMonth() + 1).padStart(2, '0')}`;
+
+const durationLabel = (minutes: number): string => {
+  const total = Math.round(minutes);
+  if (total <= 0) return '—';
+  if (total < 60) return `${total} мин`;
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
+  return rest > 0 ? `${hours} ч ${rest} мин` : `${hours} ч`;
+};
 
 const parseDate = (value?: string): number | null => {
   if (!value) return null;
@@ -66,11 +79,12 @@ export const StatsView: React.FC<StatsViewProps> = ({
   const stats = useMemo(() => {
     const selected = PERIODS.find((p) => p.key === period) ?? PERIODS[1];
     const now = Date.now();
+    const nowEnd = now + 1;
     const from = selected.days ? now - selected.days * DAY_MS : 0;
     const previousFrom = selected.days ? from - selected.days * DAY_MS : 0;
 
     const inRange = (time: number | null, start: number, end: number) =>
-      time !== null && time >= start && (selected.days ? time < end : true);
+      time !== null && time >= start && time < end;
 
     const collect = (start: number, end: number) => {
       const workouts = pastWorkouts.filter((w) => inRange(workoutTime(w), start, end));
@@ -89,17 +103,32 @@ export const StatsView: React.FC<StatsViewProps> = ({
         return best;
       }, null);
 
-      // Шаги ведём на устройстве по дням — суммируем то, что есть
+      // Шаги лежат в профиле по локальным дням и синхронизируются с облаком.
+      // Старые локальные записи подмешиваем, пока они не мигрировали.
+      const stepLog: Record<string, number> = {
+        ...readLegacyStepLog(120),
+        ...(user.dailySteps || {}),
+      };
       let steps = 0;
       let stepsDays = 0;
-      const daysCount = selected.days ?? 90;
-      for (let i = 0; i < daysCount; i += 1) {
-        const key = `getfit_today_steps_${dayKey(new Date(now - i * DAY_MS))}`;
-        const raw = Number(localStorage.getItem(key));
-        if (Number.isFinite(raw) && raw > 0) {
-          steps += raw;
-          stepsDays += 1;
+      if (selected.days) {
+        for (let i = 0; i < selected.days; i += 1) {
+          const date = new Date(now);
+          date.setDate(date.getDate() - i);
+          const value = Number(stepLog[dayKey(date)]) || 0;
+          if (value > 0) {
+            steps += value;
+            stepsDays += 1;
+          }
         }
+      } else {
+        Object.values(stepLog).forEach((value) => {
+          const amount = Number(value) || 0;
+          if (amount > 0) {
+            steps += amount;
+            stepsDays += 1;
+          }
+        });
       }
 
       return {
@@ -121,7 +150,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
       };
     };
 
-    const current = collect(from, now);
+    const current = collect(from, nowEnd);
     const previous = selected.days ? collect(previousFrom, from) : null;
 
     // Динамика веса за период
@@ -135,28 +164,44 @@ export const StatsView: React.FC<StatsViewProps> = ({
       fatDelta = round((fatPoints[fatPoints.length - 1].fat as number) - (fatPoints[0].fat as number), 1);
     }
 
-    // Разбивка тоннажа для графика
-    const buckets = selected.days ?? 84;
-    const bucketCount = Math.min(12, Math.max(4, Math.round(buckets / (selected.days === 7 ? 1 : 7))));
-    const bucketSize = (selected.days ?? 84) / bucketCount;
+    // Разбивка тоннажа для графика. «Всё время» начинается от первой тренировки,
+    // а не от фиксированных 84 дней.
+    const earliestWorkout = pastWorkouts.reduce<number | null>((min, workout) => {
+      const time = workoutTime(workout);
+      if (time === null) return min;
+      return min === null || time < min ? time : min;
+    }, null);
+    const rangeDays =
+      selected.days ??
+      (earliestWorkout === null
+        ? 84
+        : Math.max(7, Math.min(3650, Math.ceil((now - earliestWorkout) / DAY_MS) + 1)));
+    const bucketCount =
+      selected.days === 7 ? 7 : Math.min(12, Math.max(4, Math.ceil(rangeDays / 7)));
+    const bucketSize = rangeDays / bucketCount;
     const chart = Array.from({ length: bucketCount }, (_, index) => {
-      const end = now - index * bucketSize * DAY_MS;
+      const end = nowEnd - (bucketCount - 1 - index) * bucketSize * DAY_MS;
       const start = end - bucketSize * DAY_MS;
       const value = pastWorkouts
         .filter((w) => inRange(workoutTime(w), start, end))
         .reduce((sum, w) => sum + (Number(w.totalTonnageKg) || 0), 0);
-      return { value, label: selected.days === 7 ? dayKey(new Date(end)).slice(5) : `${Math.round(bucketSize * (index + 1))}д` };
-    }).reverse();
+      return { value, label: shortDate(new Date(Math.min(end, now))) };
+    });
 
     const activeBattles = battles.filter((b) => b.status === 'active');
     const wonBattles = battles.filter((b) => b.status === 'user_won');
 
     return { current, previous, weightDelta, fatDelta, chart, activeBattles, wonBattles, period: selected };
-  }, [period, pastWorkouts, dailyNutritionRecords, sleepRecords, user.inBodyRecords, battles]);
+  }, [period, pastWorkouts, dailyNutritionRecords, sleepRecords, user.inBodyRecords, user.dailySteps, battles]);
 
   const { current, previous } = stats;
   const isEmpty =
-    current.workouts.length === 0 && current.sleep.length === 0 && current.food.length === 0 && stats.chart.every((c) => c.value === 0);
+    current.workouts.length === 0 &&
+    current.sleep.length === 0 &&
+    current.food.length === 0 &&
+    current.weights.length === 0 &&
+    current.steps === 0 &&
+    stats.chart.every((c) => c.value === 0);
 
   const card = 'bg-[#101820] border border-[#22303f] rounded-2xl p-3';
   const metric = (label: string, value: string, icon: React.ReactNode, delta?: { text: string; positive: boolean } | null, hint?: string) => (
@@ -231,7 +276,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
           <Calendar className="w-8 h-8 text-slate-600 mx-auto" />
           <p className="text-sm font-semibold text-slate-300">За этот период данных пока нет</p>
           <p className="text-[11px] text-slate-500">
-            Проведи тренировку, внеси сон или питание — и здесь появится сводка. Можно выбрать период пошире.
+            Проведи тренировку, внеси сон, питание, вес или шаги — и здесь появится сводка. Можно выбрать период пошире.
           </p>
         </div>
       ) : (
@@ -265,7 +310,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
             )}
             {metric(
               'Время в зале',
-              `${Math.round(current.duration / 60)} ч`,
+              durationLabel(current.duration),
               <Calendar className="w-3 h-3 text-slate-400" />,
               previous ? formatDelta(current.duration, previous.duration) : null,
             )}
@@ -285,10 +330,12 @@ export const StatsView: React.FC<StatsViewProps> = ({
             )}
             {metric(
               'Шаги',
-              current.steps ? `${Math.round(current.steps / 1000)} тыс.` : '—',
+              current.steps ? current.steps.toLocaleString('ru-RU') : '—',
               <Footprints className="w-3 h-3 text-emerald-400" />,
               null,
-              current.stepsDays ? `По ${current.stepsDays} дн. с этого устройства` : 'Шаги вносятся в профиле вручную',
+              current.stepsDays
+                ? `За ${current.stepsDays} дн. из синхронизированного дневника шагов`
+                : 'Шаги вносятся в профиле и синхронизируются с облаком',
             )}
             {metric(
               'Вес',

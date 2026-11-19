@@ -35,12 +35,13 @@ import {
   RotateCcw,
   Layers
 } from 'lucide-react';
-import { UserProfile, Achievement, InBodyRecord, PersonalRecord, RecordHistoryItem, FriendBattle } from '../types';
+import { UserProfile, Achievement, InBodyRecord, PersonalRecord, RecordHistoryItem, FriendBattle, AiProvidersInfo } from '../types';
 import { InBodyTracker } from './InBodyTracker';
 import { FriendsAndBattlesView } from './FriendsAndBattlesView';
 import { hapticImpact, hapticNotify } from '../lib/telegram';
 import { exportDiaryCsv, testNotification } from '../lib/api';
 import { FEATURES, FeatureKey, getFeatureFlags, isAdvancedMode } from '../lib/features';
+import { localDayKey } from '../lib/steps';
 
 interface ProfileViewProps {
   user: UserProfile;
@@ -59,6 +60,8 @@ interface ProfileViewProps {
   onOpenAiSettings?: () => void;
   /** Запускает обучение заново из настроек. */
   onRestartTour?: () => void;
+  /** Реально подключённые на сервере провайдеры ИИ. */
+  aiProviders?: AiProvidersInfo | null;
 }
 
 const AVAILABLE_DISCIPLINES = [
@@ -88,6 +91,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onUpdateBattleProgress = () => {},
   onOpenAiSettings,
   onRestartTour,
+  aiProviders,
 }) => {
   const [profileTab, setProfileTab] = useState<'general' | 'friends_battles' | 'records' | 'disciplines' | 'inbody' | 'achievements'>('general');
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -229,15 +233,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [editHeight, setEditHeight] = useState(user?.heightCm || 178);
   const [editAge, setEditAge] = useState(user?.age || 24);
 
-  // Daily steps logger state (persisted per day)
-  const [todaySteps, setTodaySteps] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem(`getfit_today_steps_${new Date().toISOString().split('T')[0]}`);
-      return saved ? parseInt(saved, 10) : 0;
-    } catch {
-      return 0;
-    }
-  });
+  // Шаги за сегодня берём из профиля: они синхронизируются между устройствами.
+  const stepLog = user?.dailySteps || {};
+  const todayKey = localDayKey();
+  const todaySteps = stepLog[todayKey] || 0;
+
+  const handleTodayStepsChange = (raw: string) => {
+    const val = Math.max(0, parseInt(raw, 10) || 0);
+    const next = { ...stepLog };
+    if (val > 0) next[todayKey] = val;
+    else delete next[todayKey];
+    onUpdateUser({ dailySteps: next });
+  };
 
   // Add Record Modal
   const [showAddRecordModal, setShowAddRecordModal] = useState(false);
@@ -251,6 +258,21 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [matchingExistingRecord, setMatchingExistingRecord] = useState<PersonalRecord | null>(null);
 
   const selectedDisciplines = user?.selectedDisciplines || ['powerlifting', 'streetlifting'];
+
+  const aiPrimary = !aiProviders
+    ? 'провайдеры ИИ проверяются…'
+    : aiProviders.groq
+      ? `Groq · ${aiProviders.groqModel || 'qwen3.8-27b'}`
+      : aiProviders.gemini
+        ? `Gemini · ${aiProviders.geminiModel || 'flash'}`
+        : 'локальная эвристика (без ключей)';
+  const aiFallback = !aiProviders
+    ? ''
+    : aiProviders.groq && aiProviders.gemini
+      ? '⚡ Резерв: Gemini'
+      : aiProviders.groq || aiProviders.gemini
+        ? 'Резерв: нет'
+        : 'Ключи не заданы';
 
   const handleOpenEditProfile = () => {
     setEditName(user?.name || '');
@@ -594,7 +616,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
             <div className="pt-2 flex items-center justify-between gap-2 border-t border-[#1b2532]">
               <span className="text-[11px] text-slate-400">
-                Пройдено за сегодня (ввести вручную):
+                Пройдено за сегодня (синхронизируется):
               </span>
 
               <div className="relative">
@@ -603,13 +625,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   min="0"
                   step="100"
                   value={todaySteps || ''}
-                  onChange={e => {
-                    const val = Math.max(0, parseInt(e.target.value, 10) || 0);
-                    setTodaySteps(val);
-                    try {
-                      localStorage.setItem(`getfit_today_steps_${new Date().toISOString().split('T')[0]}`, val.toString());
-                    } catch {}
-                  }}
+                  onChange={e => handleTodayStepsChange(e.target.value)}
                   placeholder="0"
                   className="w-28 bg-[#18232f] border border-[#263546] rounded-xl px-3 py-1.5 text-xs font-mono font-bold text-slate-100 text-center focus:outline-none focus:border-emerald-500"
                 />
@@ -631,7 +647,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   <h3 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
                     <span>Интеллект & Личный промт ИИ</span>
                     <span className="text-[9px] bg-cyan-950 text-cyan-400 font-mono px-1.5 py-0.5 rounded border border-cyan-500/30">
-                      Dual Engine
+                      AI Engine
                     </span>
                   </h3>
                   <p className="text-[11px] text-slate-400">
@@ -680,9 +696,21 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono px-1">
-                <span>Движок: Groq · qwen3.8-27b</span>
-                <span className="text-emerald-400 font-bold">⚡ Резерв: Gemini Flash</span>
+              <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400 font-mono px-1">
+                <span className="min-w-0 truncate">Движок: {aiPrimary}</span>
+                {aiFallback && (
+                  <span
+                    className={`shrink-0 font-bold ${
+                      aiProviders?.groq && aiProviders?.gemini
+                        ? 'text-emerald-400'
+                        : aiProviders?.groq || aiProviders?.gemini
+                          ? 'text-amber-400'
+                          : 'text-rose-400'
+                    }`}
+                  >
+                    {aiFallback}
+                  </span>
+                )}
               </div>
             </div>
           </div>

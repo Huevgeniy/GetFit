@@ -77,6 +77,8 @@ export interface UserProfile {
   weightGoalType: 'lose' | 'gain' | 'maintain' | 'recomp';
   stepGoalEnabled?: boolean;
   dailyStepGoal: number;
+  /** Шаги по дням: локальная дата YYYY-MM-DD -> количество. Синхронизируется. */
+  dailySteps?: Record<string, number>;
   /** Напоминания в Telegram. По умолчанию включены; false — бот не пишет первым. */
   notificationsEnabled?: boolean;
   disciplineScore: number; // 0 to 100
@@ -111,6 +113,14 @@ export interface UserProfile {
   uiMode?: 'basic' | 'advanced';
   /** Какие дополнительные разделы включены в расширенном режиме. */
   enabledFeatures?: Partial<Record<'marathons' | 'battles' | 'discipline' | 'ranks' | 'lab' | 'periodization', boolean>>;
+}
+
+/** Какие провайдеры ИИ реально настроены на сервере. */
+export interface AiProvidersInfo {
+  groq: boolean;
+  gemini: boolean;
+  groqModel?: string;
+  geminiModel?: string;
 }
 
 export interface DailyReadiness {
