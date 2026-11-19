@@ -167,7 +167,117 @@ check('B достиг цели и победил (user_won)', progB2.json?.battl
 const viewA2 = (await call('/api/battles', { token: A })).json.battles.find((b) => b.id === battleId);
 check('A видит свой проигрыш (friend_won)', viewA2?.status === 'friend_won', viewA2?.status);
 
-// 10. Валидация initData (настоящая подпись)
+// 10. Общие шаблоны тренировок
+const sharedTemplate = {
+  id: 'tmpl_smoke',
+  title: 'Смоук-шаблон',
+  scheduledDay: 'Понедельник',
+  estimatedDurationMinutes: 45,
+  exercises: [
+    { id: 'ex1', name: 'Жим лёжа', targetSets: 3, targetReps: 8, targetWeight: 60, restMinutes: 2 },
+  ],
+};
+const shareRes = await call('/api/templates/share', {
+  method: 'POST',
+  token: A,
+  body: { template: sharedTemplate, isPublic: false },
+});
+const shareCode = shareRes.json?.template?.code;
+const shareId = shareRes.json?.template?.id;
+check('шаблон расшарен и получил код', shareRes.status === 200 && /^[A-Z0-9]{6,12}$/.test(shareCode || ''), shareCode);
+check(
+  'ссылка ведёт в бота с tpl_-кодом',
+  String(shareRes.json?.template?.link || '').includes(`start=tpl_${shareCode}`),
+  shareRes.json?.template?.link,
+);
+
+const mineRes = await call('/api/templates/mine', { token: A });
+check(
+  'свой шаблон виден в библиотеке',
+  mineRes.status === 200 && mineRes.json?.templates?.some((t) => t.code === shareCode),
+  JSON.stringify(mineRes.json?.templates?.map((t) => t.code)),
+);
+
+const publicBefore = await call('/api/templates/public', { token: B });
+check(
+  'неопубликованный шаблон не виден другим',
+  !publicBefore.json?.templates?.some((t) => t.code === shareCode),
+);
+
+const importRes = await call('/api/templates/import', {
+  method: 'POST',
+  token: B,
+  body: { code: `tpl_${shareCode}` },
+});
+check(
+  'импорт по коду отдаёт копию шаблона',
+  importRes.status === 200 &&
+    importRes.json?.template?.template?.id === sharedTemplate.id &&
+    importRes.json?.template?.template?.sourceCode === shareCode,
+  JSON.stringify(importRes.json?.template?.template),
+);
+check('импорт увеличил счётчик копий', importRes.json?.template?.copies === 1, String(importRes.json?.template?.copies));
+
+const publishRes = await call('/api/templates/share', {
+  method: 'POST',
+  token: A,
+  body: { template: sharedTemplate, isPublic: true },
+});
+check(
+  'публикация сохраняет тот же код',
+  publishRes.status === 200 && publishRes.json?.template?.code === shareCode && publishRes.json?.template?.isPublic === true,
+  JSON.stringify(publishRes.json?.template?.code),
+);
+
+const publicAfter = await call('/api/templates/public', { token: B });
+check(
+  'опубликованный шаблон виден другим',
+  publicAfter.json?.templates?.some((t) => t.code === shareCode && t.ownerName),
+  JSON.stringify(publicAfter.json?.templates?.map((t) => t.code)),
+);
+
+const foreignRemove = await call('/api/templates/remove', {
+  method: 'POST',
+  token: B,
+  body: { id: shareId },
+});
+check('чужой шаблон нельзя снять с публикации', foreignRemove.status === 403, String(foreignRemove.status));
+
+const unpublishRes = await call('/api/templates/remove', {
+  method: 'POST',
+  token: A,
+  body: { id: shareId, mode: 'unpublish' },
+});
+check(
+  'владелец снимает шаблон с публикации',
+  unpublishRes.status === 200 && unpublishRes.json?.template?.isPublic === false,
+  JSON.stringify(unpublishRes.json?.template?.isPublic),
+);
+
+const publicFinal = await call('/api/templates/public', { token: B });
+check(
+  'после снятия шаблон исчез из общей библиотеки',
+  !publicFinal.json?.templates?.some((t) => t.code === shareCode),
+);
+
+const importAfterUnpublish = await call('/api/templates/import', {
+  method: 'POST',
+  token: B,
+  body: { code: shareCode },
+});
+check(
+  'ссылка-приглашение работает и после снятия с публикации',
+  importAfterUnpublish.status === 200 && importAfterUnpublish.json?.template?.code === shareCode,
+);
+
+const invalidTemplate = await call('/api/templates/share', {
+  method: 'POST',
+  token: A,
+  body: { template: { title: 'Без упражнений' } },
+});
+check('шаблон без упражнений отклоняется', invalidTemplate.status === 400, String(invalidTemplate.status));
+
+// 11. Валидация initData (настоящая подпись)
 const goodInit = await call('/api/auth/telegram', { method: 'POST', body: { initData: 'user=%7B%22id%22%3A1%7D&auth_date=1&hash=' + 'a'.repeat(64) } });
 check('фальшивый initData с корректным форматом hash = 401', goodInit.status === 401, goodInit.json?.error);
 

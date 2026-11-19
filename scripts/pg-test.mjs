@@ -99,7 +99,55 @@ check('таблица cycles работает', (await storage.listCollection('c
 await storage.upsertCollectionItem('custom_metrics', A, { id: 'm1', name: 'Обхват бедра' });
 check('таблица custom_metrics работает', (await storage.listCollection('custom_metrics', A))[0].name === 'Обхват бедра');
 
-// 6. Уникальность кода приглашения на уровне схемы
+// 6. Общие шаблоны тренировок
+const templateCode = storage.generateInviteCode();
+const templateRecord = {
+  id: `${A}:tmpl_1`,
+  ownerId: A,
+  code: templateCode,
+  title: 'Жим по понедельникам',
+  isPublic: false,
+  payload: {
+    template: { id: 'tmpl_1', title: 'Жим по понедельникам', exercises: [{ name: 'Жим лёжа' }] },
+    ownerName: 'Иван',
+  },
+  copies: 0,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+};
+const savedTemplate = await storage.saveSharedTemplate(templateRecord);
+check('общий шаблон сохранён', savedTemplate.code === templateCode && savedTemplate.title === templateRecord.title);
+check(
+  'свой шаблон виден владельцу',
+  (await storage.listSharedTemplates(A)).some((item) => item.id === templateRecord.id),
+);
+check(
+  'неопубликованный шаблон не попадает в общую библиотеку',
+  (await storage.listPublicSharedTemplates(B)).every((item) => item.id !== templateRecord.id),
+);
+check(
+  'поиск шаблона по коду не зависит от регистра и префикса',
+  (await storage.getSharedTemplateByCode(`tpl_${templateCode.toLowerCase()}`))?.id === templateRecord.id,
+);
+
+const copied = await storage.incrementSharedTemplateCopies(templateCode);
+check('импорт шаблона увеличивает счётчик копий', copied?.copies === 1, String(copied?.copies));
+
+await storage.saveSharedTemplate({ ...savedTemplate, isPublic: true });
+check(
+  'опубликованный шаблон виден другим',
+  (await storage.listPublicSharedTemplates(B)).some((item) => item.id === templateRecord.id),
+);
+
+check('чужой шаблон нельзя удалить', (await storage.deleteSharedTemplate(templateRecord.id, B)) === false);
+check('владелец удаляет шаблон', (await storage.deleteSharedTemplate(templateRecord.id, A)) === true);
+check(
+  'после удаления шаблона нет ни у владельца, ни в общей библиотеке',
+  (await storage.listSharedTemplates(A)).every((item) => item.id !== templateRecord.id) &&
+    (await storage.listPublicSharedTemplates(B)).every((item) => item.id !== templateRecord.id),
+);
+
+// 7. Уникальность кода приглашения на уровне схемы
 let duplicateRejected = false;
 try {
   await storage.saveBattle({ ...created, id: 'battle_2', inviteCode: invite });

@@ -18,6 +18,7 @@ execFileSync(
     'src/lib/api.ts',
     'src/lib/telegram.ts',
     '--outDir', outDir,
+    '--rootDir', 'src',
     '--module', 'commonjs',
     '--target', 'es2022',
     '--moduleResolution', 'node',
@@ -67,7 +68,7 @@ globalThis.fetch = async (url, init = {}) => {
 };
 
 const require_ = createRequire(import.meta.url);
-const api = require_(path.join(outDir, 'api.js'));
+const api = require_(path.join(outDir, 'lib', 'api.js'));
 
 // 1. Первичная сессия вне Telegram -> dev-режим
 const session = await api.ensureSession();
@@ -104,8 +105,8 @@ check('fetchMe читает /api/me и режим хранилища', requests[
 
 // 6. При наличии initData Telegram используется он, а не devId
 store.clear();
-delete require_.cache[require_.resolve(path.join(outDir, 'api.js'))];
-const api2 = require_(path.join(outDir, 'api.js'));
+delete require_.cache[require_.resolve(path.join(outDir, 'lib', 'api.js'))];
+const api2 = require_(path.join(outDir, 'lib', 'api.js'));
 window.Telegram = { WebApp: { initData: 'query_id=AAA&user=%7B%22id%22%3A42%7D&auth_date=1&hash=deadbeef' } };
 authResponder = () => ({ status: 200, body: { valid: true, userId: 'tg:42', token: 'token-tg', devMode: false, user: { first_name: 'Иван' } } });
 requests.length = 0;
@@ -116,8 +117,8 @@ check('сессия из Telegram помечена как не-dev', session2.au
 
 // 6. Отказ сервера -> неавторизованное состояние и токен не сохраняется
 store.clear();
-delete require_.cache[require_.resolve(path.join(outDir, 'api.js'))];
-const api3 = require_(path.join(outDir, 'api.js'));
+delete require_.cache[require_.resolve(path.join(outDir, 'lib', 'api.js'))];
+const api3 = require_(path.join(outDir, 'lib', 'api.js'));
 authResponder = () => ({ status: 400, body: { valid: false, error: 'initData is required' } });
 const session3 = await api3.ensureSession();
 check('при отказе сервера сессия неавторизована', session3.authorized === false && session3.error === 'initData is required', JSON.stringify(session3));

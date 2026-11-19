@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { 
   Sparkles, 
   ChevronRight, 
@@ -12,12 +12,17 @@ import {
   ShieldCheck, 
   Swords, 
   CheckCircle2,
-  HelpCircle,
   Zap,
-  Play
+  Play,
+  Settings,
+  Trophy,
+  Award,
+  Layers,
+  BarChart3
 } from 'lucide-react';
 
 import { NavTab } from './Navigation';
+import { FeatureFlags } from '../lib/features';
 
 export interface TourStep {
   id: string;
@@ -35,19 +40,23 @@ interface InteractiveTourProps {
   onClose: () => void;
   onNavigateTab: (tab: NavTab) => void;
   onOpenAiSettings?: () => void;
+  /** В тур попадают только включённые дополнительные разделы. */
+  features?: FeatureFlags;
 }
 
-const TOUR_STEPS: TourStep[] = [
+const CORE_STEPS: TourStep[] = [
   {
     id: 'welcome',
     tab: 'workouts',
     title: 'Добро пожаловать в GetFit Bot!',
-    badge: 'СТАРТ ИГРЫ',
-    description: 'Твой персональный научный тренировочный штаб с двухъядерным ИИ, конструктором тренировок, трекером дисциплины и соревновательными битвами.',
+    badge: 'СТАРТ',
+    description:
+      'Приложение начинается с базового режима: четыре нижние вкладки и ничего лишнего. Дополнительные разделы можно включить позже в настройках профиля.',
     bulletPoints: [
-      'Полная автономия: составляй свои шаблоны или тренируйся свободно',
-      'ИИ-тренер на Groq (Qwen 3.8) с резервом Gemini и учётом твоих травм и спортпита',
-      'Система прогрессивной перегрузки, 1ПМ и спортивных разрядов',
+      'Внизу всегда: Тренировки, Питание, Прогресс и Профиль',
+      'Внутри «Тренировок» — планы, свободная тренировка и личные шаблоны',
+      'Внутри «Прогресса» — графики и кнопка «Отчёт за период»',
+      'В «Профиле» — параметры, InBody, рекорды, спорт, напоминания и режим приложения',
     ],
     icon: <Sparkles className="w-5 h-5 text-emerald-400" />,
   },
@@ -57,13 +66,12 @@ const TOUR_STEPS: TourStep[] = [
     targetSelector: '#tour-templates-block',
     title: 'Конструктор шаблонов & Готовые шаблоны',
     badge: 'ТРЕНИРОВКИ',
-    description: 'Вместо навязанных списков — удобная система персональных шаблонов!',
+    description: 'Собери свою тренировку один раз — и запускай её в один клик.',
     bulletPoints: [
-      'Кнопка «Создать шаблон»: базовые упражнения по группам мышц (грудь, спина, ноги, плечи, руки, кор)',
+      'Кнопка «Создать шаблон»: упражнения по группам мышц (грудь, спина, ноги, плечи, руки, кор)',
       'Меняй очередь упражнений стрелками ⬆️ ⬇️',
-      'Задавай индивидуальные подходы, рабочий вес, повторения и время отдыха',
-      'Настраивай отдых между подходами и отдых перед переходом к следующему упражнению',
-      'Кнопка «Мои шаблоны» хранит всю твою библиотеку с запуском в один клик',
+      'Задавай подходы, рабочий вес, повторения и время отдыха',
+      '«Мои шаблоны» хранит библиотеку; оттуда же можно поделиться шаблоном с другом',
     ],
     icon: <Dumbbell className="w-5 h-5 text-emerald-400" />,
   },
@@ -75,9 +83,9 @@ const TOUR_STEPS: TourStep[] = [
     badge: 'LIVE WORKOUT',
     description: 'Хочешь потренироваться прямо сейчас без подготовки? Нажми «Быстрая тренировка»!',
     bulletPoints: [
-      'Добавляй упражнения прямо по ходу занятия через каталог или поиск',
+      'Добавляй упражнения по ходу занятия через каталог или поиск',
       'Корректируй вес, повторы и таймеры отдыха прямо во время тренировки',
-      'После окончания тренировки нажми «Сохранить как шаблон» — и она останется в твоих шаблонах!',
+      'После окончания нажми «Сохранить как шаблон» — тренировка останется в библиотеке',
     ],
     icon: <Play className="w-5 h-5 text-emerald-400 fill-current" />,
   },
@@ -87,11 +95,11 @@ const TOUR_STEPS: TourStep[] = [
     targetSelector: '#tour-readiness-card',
     title: 'Рекомендация на сегодня & Smart RPE',
     badge: 'АВТОРЕГУЛЯЦИЯ',
-    description: 'Оцени свое состояние за 30 секунд: сколько спал, уровень стресса и мышечная боль.',
+    description: 'Оцени состояние за 30 секунд: сон, стресс и мышечная боль.',
     bulletPoints: [
-      'ИИ мгновенно рассчитает процент готовности центральной нервной системы',
-      'Автоматически посоветует скорректировать рабочие веса и RPE на сегодня',
-      'Предотвращает перетренированность и травмы суставов',
+      'ИИ рассчитает готовность центральной нервной системы',
+      'Подскажет, стоит ли снизить рабочие веса и RPE',
+      'Помогает не уйти в перетренированность и не пропустить травму',
     ],
     icon: <Zap className="w-5 h-5 text-cyan-400" />,
   },
@@ -103,100 +111,202 @@ const TOUR_STEPS: TourStep[] = [
     badge: 'DUAL ENGINE AI',
     description: 'В шапке всегда доступна кнопка «ИИ Мозг» для тонкой настройки интеллекта.',
     bulletPoints: [
-      'Впиши свои ограничения, старые травмы и активный спортпит/БАДы',
-      'Задай свой личный промт (например: «Я лифтер, готовь к пику силы и держи RPE 8-9»)',
-      'ИИ: основной Groq (Qwen 3.8 27B), резерв Gemini Flash, крайний случай — встроенный разбор',
+      'Впиши ограничения, старые травмы и активный спортпит/БАДы',
+      'Задай личный промт (например: «Я лифтер, готовь к пику силы и держи RPE 8-9»).',
+      'Основной провайдер Groq (Qwen), резерв Gemini, крайний случай — встроенный разбор',
     ],
     icon: <BrainCircuit className="w-5 h-5 text-cyan-400" />,
   },
   {
     id: 'nutrition_sleep',
     tab: 'nutrition',
-    title: 'Питание, Сон & КБЖУ с распознаванием по фото',
+    title: 'Питание, Сон & КБЖУ',
     badge: 'НУТРИЦИОЛОГИЯ',
-    description: 'Фиксируй приемы пищи текстом или просто фотографируй тарелку — ИИ сам определит калории и белки!',
+    description: 'Фиксируй приёмы пищи текстом или фотографируй тарелку — ИИ определит калории и белки.',
     bulletPoints: [
       'Фото-сканер и текстовый парсинг блюд на русском языке',
-      'Учет качества и продолжительности сна',
-      'Трекер водного баланса и ежедневного приема креатина',
+      'Учёт продолжительности и качества сна',
+      'Водный баланс и ежедневный приём креатина',
     ],
     icon: <Apple className="w-5 h-5 text-emerald-400" />,
   },
   {
     id: 'progress_charts',
     tab: 'charts',
-    title: 'Прогресс, Тоннаж & Расчетный 1ПМ',
+    targetSelector: '#open-period-stats',
+    title: 'Прогресс, графики и отчёт за период',
     badge: 'АНАЛИТИКА',
-    description: 'Наглядные графики прогрессивной перегрузки без самообмана.',
+    description: 'Графики прогрессивной перегрузки и отчёт, который считается прямо в приложении.',
     bulletPoints: [
       'Честный консенсус 1ПМ (формулы Эпли, Бжицки и Лэндера)',
-      'Нормализация объема к 100 кг для наглядного сравнения сетов',
-      'Сравнительные таблицы «В прошлый раз vs Сегодня» после каждой тренировки',
+      'Нормализация объёма к 100 кг для сравнения сетов',
+      'Кнопка «Отчёт за период»: выбери 7, 30, 90 дней или всё время',
+      'В отчёте: тренировки, тоннаж, подходы, RPE, время, сон, калории, шаги и вес',
+      'Никаких отчётов по расписанию в чат — только когда ты сам нажал',
     ],
-    icon: <TrendingUp className="w-5 h-5 text-cyan-400" />,
+    icon: <BarChart3 className="w-5 h-5 text-cyan-400" />,
   },
   {
-    id: 'research_lab',
-    tab: 'lab',
-    title: 'Исследовательская Лаборатория (N=1)',
-    badge: 'НАУЧНЫЙ ЭКСПЕРИМЕНТ',
-    description: 'Проводи персональные N=1 исследования добавок и методов восстановления.',
+    id: 'settings_modes',
+    tab: 'profile',
+    targetSelector: '#feature-settings',
+    title: 'Базовый и расширенный режим',
+    badge: 'НАСТРОЙКИ',
+    description:
+      'В «Профиле» есть карточка «Режим приложения». Базовый режим оставляет четыре вкладки, расширенный добавляет тумблеры.',
     bulletPoints: [
-      'Проверяй влияние креатина, ашваганды или холодного душа на силовые показатели',
-      'Периодизационные циклы: Блок гипертрофии, Силовой блок и Делоад',
-      'Индивидуальный трекинг кастомных биомаркеров',
+      '«Базовый режим» включён — внизу только Тренировки, Питание, Прогресс, Профиль',
+      'Выключи его, чтобы увидеть шесть переключателей дополнительных разделов',
+      '«Марафоны целей» — серии шагов и упражнений внутри Тренировок',
+      '«Зарубы с друзьями» — вкладка Зарубы и раздел «Друзья & Зарубы» в профиле',
+      '«Дисциплина и штрафы» — вкладка Дисциплина и раздел «Награды»',
+      '«Спортивные разряды» — вкладка Разряды с нормативами WRPF, WSF и других',
+      '«Лаборатория N=1» — вкладка для личных экспериментов (сон, добавки, восстановление)',
+      '«Циклы и периодизация» — вкладка с блоками гипертрофии, силы и делоада',
+      'Кнопка «Пройти обучение заново» запускает этот гид в любой момент',
     ],
-    icon: <FlaskConical className="w-5 h-5 text-emerald-400" />,
+    icon: <Settings className="w-5 h-5 text-emerald-400" />,
   },
-  {
-    id: 'disciplines_battles',
-    tab: 'discipline',
-    title: 'Дисциплина, Нормативы & Битвы с друзьями',
-    badge: 'СОРЕВНОВАНИЯ',
-    description: 'Геймификация тренировок для железной мотивации!',
+];
+
+const ADVANCED_STEPS: Record<string, TourStep> = {
+  marathons: {
+    id: 'marathons',
+    tab: 'workouts',
+    title: 'Марафоны целей',
+    badge: 'ДОП. РАЗДЕЛ',
+    description:
+      'Внутри «Тренировок» появилась вкладка «Марафоны целей». Ты включил её в настройках профиля.',
     bulletPoints: [
-      'Нормативы спортивных разрядов WRPF, WSF, пауэрлифтинга и стритлифтинга (от 3 юношеского до Элиты)',
-      'Шкала дисциплины: начисляются очки за тренировки и вычитаются штрафы за пропуск',
-      'Дуэли 1 на 1 с друзьями со ставками очков дисциплины',
+      'Серии дней по шагам, отжиманиям, тренировкам и другим целям',
+      'Остаток можно переносить в копилку и не терять серию',
+      'Выключить раздел можно в Профиль → Режим приложения',
+    ],
+    icon: <Trophy className="w-5 h-5 text-amber-400" />,
+  },
+  battles: {
+    id: 'battles',
+    tab: 'battles',
+    title: 'Зарубы с друзьями',
+    badge: 'ДОП. РАЗДЕЛ',
+    description:
+      'Дуэли 1 на 1 по шагам, жиму, подтягиваниям или дисциплине. Раздел включён тобой в настройках.',
+    bulletPoints: [
+      'Создай вызов и отправь другу ссылку-приглашение',
+      'Обе стороны видят один прогресс, результат хранится на сервере',
+      'В профиле появился раздел «Друзья & Зарубы»',
+      'Выключить раздел можно в Профиль → Режим приложения',
     ],
     icon: <Swords className="w-5 h-5 text-amber-400" />,
   },
-];
+  discipline: {
+    id: 'discipline',
+    tab: 'discipline',
+    title: 'Дисциплина, штрафы и награды',
+    badge: 'ДОП. РАЗДЕЛ',
+    description:
+      'Очки за выполненные тренировки и штрафные задания за пропуски. Раздел включён тобой в настройках.',
+    bulletPoints: [
+      'Календарь обязательств и штрафы за пропуск',
+      'Переносы и задания, которые возвращают очки',
+      'В профиле появился раздел «Награды»',
+      'Выключить раздел можно в Профиль → Режим приложения',
+    ],
+    icon: <ShieldCheck className="w-5 h-5 text-amber-400" />,
+  },
+  ranks: {
+    id: 'ranks',
+    tab: 'ranks',
+    title: 'Спортивные разряды',
+    badge: 'ДОП. РАЗДЕЛ',
+    description:
+      'Нормативы WRPF, WSF, пауэрлифтинга и других федераций — от юношеских разрядов до КМС/МС. Раздел включён тобой.',
+    bulletPoints: [
+      'Выбери движение и свой вес',
+      'Сравни результат с нормативами и увидь прогресс до цели',
+      'Цель по разряду можно сохранить в профиле',
+      'Выключить раздел можно в Профиль → Режим приложения',
+    ],
+    icon: <Award className="w-5 h-5 text-amber-400" />,
+  },
+  lab: {
+    id: 'lab',
+    tab: 'lab',
+    title: 'Лаборатория N=1',
+    badge: 'ДОП. РАЗДЕЛ',
+    description:
+      'Личные эксперименты: проверяй сон, добавки и восстановление на себе. Раздел включён тобой в настройках.',
+    bulletPoints: [
+      'Ставь гипотезу и веди дневник показателей',
+      'Сравнивай зависимые и независимые метрики',
+      'ИИ помогает сформулировать вывод по эксперименту',
+      'Выключить раздел можно в Профиль → Режим приложения',
+    ],
+    icon: <FlaskConical className="w-5 h-5 text-emerald-400" />,
+  },
+  periodization: {
+    id: 'periodization',
+    tab: 'periodization',
+    title: 'Циклы и периодизация',
+    badge: 'ДОП. РАЗДЕЛ',
+    description:
+      'Блоки гипертрофии, силы и делоада с аналитикой. Раздел включён тобой в настройках профиля.',
+    bulletPoints: [
+      'Тренировки группируются в циклы',
+      'Видно тоннаж и средний RPE по блоку',
+      'ИИ подсказывает, когда переходить к следующему циклу',
+      'Выключить раздел можно в Профиль → Режим приложения',
+    ],
+    icon: <Layers className="w-5 h-5 text-emerald-400" />,
+  },
+};
 
 export const InteractiveTour: React.FC<InteractiveTourProps> = ({
   isOpen,
   onClose,
   onNavigateTab,
   onOpenAiSettings,
+  features,
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
-  // Sync current tab with the step requirement
+  const steps = useMemo(() => {
+    const extra = features
+      ? (Object.keys(ADVANCED_STEPS) as Array<keyof FeatureFlags>)
+          .filter(key => features[key])
+          .map(key => ADVANCED_STEPS[key])
+      : [];
+    return [...CORE_STEPS, ...extra];
+  }, [features]);
+
+  // Каждый показ начинается с первого шага
   useEffect(() => {
-    if (isOpen) {
-      const step = TOUR_STEPS[currentStepIndex];
-      if (step) {
-        onNavigateTab(step.tab);
+    if (isOpen) setCurrentStepIndex(0);
+  }, [isOpen]);
 
-        // Smooth scroll to target if selector provided
-        if (step.targetSelector) {
-          setTimeout(() => {
-            const el = document.querySelector(step.targetSelector!);
-            if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-          }, 200);
+  const currentStep = steps[currentStepIndex] || steps[0];
+
+  // Sync current tab with the step requirement. Зависим от шага, а не от
+  // массива steps: иначе изменение настроек пересоздаёт массив и тур
+  // возвращает пользователя на первую вкладку.
+  useEffect(() => {
+    if (!isOpen || !currentStep) return;
+    onNavigateTab(currentStep.tab);
+
+    if (currentStep.targetSelector) {
+      setTimeout(() => {
+        const el = document.querySelector(currentStep.targetSelector!);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
-      }
+      }, 200);
     }
-  }, [currentStepIndex, isOpen]);
+  }, [currentStepIndex, isOpen, currentStep?.id, currentStep?.tab, currentStep?.targetSelector]);
 
-  if (!isOpen) return null;
-
-  const currentStep = TOUR_STEPS[currentStepIndex];
+  if (!isOpen || !currentStep) return null;
   const isFirst = currentStepIndex === 0;
-  const isLast = currentStepIndex === TOUR_STEPS.length - 1;
-  const progressPercent = Math.round(((currentStepIndex + 1) / TOUR_STEPS.length) * 100);
+  const isLast = currentStepIndex === steps.length - 1;
+  const progressPercent = Math.round(((currentStepIndex + 1) / steps.length) * 100);
 
   const handleNext = () => {
     if (isLast) {
@@ -245,7 +355,7 @@ export const InteractiveTour: React.FC<InteractiveTourProps> = ({
 
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-mono text-slate-400">
-              Шаг {currentStepIndex + 1} из {TOUR_STEPS.length}
+              Шаг {currentStepIndex + 1} из {steps.length}
             </span>
             <button
               onClick={handleComplete}
@@ -276,7 +386,7 @@ export const InteractiveTour: React.FC<InteractiveTourProps> = ({
         </div>
 
         {/* Key bullet points */}
-        <div className="bg-[#0b1016] border border-[#1d2938] rounded-2xl p-3 space-y-2">
+        <div className="bg-[#0b1016] border border-[#1d2938] rounded-2xl p-3 space-y-2 max-h-[38vh] overflow-y-auto">
           {currentStep.bulletPoints.map((point, idx) => (
             <div key={idx} className="flex items-start gap-2 text-xs text-slate-200">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />

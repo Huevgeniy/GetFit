@@ -5,6 +5,7 @@
  * поэтому подставить чужой id клиент не может.
  */
 import { getInitData } from './telegram';
+import { WorkoutPlan } from '../types';
 
 const TOKEN_KEY = 'getfit_session_token';
 const DEV_ID_KEY = 'getfit_dev_id';
@@ -186,6 +187,94 @@ export function updateBattleProgress(
   amount: number,
 ): Promise<{ success: boolean; battle: any } | null> {
   return postJson('/api/battles/update-progress', { battleId, amount });
+}
+
+/* ------------------------------------------------------------------ */
+/* Общие шаблоны тренировок                                            */
+/* ------------------------------------------------------------------ */
+
+export interface SharedTemplateInfo {
+  id: string;
+  code: string;
+  link: string;
+  title: string;
+  isPublic: boolean;
+  copies: number;
+  ownerName: string;
+  ownerUsername: string;
+  mine: boolean;
+  template: WorkoutPlan;
+  createdAt: string;
+  updatedAt: string;
+}
+
+async function readJson(res: Response): Promise<any> {
+  return res.json().catch(() => null);
+}
+
+export async function fetchMySharedTemplates(): Promise<SharedTemplateInfo[]> {
+  const data = await apiJson<{ templates: SharedTemplateInfo[] }>('/api/templates/mine');
+  return data?.templates ?? [];
+}
+
+export async function fetchPublicTemplates(): Promise<SharedTemplateInfo[]> {
+  const data = await apiJson<{ templates: SharedTemplateInfo[] }>('/api/templates/public');
+  return data?.templates ?? [];
+}
+
+export async function shareTemplate(
+  template: WorkoutPlan,
+  isPublic: boolean,
+): Promise<{ ok: boolean; shared?: SharedTemplateInfo; error?: string }> {
+  try {
+    const res = await apiFetch('/api/templates/share', {
+      method: 'POST',
+      body: JSON.stringify({ template, isPublic }),
+    });
+    const data = await readJson(res);
+    if (res.ok && data?.template) return { ok: true, shared: data.template as SharedTemplateInfo };
+    return { ok: false, error: data?.message || data?.error || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'network error' };
+  }
+}
+
+export async function importSharedTemplate(
+  code: string,
+): Promise<{ ok: boolean; template?: WorkoutPlan; alreadyOwned?: boolean; error?: string }> {
+  try {
+    const res = await apiFetch('/api/templates/import', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+    const data = await readJson(res);
+    if (res.ok && data?.template?.template) {
+      return {
+        ok: true,
+        template: data.template.template as WorkoutPlan,
+        alreadyOwned: Boolean(data.alreadyOwned),
+      };
+    }
+    return { ok: false, error: data?.message || data?.error || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'network error' };
+  }
+}
+
+export async function removeSharedTemplate(
+  id: string,
+  mode: 'unpublish' | 'delete' = 'unpublish',
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch('/api/templates/remove', {
+      method: 'POST',
+      body: JSON.stringify({ id, mode }),
+    });
+    const data = await readJson(res);
+    return res.ok && data?.success ? { ok: true } : { ok: false, error: data?.message || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'network error' };
+  }
 }
 
 /* ------------------------------------------------------------------ */

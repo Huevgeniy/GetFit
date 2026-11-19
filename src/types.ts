@@ -107,6 +107,10 @@ export interface UserProfile {
   activeSupplements?: string;
   trainingStylePreference?: string;
   dailyReadiness?: DailyReadiness;
+  /** 'basic' — только четыре базовые вкладки, 'advanced' — плюс включённые разделы. */
+  uiMode?: 'basic' | 'advanced';
+  /** Какие дополнительные разделы включены в расширенном режиме. */
+  enabledFeatures?: Partial<Record<'marathons' | 'battles' | 'discipline' | 'ranks' | 'lab' | 'periodization', boolean>>;
 }
 
 export interface DailyReadiness {
@@ -196,6 +200,9 @@ export interface WorkoutPlan {
   restBetweenExercisesMinutes?: number;
   isCustomTemplate?: boolean;
   createdAt?: string;
+  /** Откуда шаблон попал в библиотеку: код общего шаблона и автор. */
+  sourceCode?: string;
+  sourceAuthor?: string;
 }
 
 export interface DisciplinePenalty {

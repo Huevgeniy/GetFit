@@ -13,18 +13,26 @@ import {
   verifySession,
 } from './server/auth.ts';
 import {
+  deleteSharedTemplate,
   generateInviteCode,
   getBattleById,
   getBattleByInvite,
+  getSharedTemplateByCode,
+  getSharedTemplateById,
   getUserState,
+  incrementSharedTemplateCopies,
   initStorage,
   listCollection,
+  listPublicSharedTemplates,
+  listSharedTemplates,
   listUserBattles,
   saveBattle,
+  saveSharedTemplate,
   saveUserState,
   storageMode,
   upsertCollectionItem,
   type BattleRecord,
+  type SharedTemplateRecord,
 } from './server/storage.ts';
 import { runNotificationCycle } from './server/notifications.ts';
 import { extractInBodyNumbers } from './server/inbody.ts';
@@ -730,6 +738,191 @@ app.post('/api/battles/update-progress', async (req, res) => {
     res.json({ success: true, battle: battleView(saved, userId) });
   } catch (err: any) {
     console.error('[battles] ошибка прогресса:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Общие шаблоны тренировок                                            */
+/* ------------------------------------------------------------------ */
+
+/** Ссылка идёт через бота: он отвечает кнопкой web_app с кодом шаблона. */
+function templateShareLink(code: string): string {
+  return `https://t.me/${BOT_USERNAME}?start=tpl_${code}`;
+}
+
+/** Оставляем только поля тренировки и ограничиваем размеры — шаблон станет публичным. */
+function cleanTemplatePayload(raw: any) {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.exercises)) return null;
+  if (raw.exercises.length === 0 || raw.exercises.length > 80) return null;
+
+  const exercises = raw.exercises
+    .slice(0, 80)
+    .map((exercise: any, index: number) => ({
+      id: String(exercise?.id || `ex_${index}`).slice(0, 80),
+      name: String(exercise?.name || '').slice(0, 120),
+      targetSets: Math.max(1, Number(exercise?.targetSets) || 1),
+      targetReps: Math.max(1, Number(exercise?.targetReps) || 1),
+      targetWeight: Math.max(0, Number(exercise?.targetWeight) || 0),
+      restMinutes: Math.max(0, Number(exercise?.restMinutes) || 0),
+      restBetweenExercisesMinutes: Math.max(0, Number(exercise?.restBetweenExercisesMinutes) || 0),
+      muscleGroup: exercise?.muscleGroup ? String(exercise.muscleGroup).slice(0, 40) : undefined,
+      notes: exercise?.notes ? String(exercise.notes).slice(0, 500) : undefined,
+    }))
+    .filter((exercise: { name: string }) => exercise.name.length > 0);
+
+  if (exercises.length === 0) return null;
+
+  return {
+    id: String(raw.id || `tmpl_${Date.now()}`).replace(/[^\w.-]/g, '').slice(0, 80) || `tmpl_${Date.now()}`,
+    title: String(raw.title || 'Шаблон тренировки').trim().slice(0, 120) || 'Шаблон тренировки',
+    scheduledDay: raw.scheduledDay ? String(raw.scheduledDay).slice(0, 40) : 'Любой день',
+    estimatedDurationMinutes: Math.max(0, Number(raw.estimatedDurationMinutes) || 0) || undefined,
+    restBetweenExercisesMinutes: Math.max(0, Number(raw.restBetweenExercisesMinutes) || 0) || undefined,
+    isCustomTemplate: true,
+    createdAt: raw.createdAt ? String(raw.createdAt) : new Date().toISOString(),
+    exercises,
+  };
+}
+
+/** Новый короткий код, которого ещё нет в базе. */
+async function uniqueTemplateCode(): Promise<string> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const code = generateInviteCode();
+    if (!(await getSharedTemplateByCode(code))) return code;
+  }
+  return `${generateInviteCode()}${Date.now().toString().slice(-4)}`;
+}
+
+function sharedTemplateView(record: SharedTemplateRecord, viewerId: string) {
+  const data = record.payload || {};
+  const template = data.template || data;
+  const ownerName = String(data.ownerName || 'Атлет');
+  const ownerUsername = String(data.ownerUsername || '');
+  return {
+    id: record.id,
+    code: record.code,
+    link: templateShareLink(record.code),
+    title: record.title || template.title || 'Шаблон тренировки',
+    isPublic: record.isPublic,
+    copies: record.copies,
+    ownerName,
+    ownerUsername,
+    mine: record.ownerId === viewerId,
+    template: {
+      ...template,
+      title: record.title || template.title,
+      sourceCode: record.code,
+      sourceAuthor: ownerName,
+    },
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
+app.get('/api/templates/mine', async (req, res) => {
+  try {
+    const userId = getAuthedUserId(req);
+    const records = await listSharedTemplates(userId);
+    res.json({ templates: records.map((record) => sharedTemplateView(record, userId)) });
+  } catch (err: any) {
+    console.error('[templates] ошибка чтения своих:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
+});
+
+app.get('/api/templates/public', async (req, res) => {
+  try {
+    const userId = getAuthedUserId(req);
+    const records = await listPublicSharedTemplates(userId);
+    res.json({ templates: records.map((record) => sharedTemplateView(record, userId)) });
+  } catch (err: any) {
+    console.error('[templates] ошибка чтения общих:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
+});
+
+app.post('/api/templates/share', async (req, res) => {
+  try {
+    const userId = getAuthedUserId(req);
+    const session = getAuthedSession(req);
+    const clean = cleanTemplatePayload(req.body?.template);
+    if (!clean) {
+      return res.status(400).json({ error: 'invalid_template', message: 'Нужен шаблон с названием и упражнениями' });
+    }
+
+    const id = `${userId}:${clean.id}`.slice(0, 300);
+    const existing = await getSharedTemplateById(id);
+    const code = existing?.code || (await uniqueTemplateCode());
+    const isPublic =
+      typeof req.body?.isPublic === 'boolean' ? Boolean(req.body.isPublic) : Boolean(existing?.isPublic);
+    const now = new Date().toISOString();
+
+    const record: SharedTemplateRecord = {
+      id,
+      ownerId: userId,
+      code,
+      title: clean.title,
+      isPublic,
+      copies: existing?.copies || 0,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      payload: {
+        template: clean,
+        ownerName: session?.name || 'Атлет',
+        ownerUsername: session?.username || '',
+      },
+    };
+
+    const saved = await saveSharedTemplate(record);
+    res.json({ success: true, template: sharedTemplateView(saved, userId) });
+  } catch (err: any) {
+    console.error('[templates] ошибка публикации:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
+});
+
+app.post('/api/templates/import', async (req, res) => {
+  try {
+    const userId = getAuthedUserId(req);
+    const raw = String(req.body?.code || '').trim();
+    if (!raw) return res.status(400).json({ error: 'code_required', message: 'Укажи код или ссылку на шаблон' });
+
+    const record = await getSharedTemplateByCode(raw);
+    if (!record) {
+      return res.status(404).json({ error: 'not_found', message: 'Шаблон не найден или ссылка устарела' });
+    }
+
+    const alreadyOwned = record.ownerId === userId;
+    if (!alreadyOwned) await incrementSharedTemplateCopies(record.code);
+    const fresh = alreadyOwned ? record : (await getSharedTemplateByCode(record.code)) || record;
+    res.json({ success: true, alreadyOwned, template: sharedTemplateView(fresh, userId) });
+  } catch (err: any) {
+    console.error('[templates] ошибка импорта:', err?.message);
+    res.status(500).json({ error: 'storage_error', details: err?.message });
+  }
+});
+
+app.post('/api/templates/remove', async (req, res) => {
+  try {
+    const userId = getAuthedUserId(req);
+    const id = String(req.body?.id || '');
+    const mode = req.body?.mode === 'delete' ? 'delete' : 'unpublish';
+    const record = await getSharedTemplateById(id);
+    if (!record) return res.status(404).json({ error: 'not_found', message: 'Шаблон не найден' });
+    if (record.ownerId !== userId) {
+      return res.status(403).json({ error: 'forbidden', message: 'Это чужой шаблон' });
+    }
+
+    if (mode === 'delete') {
+      await deleteSharedTemplate(id, userId);
+      return res.json({ success: true, deleted: true });
+    }
+
+    const saved = await saveSharedTemplate({ ...record, isPublic: false, updatedAt: new Date().toISOString() });
+    res.json({ success: true, deleted: false, template: sharedTemplateView(saved, userId) });
+  } catch (err: any) {
+    console.error('[templates] ошибка удаления:', err?.message);
     res.status(500).json({ error: 'storage_error', details: err?.message });
   }
 });
@@ -1834,6 +2027,35 @@ async function handleTelegramUpdate(token: string, update: any) {
   if (text.startsWith('/start')) {
     // Deep link зарубы: https://t.me/<bot>?start=<код> либо ?startapp=<код>
     const payload = text.split(/\s+/)[1] || '';
+
+    // Шаблон тренировки: https://t.me/<bot>?start=tpl_<код>
+    if (/^tpl_[A-Za-z0-9_-]{4,28}$/i.test(payload)) {
+      const shared = await getSharedTemplateByCode(payload).catch(() => null);
+      if (shared) {
+        const template = shared.payload?.template || shared.payload || {};
+        const exercises = Array.isArray(template.exercises) ? template.exercises : [];
+        const openUrl = appUrl ? `${appUrl}?startapp=${payload}` : '';
+        const ownerName = shared.payload?.ownerName || 'Атлет';
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `🎁 <b>${ownerName}</b> поделился шаблоном «${shared.title || template.title || 'Тренировка'}»\n\nУпражнений: ${exercises.length}\nНажми кнопку — шаблон добавится в «Мои шаблоны» и сразу откроется в приложении.`,
+            parse_mode: 'HTML',
+            ...(openUrl
+              ? {
+                  reply_markup: {
+                    inline_keyboard: [[{ text: '🏋️ Забрать шаблон', web_app: { url: openUrl } }]],
+                  },
+                }
+              : {}),
+          }),
+        });
+        return;
+      }
+    }
+
     if (/^[A-Za-z0-9_-]{6,32}$/.test(payload)) {
       const record = await getBattleByInvite(payload).catch(() => null);
       if (record && !record.opponentId && record.creatorId !== `tg:${chatId}`) {

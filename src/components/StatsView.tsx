@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Activity, BarChart3, Calendar, Flame, Footprints, Moon, Scale, TrendingDown, TrendingUp, Trophy, Dumbbell, Utensils } from 'lucide-react';
+import { Activity, BarChart3, Calendar, Flame, Footprints, Moon, Scale, TrendingDown, TrendingUp, Trophy, Dumbbell, Utensils, X } from 'lucide-react';
 import { DailyNutritionRecord, FriendBattle, InBodyRecord, SleepRecord, UserProfile, WorkoutRecord } from '../types';
 import { hapticSelect } from '../lib/telegram';
 
@@ -9,6 +9,10 @@ interface StatsViewProps {
   dailyNutritionRecords: DailyNutritionRecord[];
   sleepRecords: SleepRecord[];
   battles?: FriendBattle[];
+  /** Показывать ли блок заруб: в базовом режиме он не нужен. */
+  showBattles?: boolean;
+  /** Закрывает модальный отчёт; в отдельном экране можно не передавать. */
+  onClose?: () => void;
 }
 
 type PeriodKey = '7' | '30' | '90' | 'all';
@@ -48,7 +52,15 @@ const formatDelta = (current: number, previous: number): { text: string; positiv
   return { text: `${diff > 0 ? '+' : ''}${round(diff)}%`, positive: diff > 0 };
 };
 
-export const StatsView: React.FC<StatsViewProps> = ({ user, pastWorkouts, dailyNutritionRecords, sleepRecords, battles = [] }) => {
+export const StatsView: React.FC<StatsViewProps> = ({
+  user,
+  pastWorkouts,
+  dailyNutritionRecords,
+  sleepRecords,
+  battles = [],
+  showBattles = true,
+  onClose,
+}) => {
   const [period, setPeriod] = useState<PeriodKey>('30');
 
   const stats = useMemo(() => {
@@ -170,14 +182,27 @@ export const StatsView: React.FC<StatsViewProps> = ({ user, pastWorkouts, dailyN
   return (
     <div className="space-y-4 pb-6">
       <div className="bg-gradient-to-r from-cyan-950/60 via-[#12181f] to-emerald-950/60 border border-cyan-500/30 rounded-2xl p-4">
-        <div className="flex items-center gap-2.5">
-          <div className="p-2 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
-            <BarChart3 className="w-5 h-5" />
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+              <BarChart3 className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-slate-100">Отчёты и статистика</h2>
+              <p className="text-[11px] text-slate-400">Сводка за выбранный период и сравнение с предыдущим</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-sm font-bold text-slate-100">Отчёты и статистика</h2>
-            <p className="text-[11px] text-slate-400">Сводка за выбранный период и сравнение с предыдущим</p>
-          </div>
+          {onClose && (
+            <button
+              type="button"
+              id="close-period-stats"
+              onClick={onClose}
+              className="w-7 h-7 rounded-lg bg-[#1a2636] hover:bg-[#25374d] text-slate-400 hover:text-white flex items-center justify-center transition-colors shrink-0"
+              title="Закрыть отчёт"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         <div className="flex gap-1.5 mt-3 overflow-x-auto no-scrollbar">
@@ -274,13 +299,14 @@ export const StatsView: React.FC<StatsViewProps> = ({ user, pastWorkouts, dailyN
                 : null,
               stats.fatDelta !== null ? `Процент жира изменился на ${stats.fatDelta > 0 ? '+' : ''}${stats.fatDelta}%` : 'Вес берётся из замеров InBody и утренних записей',
             )}
-            {metric(
-              'Зарубы',
-              `${stats.activeBattles.length} активн.`,
-              <Trophy className="w-3 h-3 text-amber-400" />,
-              null,
-              `Побед: ${stats.wonBattles.length}`,
-            )}
+            {showBattles &&
+              metric(
+                'Зарубы',
+                `${stats.activeBattles.length} активн.`,
+                <Trophy className="w-3 h-3 text-amber-400" />,
+                null,
+                `Побед: ${stats.wonBattles.length}`,
+              )}
           </div>
 
           {current.bestSet && current.bestSet.oneRM > 0 && (

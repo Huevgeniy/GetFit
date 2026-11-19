@@ -45,6 +45,9 @@ const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></
 });
 const { window } = dom;
 
+// В интеграционном тесте не нужен онбординг-оверлей: он сам переключает вкладки
+window.localStorage.setItem('getfit_tour_completed', 'true');
+
 const noop = () => undefined;
 // В Node 24 часть глобалов (navigator, localStorage) объявлена только для чтения
 const define = (name, value) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
@@ -143,6 +146,22 @@ if (renderError) console.log(renderError.stack?.split('\n').slice(0, 6).join('\n
 const text = () => container.textContent || '';
 const buttons = () => [...container.querySelectorAll('button')];
 const labels = () => buttons().map((el) => (el.textContent || '').trim().slice(0, 20));
+const navLabels = () =>
+  [...container.querySelectorAll('nav button')].map((el) => (el.textContent || '').trim().slice(0, 20));
+const navButton = (label) =>
+  [...container.querySelectorAll('nav button')].find((el) => (el.textContent || '').includes(label));
+
+const clickNav = async (label) => {
+  const button = navButton(label);
+  if (!button) return false;
+  await act(async () => {
+    button.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  });
+  return true;
+};
 
 // 1. Сессия и цепочка запросов
 check('выполнен вход по initData', requests.some((r) => r.url === '/api/auth/telegram'));
@@ -176,20 +195,111 @@ if (process.env.DOM_DEBUG === '1') {
   console.log('  nav есть:', Boolean(container.querySelector('nav')));
 }
 
-check('в навигации есть все экраны', ['Тренировки', 'Питание/Сон', 'Прогресс', 'Лаборатория', 'Циклы', 'Разряды', 'Дисциплина', 'Зарубы', 'Профиль'].every((label) => labels().some((l) => l.includes(label.split('/')[0]))), JSON.stringify(labels()));
+const BASIC_TABS = ['Тренировки', 'Питание', 'Прогресс', 'Профиль'];
+const ADVANCED_TABS = ['Лаборатория', 'Циклы', 'Разряды', 'Дисциплина', 'Зарубы'];
+check(
+  'базовый режим: внизу ровно четыре вкладки',
+  BASIC_TABS.every((label) => navLabels().some((l) => l.includes(label))) &&
+    navLabels().length === BASIC_TABS.length,
+  JSON.stringify(navLabels()),
+);
+check(
+  'базовый режим: дополнительные вкладки скрыты',
+  ADVANCED_TABS.every((label) => !navLabels().some((l) => l.includes(label))),
+  JSON.stringify(navLabels()),
+);
 
-const switched = await clickByText('Зарубы');
-check('переключение на вкладку «Зарубы» не падает', switched && !renderError);
-check('на вкладке видны зарубы с сервера', text().includes('Заруба из облака') || text().includes('Боб'), text().slice(0, 100));
+// Отчёт по периодам больше не вкладка, а кнопка внутри «Прогресса»
+const progressSwitched = await clickNav('Прогресс');
+check('переключение на «Прогресс» не падает', progressSwitched && !renderError);
+const openStats = container.querySelector('#open-period-stats');
+check('в «Прогрессе» есть кнопка отчёта за период', Boolean(openStats), text().slice(0, 120));
+if (openStats) {
+  await act(async () => {
+    openStats.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+  check('отчёт открывается по кнопке', text().includes('Отчёты и статистика'), text().slice(0, 140));
+  check('в отчёте есть периоды', text().includes('30 дней') && text().includes('Всё время'));
+  const closeStats = container.querySelector('#close-period-stats');
+  check('у модального отчёта есть кнопка закрытия', Boolean(closeStats));
+  if (closeStats) {
+    await act(async () => {
+      closeStats.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+    check('отчёт закрывается', !text().includes('Отчёты и статистика'));
+  }
+}
 
-const statsSwitched = await clickByText('Отчёты');
-check('переключение на «Отчёты» не падает', statsSwitched && !renderError);
-check('экран отчётов отрисовался', text().includes('Отчёты и статистика'), text().slice(0, 140));
-check('в отчётах есть периоды', text().includes('30 дней') && text().includes('Всё время'));
-
-const profileSwitched = await clickByText('Профиль');
+const profileSwitched = await clickNav('Профиль');
 check('переключение на «Профиль» не падает', profileSwitched && !renderError);
 check('в профиле видны данные из облака', text().includes(CLOUD_USER));
+
+// 4a. Режим приложения: базовый -> расширенный и включение раздела
+const advancedToggle = container.querySelector('#advanced-mode-toggle');
+check('в профиле есть переключатель расширенного режима', Boolean(advancedToggle));
+check('в базовом режиме описано, что остаётся', text().includes('Что остаётся в базовом режиме'));
+if (advancedToggle) {
+  await act(async () => {
+    advancedToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+  const featureToggles = ['marathons', 'battles', 'discipline', 'ranks', 'lab', 'periodization'];
+  check(
+    'расширенный режим показывает все тумблеры разделов',
+    featureToggles.every((key) => Boolean(container.querySelector(`#feature-toggle-${key}`))),
+  );
+  check(
+    'каждый тумблер объясняет, что включает',
+    text().includes('Серии дней с шагами') &&
+      text().includes('Дуэли 1 на 1') &&
+      text().includes('Нормативы WRPF') &&
+      text().includes('Личные эксперименты') &&
+      text().includes('Блоки гипертрофии'),
+    text().slice(-400),
+  );
+  check(
+    'после включения расширенного режима вкладки пока не добавились',
+    navLabels().length === BASIC_TABS.length,
+    JSON.stringify(navLabels()),
+  );
+
+  const battlesToggle = container.querySelector('#feature-toggle-battles');
+  if (battlesToggle) {
+    await act(async () => {
+      battlesToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+    check('включение заруб добавляет вкладку', navLabels().some((l) => l.includes('Зарубы')), JSON.stringify(navLabels()));
+    const battlesNav = navButton('Зарубы');
+    if (battlesNav) {
+      await act(async () => {
+        battlesNav.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      });
+      check('вкладка «Зарубы» открывается', !renderError && text().length > 0);
+      check(
+        'на вкладке видны зарубы с сервера',
+        text().includes('Заруба из облака') || text().includes('Боб'),
+        text().slice(0, 140),
+      );
+    }
+  }
+}
+
+// Возвращаемся в профиль: настройки напоминаний и резервная копия
+await clickNav('Профиль');
 
 // 4b. Напоминания: переключатель и проверка доставки
 const toggle = container.querySelector('#notifications-toggle');
@@ -276,9 +386,55 @@ if (importToggle) {
   }
 }
 
-// 5. Ещё раз возвращаемся на тренировки — проверяем, что состояние не потерялось
-const backToWorkouts = await clickByText('Тренировки');
+// 4d. Шаблоны: библиотека и общая витрина
+const backToWorkouts = await clickNav('Тренировки');
 check('возврат на «Тренировки» работает', backToWorkouts && !renderError);
+
+const savedTemplatesBtn = container.querySelector('#tour-saved-templates-btn');
+check('в тренировках есть кнопка «Мои шаблоны»', Boolean(savedTemplatesBtn));
+if (savedTemplatesBtn) {
+  await act(async () => {
+    savedTemplatesBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  });
+  check(
+    'библиотека шаблонов запросила свои шаблоны',
+    requests.some((r) => r.url === '/api/templates/mine'),
+    JSON.stringify(requests.map((r) => r.url).slice(-8)),
+  );
+  check('в библиотеке есть вкладка «Общие шаблоны»', text().includes('Общие шаблоны'), text().slice(-200));
+
+  const communityTab = buttons().find((el) => (el.textContent || '').includes('Общие шаблоны'));
+  if (communityTab) {
+    await act(async () => {
+      communityTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+    check(
+      'общая библиотека запрошена с сервера',
+      requests.some((r) => r.url === '/api/templates/public'),
+      JSON.stringify(requests.map((r) => r.url).slice(-8)),
+    );
+    check('есть импорт по коду или ссылке', text().includes('Забрать по коду или ссылке'));
+  }
+
+  const closeTemplates = buttons().find((el) => (el.textContent || '').trim() === 'Закрыть');
+  if (closeTemplates) {
+    await act(async () => {
+      closeTemplates.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+  }
+  check('библиотека шаблонов закрывается', !text().includes('GetFitBot Workout Templates Engine'));
+}
+
+// 5. Состояние после переключений и модалок не потерялось
 // Импорт заменил имя на «ИзКопии», но не затёр остальные поля из облака
 check(
   'восстановленные данные и данные из облака сосуществуют',

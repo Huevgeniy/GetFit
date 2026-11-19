@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { TelegramHeader } from './components/TelegramHeader';
 import { Navigation, NavTab } from './components/Navigation';
 import { WorkoutsHub } from './components/WorkoutsHub';
@@ -58,11 +58,13 @@ import {
   ensureSession,
   fetchBattles,
   fetchMe,
+  importSharedTemplate,
   joinBattle,
   loadCloudState,
   saveCloudState,
   updateBattleProgress,
 } from './lib/api';
+import { getFeatureFlags } from './lib/features';
 
 import { 
   UserProfile, 
@@ -238,6 +240,29 @@ export default function App() {
     }
   });
 
+  // Отчёт по периодам — модальное окно внутри «Прогресса», не отдельная вкладка
+  const [isStatsOpen, setIsStatsOpen] = useState(false);
+  /** Сигнал для WorkoutsHub: открыть библиотеку шаблонов после импорта по ссылке. */
+  const [templateOpenSignal, setTemplateOpenSignal] = useState(0);
+
+  // Активные разделы: в базовом режиме остаются только четыре вкладки
+  const features = useMemo(
+    () => getFeatureFlags(user),
+    [user.uiMode, user.enabledFeatures],
+  );
+
+  useEffect(() => {
+    const base: NavTab[] = ['workouts', 'nutrition', 'charts', 'profile'];
+    if (features.battles) base.push('battles');
+    if (features.discipline) base.push('discipline');
+    if (features.ranks) base.push('ranks');
+    if (features.lab) base.push('lab');
+    if (features.periodization) base.push('periodization');
+    if (!base.includes(currentTab)) {
+      setCurrentTab('charts');
+    }
+  }, [features, currentTab]);
+
   // Active workout state
   const [activeWorkoutPlan, setActiveWorkoutPlan] = useState<WorkoutPlan | null>(null);
   const [isLiveWorkoutOpen, setIsLiveWorkoutOpen] = useState(false);
@@ -397,7 +422,7 @@ export default function App() {
     customTemplates,
   ]);
 
-  // Приглашение в зарубу: приложение открыли по ссылке ?startapp=<код>
+  // Deep-link: ?startapp=<код зарубы> либо ?startapp=tpl_<код шаблона>
   useEffect(() => {
     const startParam = getStartParam();
     if (!startParam || !/^[A-Za-z0-9_-]{6,32}$/.test(startParam)) return;
@@ -407,17 +432,54 @@ export default function App() {
     try {
       if (localStorage.getItem(processedKey) === startParam) return;
     } catch { /* ignore */ }
+    const markProcessed = () => {
+      try {
+        localStorage.setItem(processedKey, startParam);
+      } catch { /* ignore */ }
+    };
 
     (async () => {
       const session = await ensureSession();
       if (!session.authorized) return;
+
+      // Шаблон тренировки: tpl_<код>
+      if (startParam.toLowerCase().startsWith('tpl_')) {
+        const result = await importSharedTemplate(startParam);
+        if (result.ok && result.template) {
+          const imported: WorkoutPlan = {
+            ...result.template,
+            id: `tpl_import_${result.template.sourceCode || startParam.slice(4)}`,
+            isCustomTemplate: true,
+            createdAt: result.template.createdAt || new Date().toISOString(),
+          };
+          handleSaveCustomTemplate(imported);
+          markProcessed();
+          hapticNotify('success');
+          setCurrentTab('workouts');
+          setTemplateOpenSignal(prev => prev + 1);
+          setBattleNotice({
+            text: result.alreadyOwned
+              ? `Твой шаблон «${imported.title}» уже доступен в библиотеке.`
+              : `Шаблон «${imported.title}» добавлен в «Мои шаблоны».`,
+          });
+        } else {
+          hapticNotify('error');
+          setBattleNotice({ text: result.error || 'Не удалось добавить шаблон — ссылка устарела.' });
+        }
+        return;
+      }
+
       const res = await joinBattle(startParam);
-      try {
-        localStorage.setItem(processedKey, startParam);
-      } catch { /* ignore */ }
+      markProcessed();
       if (res?.battle && !res.alreadyMember) {
         joinedBattleRef.current = true;
         setBattles(prev => [res.battle, ...prev.filter(b => b.id !== res.battle.id)]);
+        // Приглашение само включает раздел заруб, иначе вкладка останется скрытой
+        setUser(prev => ({
+          ...prev,
+          uiMode: 'advanced',
+          enabledFeatures: { ...(prev.enabledFeatures || {}), battles: true },
+        }));
         // Список мог быть запрошен до присоединения — берём свежий с сервера
         const fresh = await fetchBattles();
         if (fresh) setBattles(fresh as FriendBattle[]);
@@ -434,11 +496,12 @@ export default function App() {
   }, []);
 
   // Кнопка «Назад» в шапке Telegram закрывает верхний модальный экран
-  const anyModalOpen = isTourOpen || isGlobalAiChatOpen || isAiSettingsOpen || isLiveWorkoutOpen;
+  const anyModalOpen = isTourOpen || isGlobalAiChatOpen || isAiSettingsOpen || isLiveWorkoutOpen || isStatsOpen;
   useEffect(() => {
     if (!anyModalOpen) return;
     const cleanup = setupBackButton(true, () => {
       if (isLiveWorkoutOpen) setIsLiveWorkoutOpen(false);
+      else if (isStatsOpen) setIsStatsOpen(false);
       else if (isGlobalAiChatOpen) setIsGlobalAiChatOpen(false);
       else if (isAiSettingsOpen) setIsAiSettingsOpen(false);
       else if (isTourOpen) setIsTourOpen(false);
@@ -447,7 +510,7 @@ export default function App() {
       cleanup();
       setupBackButton(false, () => undefined);
     };
-  }, [anyModalOpen, isLiveWorkoutOpen, isGlobalAiChatOpen, isAiSettingsOpen, isTourOpen]);
+  }, [anyModalOpen, isLiveWorkoutOpen, isStatsOpen, isGlobalAiChatOpen, isAiSettingsOpen, isTourOpen]);
 
   // Уведомление о зарубе само скрывается (со ссылкой держим дольше — её копируют)
   useEffect(() => {
@@ -882,6 +945,8 @@ export default function App() {
                   onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
                   customTemplates={customTemplates}
                   onSaveTemplate={handleSaveCustomTemplate}
+                  features={features}
+                  openTemplatesSignal={templateOpenSignal}
                 />
               )}
 
@@ -910,27 +975,24 @@ export default function App() {
               )}
 
               {currentTab === 'charts' && (
-                <ProgressCharts pastWorkouts={pastWorkouts} user={user} />
-              )}
-
-              {currentTab === 'stats' && (
-                <StatsView
-                  user={user}
+                <ProgressCharts
                   pastWorkouts={pastWorkouts}
-                  dailyNutritionRecords={dailyNutritionRecords}
-                  sleepRecords={sleepRecords}
-                  battles={battles}
+                  user={user}
+                  onOpenStats={() => {
+                    hapticImpact('light');
+                    setIsStatsOpen(true);
+                  }}
                 />
               )}
 
-              {currentTab === 'ranks' && (
+              {currentTab === 'ranks' && features.ranks && (
                 <SportsRanks
                   user={user}
                   onSetTargetRank={handleSetTargetRank}
                 />
               )}
 
-              {currentTab === 'battles' && (
+              {currentTab === 'battles' && features.battles && (
                 <FriendBattles
                   battles={battles}
                   onAddBattle={handleAddBattle}
@@ -941,7 +1003,7 @@ export default function App() {
                 />
               )}
 
-              {currentTab === 'discipline' && (
+              {currentTab === 'discipline' && features.discipline && (
                 <DisciplineTracker
                   user={user}
                   penalties={penalties}
@@ -953,7 +1015,7 @@ export default function App() {
                 />
               )}
 
-              {currentTab === 'lab' && (
+              {currentTab === 'lab' && features.lab && (
                 <ResearchLabView
                   user={user}
                   pastWorkouts={pastWorkouts}
@@ -961,7 +1023,7 @@ export default function App() {
                 />
               )}
 
-              {currentTab === 'periodization' && (
+              {currentTab === 'periodization' && features.periodization && (
                 <PeriodizationView
                   user={user}
                   pastWorkouts={pastWorkouts}
@@ -985,6 +1047,7 @@ export default function App() {
                   onAddBattle={handleAddBattle}
                   onUpdateBattleProgress={handleUpdateBattleProgress}
                   onOpenAiSettings={() => setIsAiSettingsOpen(true)}
+                  onRestartTour={() => setIsTourOpen(true)}
                 />
               )}
             </>
@@ -1051,7 +1114,25 @@ export default function App() {
             setIsTourOpen(false);
             setIsAiSettingsOpen(true);
           }}
+          features={features}
         />
+        )}
+
+        {/* Отчёт за период: открывается кнопкой из «Прогресса» */}
+        {isStatsOpen && suspense(
+          <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-start justify-center p-3 overflow-y-auto">
+            <div className="w-full max-w-lg my-4">
+              <StatsView
+                user={user}
+                pastWorkouts={pastWorkouts}
+                dailyNutritionRecords={dailyNutritionRecords}
+                sleepRecords={sleepRecords}
+                battles={battles}
+                showBattles={features.battles}
+                onClose={() => setIsStatsOpen(false)}
+              />
+            </div>
+          </div>
         )}
 
         {/* Индикатор облачной синхронизации */}
@@ -1136,6 +1217,7 @@ export default function App() {
             setCurrentTab(tab);
           }}
           pendingPenaltiesCount={pendingPenaltiesCount}
+          features={features}
         />
       </div>
     </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useEffect } from 'react';
 import { 
   Play, 
   Dumbbell, 
@@ -20,10 +20,31 @@ import {
   Edit3
 } from 'lucide-react';
 import { WorkoutPlan, WorkoutRecord, UserProfile, DailyReadiness } from '../types';
-import { MarathonsView } from './MarathonsView';
-import { DailyReadinessModal } from './DailyReadinessModal';
-import { WorkoutTemplateModal } from './WorkoutTemplateModal';
-import { SavedTemplatesModal } from './SavedTemplatesModal';
+import { FeatureFlags } from '../lib/features';
+
+/**
+ * Тяжёлые модалки и марафоны грузим только при открытии: в первый экран
+ * «Тренировок» не попадает редактор шаблонов и 40 КБ марафонов.
+ */
+const MarathonsView = lazy(() =>
+  import('./MarathonsView').then(m => ({ default: m.MarathonsView })),
+);
+const DailyReadinessModal = lazy(() =>
+  import('./DailyReadinessModal').then(m => ({ default: m.DailyReadinessModal })),
+);
+const WorkoutTemplateModal = lazy(() =>
+  import('./WorkoutTemplateModal').then(m => ({ default: m.WorkoutTemplateModal })),
+);
+const SavedTemplatesModal = lazy(() =>
+  import('./SavedTemplatesModal').then(m => ({ default: m.SavedTemplatesModal })),
+);
+
+const BlockLoader = () => (
+  <div className="py-10 flex items-center justify-center text-slate-500 text-xs font-mono gap-2">
+    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+    загружаю…
+  </div>
+);
 
 interface WorkoutsHubProps {
   plans: WorkoutPlan[];
@@ -37,6 +58,9 @@ interface WorkoutsHubProps {
   onUpdateUser?: (updated: Partial<UserProfile>) => void;
   customTemplates?: WorkoutPlan[];
   onSaveTemplate?: (template: WorkoutPlan) => void;
+  features?: FeatureFlags;
+  /** Увеличивается, когда шаблон добавлен по deep-link — сразу открываем библиотеку. */
+  openTemplatesSignal?: number;
 }
 
 export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
@@ -51,6 +75,8 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
   onUpdateUser,
   customTemplates,
   onSaveTemplate,
+  features,
+  openTemplatesSignal = 0,
 }) => {
   const [subTab, setSubTab] = useState<'workouts' | 'marathons'>('workouts');
   const [showNewPlanModal, setShowNewPlanModal] = useState(false);
@@ -126,6 +152,29 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
   const [showTemplateBuilderModal, setShowTemplateBuilderModal] = useState(false);
   const [showSavedTemplatesModal, setShowSavedTemplatesModal] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<WorkoutPlan | null>(null);
+
+  // Марафоны — дополнительный раздел: без него оставляем только тренировки
+  useEffect(() => {
+    if (features && !features.marathons) setSubTab('workouts');
+  }, [features?.marathons]);
+
+  // Шаблон пришёл по ссылке из бота — показываем библиотеку
+  useEffect(() => {
+    if (openTemplatesSignal > 0) setShowSavedTemplatesModal(true);
+  }, [openTemplatesSignal]);
+
+  const handleImportTemplate = (template: WorkoutPlan) => {
+    const imported: WorkoutPlan = {
+      ...template,
+      id: `tpl_import_${template.sourceCode || Date.now()}`,
+      isCustomTemplate: true,
+      createdAt: template.createdAt || new Date().toISOString(),
+    };
+    const updated = [imported, ...savedTemplates.filter(t => t.id !== imported.id)];
+    persistTemplates(updated);
+    if (onSaveTemplate) onSaveTemplate(imported);
+    setShowSavedTemplatesModal(true);
+  };
 
   const handleSaveTemplateFromBuilder = (template: WorkoutPlan) => {
     const existingIdx = savedTemplates.findIndex(t => t.id === template.id);
@@ -256,37 +305,42 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
 
   return (
     <div className="space-y-4 pb-20">
-      {/* Sub tabs: Тренировки & Планы vs Марафоны целей */}
-      <div className="grid grid-cols-2 gap-2 p-1 bg-[#101720] rounded-2xl border border-[#1e2c3c]">
-        <button
-          onClick={() => setSubTab('workouts')}
-          className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-            subTab === 'workouts'
-              ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Dumbbell className="w-4 h-4" />
-          <span>Тренировки & Планы</span>
-        </button>
-        <button
-          onClick={() => setSubTab('marathons')}
-          className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-            subTab === 'marathons'
-              ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Trophy className="w-4 h-4" />
-          <span>Марафоны целей</span>
-        </button>
-      </div>
+      {/* Sub tabs: Тренировки & Планы vs Марафоны целей (марафоны — доп. раздел) */}
+      {features?.marathons && (
+        <div className="grid grid-cols-2 gap-2 p-1 bg-[#101720] rounded-2xl border border-[#1e2c3c]">
+          <button
+            onClick={() => setSubTab('workouts')}
+            className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+              subTab === 'workouts'
+                ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Dumbbell className="w-4 h-4" />
+            <span>Тренировки & Планы</span>
+          </button>
+          <button
+            onClick={() => setSubTab('marathons')}
+            className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+              subTab === 'marathons'
+                ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Trophy className="w-4 h-4" />
+            <span>Марафоны целей</span>
+          </button>
+        </div>
+      )}
 
-      {subTab === 'marathons' ? (
-        <MarathonsView user={user} onUpdateUser={onUpdateUser} />
+      {subTab === 'marathons' && features?.marathons ? (
+        <Suspense fallback={<BlockLoader />}>
+          <MarathonsView user={user} onUpdateUser={onUpdateUser} />
+        </Suspense>
       ) : (
         <>
           {/* Disciplinary Marathons banner (Screenshot 4) */}
+          {features?.marathons && (
           <button
             onClick={() => setSubTab('marathons')}
             className="w-full bg-gradient-to-r from-[#101c27] via-[#0d1620] to-[#121c27] hover:border-emerald-500/50 border border-emerald-500/30 rounded-2xl p-3.5 flex items-center justify-between text-left transition-all group"
@@ -309,6 +363,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
             </div>
             <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
           </button>
+          )}
 
           {/* Widget: Recommendation for Today (Smart RPE & Autoregulation) */}
           <div id="tour-readiness-card" className="bg-gradient-to-br from-[#121f2b] via-[#0d1620] to-[#14232c] border border-cyan-500/40 rounded-2xl p-4 shadow-lg shadow-cyan-950/20">
@@ -948,49 +1003,62 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
         </div>
       )}
       {/* Daily Readiness & Smart RPE Modal */}
-      <DailyReadinessModal
-        isOpen={showReadinessModal}
-        onClose={() => setShowReadinessModal(false)}
-        user={user}
-        currentReadiness={todayReadiness || undefined}
-        onSaveReadiness={(readiness) => {
-          setTodayReadiness(readiness);
-          try {
-            localStorage.setItem('getfit_today_readiness', JSON.stringify(readiness));
-          } catch {}
-          setShowReadinessModal(false);
-        }}
-      />
+      {showReadinessModal && (
+        <Suspense fallback={null}>
+          <DailyReadinessModal
+            isOpen={showReadinessModal}
+            onClose={() => setShowReadinessModal(false)}
+            user={user}
+            currentReadiness={todayReadiness || undefined}
+            onSaveReadiness={(readiness) => {
+              setTodayReadiness(readiness);
+              try {
+                localStorage.setItem('getfit_today_readiness', JSON.stringify(readiness));
+              } catch {}
+              setShowReadinessModal(false);
+            }}
+          />
+        </Suspense>
+      )}
 
       {/* Workout Template Builder Modal */}
-      <WorkoutTemplateModal
-        isOpen={showTemplateBuilderModal}
-        onClose={() => {
-          setShowTemplateBuilderModal(false);
-          setEditingTemplate(null);
-        }}
-        initialTemplate={editingTemplate}
-        onSaveTemplate={handleSaveTemplateFromBuilder}
-      />
+      {showTemplateBuilderModal && (
+        <Suspense fallback={null}>
+          <WorkoutTemplateModal
+            isOpen={showTemplateBuilderModal}
+            onClose={() => {
+              setShowTemplateBuilderModal(false);
+              setEditingTemplate(null);
+            }}
+            initialTemplate={editingTemplate}
+            onSaveTemplate={handleSaveTemplateFromBuilder}
+          />
+        </Suspense>
+      )}
 
       {/* Saved Templates Library Modal */}
-      <SavedTemplatesModal
-        isOpen={showSavedTemplatesModal}
-        onClose={() => setShowSavedTemplatesModal(false)}
-        templates={savedTemplates}
-        onStartTemplate={(tmpl) => {
-          setShowSavedTemplatesModal(false);
-          onStartPlan(tmpl);
-        }}
-        onEditTemplate={handleEditTemplate}
-        onDeleteTemplate={handleDeleteTemplate}
-        onDuplicateTemplate={handleDuplicateTemplate}
-        onCreateNew={() => {
-          setShowSavedTemplatesModal(false);
-          setEditingTemplate(null);
-          setShowTemplateBuilderModal(true);
-        }}
-      />
+      {showSavedTemplatesModal && (
+        <Suspense fallback={null}>
+          <SavedTemplatesModal
+            isOpen={showSavedTemplatesModal}
+            onClose={() => setShowSavedTemplatesModal(false)}
+            templates={savedTemplates}
+            onStartTemplate={(tmpl) => {
+              setShowSavedTemplatesModal(false);
+              onStartPlan(tmpl);
+            }}
+            onEditTemplate={handleEditTemplate}
+            onDeleteTemplate={handleDeleteTemplate}
+            onDuplicateTemplate={handleDuplicateTemplate}
+            onCreateNew={() => {
+              setShowSavedTemplatesModal(false);
+              setEditingTemplate(null);
+              setShowTemplateBuilderModal(true);
+            }}
+            onAddImportedTemplate={handleImportTemplate}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };

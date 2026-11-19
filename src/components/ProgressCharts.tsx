@@ -9,16 +9,18 @@ import {
   Info,
   Calendar,
   Sparkles,
-  FlaskConical
+  BarChart3,
+  ChevronRight
 } from 'lucide-react';
 import { WorkoutRecord, UserProfile } from '../types';
 import { calculateOneRepMax, calculateNormalizedReps } from '../utils/oneRepMax';
-import { ResearchLabView } from './ResearchLabView';
 
 interface ProgressChartsProps {
   pastWorkouts: WorkoutRecord[];
   activeWorkoutSets?: { weight: number; reps: number }[];
   user?: UserProfile;
+  /** Открывает модальный отчёт по периодам. */
+  onOpenStats?: () => void;
 }
 
 type ChartMetric = 'one_rep_max' | 'normalized_reps' | 'max_weight' | 'tonnage';
@@ -27,13 +29,14 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
   pastWorkouts,
   activeWorkoutSets = [],
   user,
+  onOpenStats,
 }) => {
   const userDisciplines = user?.selectedDisciplines || ['powerlifting', 'streetlifting', 'fitness'];
   const hasStrengthDiscipline = userDisciplines.some(d => 
     ['powerlifting', 'streetlifting', 'bodybuilding', 'weightlifting', 'crossfit'].includes(d)
   );
 
-  const [activeTab, setActiveTab] = useState<'chart' | 'calculator' | 'lab'>('chart');
+  const [activeTab, setActiveTab] = useState<'chart' | 'calculator'>('chart');
   const [selectedExercise, setSelectedExercise] = useState<string>('Жим штанги лежа');
   const [chartMetric, setChartMetric] = useState<ChartMetric>('one_rep_max');
   const [baseWeightForNormalization, setBaseWeightForNormalization] = useState<number>(100);
@@ -149,6 +152,29 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
 
   return (
     <div className="space-y-4 pb-20">
+      {/* Отчёт по периодам — по требованию не отдельная вкладка, а действие здесь */}
+      {onOpenStats && (
+        <button
+          type="button"
+          id="open-period-stats"
+          onClick={onOpenStats}
+          className="w-full bg-gradient-to-r from-cyan-950/60 via-[#12181f] to-emerald-950/60 border border-cyan-500/30 hover:border-cyan-400/60 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-left transition-all active:scale-[0.99]"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+              <BarChart3 className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-slate-100">Отчёт за период</div>
+              <div className="text-[11px] text-slate-400">
+                Тренировки, тоннаж, шаги, сон, питание и вес — нажми и выбери 7/30/90 дней
+              </div>
+            </div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-cyan-400 shrink-0" />
+        </button>
+      )}
+
       {/* Top mode switch */}
       <div className="flex bg-[#12181f] p-1 rounded-xl border border-[#1e293b] gap-1">
         <button
@@ -175,22 +201,9 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
             <span>1ПМ</span>
           </button>
         )}
-        <button
-          onClick={() => setActiveTab('lab')}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all ${
-            activeTab === 'lab'
-              ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20 font-extrabold'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <FlaskConical className="w-3.5 h-3.5 text-cyan-400 group-hover:text-cyan-300" />
-          <span>Research Lab</span>
-        </button>
       </div>
 
-      {activeTab === 'lab' ? (
-        <ResearchLabView user={user || ({} as any)} pastWorkouts={pastWorkouts} />
-      ) : activeTab === 'chart' ? (
+      {activeTab === 'chart' ? (
         <div className="space-y-4">
           {/* Exercise Selector */}
           <div className="bg-[#12181f] border border-[#1e293b] rounded-xl p-3">

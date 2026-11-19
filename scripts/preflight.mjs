@@ -156,7 +156,7 @@ if (!dbUrl) {
         `select table_name from information_schema.tables where table_schema = 'public' order by table_name`,
       );
       const names = tables.rows.map((r) => r.table_name);
-      const expected = ['user_state', 'battles', 'experiments', 'cycles', 'custom_metrics', 'notifications'];
+      const expected = ['user_state', 'battles', 'experiments', 'cycles', 'custom_metrics', 'notifications', 'shared_templates'];
       const missing = expected.filter((t) => !names.includes(t));
       ok('подключение к Postgres работает', `${Date.now() - started} мс, таблиц: ${names.length}`);
       if (missing.length) {

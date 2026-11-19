@@ -95,6 +95,9 @@ globalThis.IntersectionObserver = class { observe() {} unobserve() {} disconnect
 globalThis.getComputedStyle = () => ({ getPropertyValue: () => '' });
 globalThis.fetch = async () => new Response(JSON.stringify({ found: false }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
+// Онбординг не должен попадать в базовую разметку: проверяем именно четыре вкладки
+storage.set('getfit_tour_completed', 'true');
+
 const require_ = createRequire(import.meta.url);
 const React = require_('react');
 const { renderToString } = require_(path.join(root, 'node_modules', 'react-dom', 'server.js'));
@@ -119,13 +122,19 @@ if (html) {
   for (const [name, needle] of [
     ['заголовок GetFitBot', 'GetFitBot'],
     ['вкладка «Тренировки»', 'Тренировки'],
-    ['вкладка «Питание/Сон»', 'Питание'],
+    ['вкладка «Питание»', 'Питание'],
+    ['вкладка «Прогресс»', 'Прогресс'],
     ['вкладка «Профиль»', 'Профиль'],
     ['индикатор дисциплины', 'Дисциплина'],
     ['MINI APP бейдж', 'MINI APP'],
   ]) {
     check(`в разметке есть ${name}`, html.includes(needle));
   }
+  check('базовый режим: нет вкладки «Отчёты»', !html.includes('Отчёты'));
+  check(
+    'базовый режим: нет дополнительных вкладок',
+    !['Лаборатория', 'Циклы', 'Разряды', 'Зарубы'].some((label) => html.includes(label)),
+  );
   check('нет незакрытых React-ошибок в разметке', !/data-reactroot.*error/i.test(html));
 }
 
@@ -175,9 +184,9 @@ const baseProps = {
 };
 
 /** Любой незаданный проп получает массив, обработчик или безопасную заглушку. */
-const propsFor = () =>
+const propsFor = (overrides = {}) =>
   new Proxy(
-    { ...baseProps },
+    { ...baseProps, ...overrides },
     {
       get: (target, key) => {
         if (key in target) return target[key];
@@ -229,6 +238,154 @@ for (const name of screens) {
     check(`экран ${name} рендерится`, false, err.message.split('\n')[0]);
   }
 }
+
+// --- Режимы и точки входа в дополнительные функции ---
+const ProgressChartsMod = require_(path.join(outDir, 'components', 'ProgressCharts.js'));
+const progressHtml = renderToString(
+  React.createElement(ProgressChartsMod.ProgressCharts, propsFor({ onOpenStats: noop })),
+);
+check('в «Прогрессе» есть кнопка отчёта за период', progressHtml.includes('Отчёт за период'));
+
+const ProfileViewMod = require_(path.join(outDir, 'components', 'ProfileView.js'));
+const basicProfileHtml = renderToString(
+  React.createElement(ProfileViewMod.ProfileView, propsFor()),
+);
+check('в базовом профиле есть переключатель режима', basicProfileHtml.includes('Базовый режим'));
+check(
+  'в базовом профиле описано, что остаётся',
+  basicProfileHtml.includes('Что остаётся в базовом режиме'),
+);
+check(
+  'в базовом профиле нет вкладки «Друзья &amp; Зарубы»',
+  !basicProfileHtml.includes('Друзья &amp; Зарубы') && !basicProfileHtml.includes('Друзья & Зарубы'),
+);
+
+const advancedUser = {
+  ...userStub,
+  uiMode: 'advanced',
+  enabledFeatures: {
+    marathons: true,
+    battles: true,
+    discipline: true,
+    ranks: true,
+    lab: true,
+    periodization: true,
+  },
+};
+const advancedProfileHtml = renderToString(
+  React.createElement(ProfileViewMod.ProfileView, propsFor({ user: advancedUser })),
+);
+check(
+  'расширенный профиль показывает все тумблеры',
+  ['Марафоны целей', 'Зарубы с друзьями', 'Дисциплина и штрафы', 'Спортивные разряды', 'Лаборатория N=1', 'Циклы и периодизация'].every(
+    (label) => advancedProfileHtml.includes(label),
+  ),
+);
+check(
+  'расширенный профиль объясняет тумблеры',
+  advancedProfileHtml.includes('Серии дней с шагами') &&
+    advancedProfileHtml.includes('Нормативы WRPF') &&
+    advancedProfileHtml.includes('Блоки гипертрофии'),
+);
+check(
+  'расширенный профиль возвращает вкладки «Друзья &amp; Зарубы» и «Награды»',
+  (advancedProfileHtml.includes('Друзья &amp; Зарубы') || advancedProfileHtml.includes('Друзья & Зарубы')) &&
+    advancedProfileHtml.includes('Награды'),
+);
+
+const WorkoutsHubMod = require_(path.join(outDir, 'components', 'WorkoutsHub.js'));
+const basicWorkoutsHtml = renderToString(
+  React.createElement(WorkoutsHubMod.WorkoutsHub, propsFor()),
+);
+check('в базовых тренировках нет марафонов', !basicWorkoutsHtml.includes('Марафоны целей'));
+const advancedWorkoutsHtml = renderToString(
+  React.createElement(WorkoutsHubMod.WorkoutsHub, propsFor({
+    features: {
+      marathons: true,
+      battles: false,
+      discipline: false,
+      ranks: false,
+      lab: false,
+      periodization: false,
+    },
+  })),
+);
+check('при включении марафонов появляется вкладка', advancedWorkoutsHtml.includes('Марафоны целей'));
+
+const StatsMod = require_(path.join(outDir, 'components', 'StatsView.js'));
+const nowIso = new Date().toISOString();
+const todayKey = nowIso.slice(0, 10);
+const statsWorkout = {
+  id: 'w_stats',
+  title: 'Тестовая тренировка',
+  startedAt: nowIso,
+  completedAt: nowIso,
+  durationMinutes: 60,
+  totalTonnageKg: 1500,
+  status: 'completed',
+  exercises: [
+    {
+      exerciseId: 'e1',
+      name: 'Жим лёжа',
+      sets: [
+        {
+          id: 's1',
+          setNumber: 1,
+          weight: 100,
+          reps: 5,
+          rpe: 8,
+          timestamp: nowIso,
+          calculated1RM: 116,
+          normalizedRepsAt100kg: 5,
+        },
+      ],
+    },
+  ],
+};
+const statsFood = {
+  date: todayKey,
+  meals: [],
+  morningWeightKg: 80,
+  totalCalories: 2200,
+  totalProtein: 150,
+  totalFat: 70,
+  totalCarbs: 250,
+  totalFiber: 30,
+  targetCalories: 2500,
+  targetProtein: 180,
+  targetFat: 80,
+  targetCarbs: 280,
+  targetFiber: 35,
+  status: 'open',
+};
+const statsSleep = {
+  id: 'sleep_stats',
+  date: todayKey,
+  bedtime: '23:00',
+  wakeTime: '07:00',
+  durationHours: 8,
+  qualityScore: 8,
+  feeling: 'rested',
+};
+const statsHtml = renderToString(
+  React.createElement(
+    StatsMod.StatsView,
+    propsFor({
+      pastWorkouts: [statsWorkout],
+      dailyNutritionRecords: [statsFood],
+      sleepRecords: [statsSleep],
+      showBattles: false,
+    }),
+  ),
+);
+check(
+  'отчёт за период содержит метрики',
+  ['Тренировок', 'Тоннаж', 'Подходов', 'Средний сон', 'Калории', 'Шаги', 'Вес'].every((label) =>
+    statsHtml.includes(label),
+  ),
+  statsHtml.slice(0, 200),
+);
+check('в базовом отчёте нет блока заруб', !statsHtml.includes('Зарубы'));
 
 if (broken.length > 0) {
   console.log('\nТребуют ручного разбора:');

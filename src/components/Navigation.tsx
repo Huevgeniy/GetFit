@@ -1,35 +1,59 @@
 import React from 'react';
-import { Dumbbell, Utensils, LineChart, FlaskConical, Award, ShieldCheck, User, Layers, Swords, BarChart3 } from 'lucide-react';
+import { Dumbbell, Utensils, LineChart, FlaskConical, Award, ShieldCheck, User, Layers, Swords } from 'lucide-react';
 import { hapticSelect } from '../lib/telegram';
+import { FeatureFlags } from '../lib/features';
 
-export type NavTab = 'workouts' | 'nutrition' | 'charts' | 'stats' | 'lab' | 'periodization' | 'ranks' | 'discipline' | 'profile' | 'battles';
+/** «Отчёты» больше не отдельная вкладка: они открываются кнопкой внутри «Прогресса». */
+export type NavTab =
+  | 'workouts'
+  | 'nutrition'
+  | 'charts'
+  | 'lab'
+  | 'periodization'
+  | 'ranks'
+  | 'discipline'
+  | 'profile'
+  | 'battles';
 
 interface NavigationProps {
   currentTab: NavTab;
   onChangeTab: (tab: NavTab) => void;
   pendingPenaltiesCount?: number;
+  features?: FeatureFlags;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
   currentTab,
   onChangeTab,
   pendingPenaltiesCount = 0,
+  features,
 }) => {
   const tabs = [
     { id: 'workouts' as NavTab, label: 'Тренировки', icon: Dumbbell },
-    { id: 'nutrition' as NavTab, label: 'Питание/Сон', icon: Utensils },
+    { id: 'nutrition' as NavTab, label: 'Питание', icon: Utensils },
     { id: 'charts' as NavTab, label: 'Прогресс', icon: LineChart },
-    { id: 'stats' as NavTab, label: 'Отчёты', icon: BarChart3 },
-    { id: 'lab' as NavTab, label: 'Лаборатория', icon: FlaskConical },
-    { id: 'periodization' as NavTab, label: 'Циклы', icon: Layers },
-    { id: 'ranks' as NavTab, label: 'Разряды', icon: Award },
-    { 
-      id: 'discipline' as NavTab, 
-      label: 'Дисциплина', 
-      icon: ShieldCheck,
-      badge: pendingPenaltiesCount > 0 ? pendingPenaltiesCount : undefined 
-    },
-    { id: 'battles' as NavTab, label: 'Зарубы', icon: Swords },
+    ...(features?.battles
+      ? [{ id: 'battles' as NavTab, label: 'Зарубы', icon: Swords }]
+      : []),
+    ...(features?.discipline
+      ? [
+          {
+            id: 'discipline' as NavTab,
+            label: 'Дисциплина',
+            icon: ShieldCheck,
+            badge: pendingPenaltiesCount > 0 ? pendingPenaltiesCount : undefined,
+          },
+        ]
+      : []),
+    ...(features?.ranks
+      ? [{ id: 'ranks' as NavTab, label: 'Разряды', icon: Award }]
+      : []),
+    ...(features?.lab
+      ? [{ id: 'lab' as NavTab, label: 'Лаборатория', icon: FlaskConical }]
+      : []),
+    ...(features?.periodization
+      ? [{ id: 'periodization' as NavTab, label: 'Циклы', icon: Layers }]
+      : []),
     { id: 'profile' as NavTab, label: 'Профиль', icon: User },
   ];
 
@@ -59,7 +83,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                     isActive ? 'scale-110 text-emerald-400' : 'text-slate-400'
                   }`}
                 />
-                {tab.badge && (
+                {'badge' in tab && tab.badge && (
                   <span className="absolute -top-1 -right-2 bg-rose-500 text-white text-[10px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center border border-[#0b0f12]">
                     {tab.badge}
                   </span>

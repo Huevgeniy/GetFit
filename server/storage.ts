@@ -24,6 +24,19 @@ export interface BattleRecord {
   updatedAt: string;
 }
 
+export interface SharedTemplateRecord {
+  id: string;
+  ownerId: string;
+  /** Короткий код для ссылки-приглашения (без префикса tpl_). */
+  code: string;
+  title: string;
+  isPublic: boolean;
+  payload: Record<string, any>;
+  copies: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 type CollectionName = 'experiments' | 'cycles' | 'custom_metrics';
 const COLLECTION_TABLES: Record<CollectionName, string> = {
   experiments: 'experiments',
@@ -141,6 +154,19 @@ async function migratePostgres(): Promise<void> {
       sent_at  timestamptz not null default now(),
       primary key (user_id, type)
     );
+    create table if not exists shared_templates (
+      id          text primary key,
+      owner_id    text not null,
+      code        text unique not null,
+      title       text not null default '',
+      is_public   boolean not null default false,
+      payload     jsonb not null default '{}'::jsonb,
+      copies      integer not null default 0,
+      created_at  timestamptz not null default now(),
+      updated_at  timestamptz not null default now()
+    );
+    create index if not exists shared_templates_owner_idx  on shared_templates (owner_id);
+    create index if not exists shared_templates_public_idx on shared_templates (is_public);
   `);
 }
 
@@ -162,9 +188,18 @@ interface FileDb {
   cycles: any[];
   customMetrics: any[];
   notifications?: { userId: string; type: string; sentAt: string }[];
+  sharedTemplates?: SharedTemplateRecord[];
 }
 
-const EMPTY_DB: FileDb = { users: {}, battles: [], experiments: [], cycles: [], customMetrics: [], notifications: [] };
+const EMPTY_DB: FileDb = {
+  users: {},
+  battles: [],
+  experiments: [],
+  cycles: [],
+  customMetrics: [],
+  notifications: [],
+  sharedTemplates: [],
+};
 
 function ensureFileDb(): void {
   const dir = path.dirname(dbFile);
@@ -187,6 +222,7 @@ function readFileDb(): FileDb {
       cycles: parsed.cycles || [],
       customMetrics: parsed.customMetrics || [],
       notifications: parsed.notifications || [],
+      sharedTemplates: parsed.sharedTemplates || [],
     };
   } catch {
     return { ...EMPTY_DB };
@@ -353,6 +389,153 @@ export async function upsertCollectionItem(name: CollectionName, userId: string,
     else list.unshift(record);
   });
   return record;
+}
+
+/* ------------------------------------------------------------------ */
+/* Общие шаблоны тренировок                                            */
+/* ------------------------------------------------------------------ */
+
+function rowToSharedTemplate(row: any): SharedTemplateRecord {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    code: row.code,
+    title: row.title || '',
+    isPublic: Boolean(row.is_public),
+    payload: row.payload ?? {},
+    copies: Number(row.copies) || 0,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+export async function listSharedTemplates(ownerId: string): Promise<SharedTemplateRecord[]> {
+  if (mode === 'postgres' && pool) {
+    const { rows } = await pool.query(
+      'select * from shared_templates where owner_id = $1 order by updated_at desc limit 200',
+      [ownerId],
+    );
+    return rows.map(rowToSharedTemplate);
+  }
+  const db = readFileDb();
+  return (db.sharedTemplates || [])
+    .filter((record) => record.ownerId === ownerId)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function listPublicSharedTemplates(excludeOwnerId: string): Promise<SharedTemplateRecord[]> {
+  if (mode === 'postgres' && pool) {
+    const { rows } = await pool.query(
+      `select * from shared_templates
+       where is_public = true and owner_id <> $1
+       order by copies desc, updated_at desc
+       limit 100`,
+      [excludeOwnerId],
+    );
+    return rows.map(rowToSharedTemplate);
+  }
+  const db = readFileDb();
+  return (db.sharedTemplates || [])
+    .filter((record) => record.isPublic && record.ownerId !== excludeOwnerId)
+    .sort((a, b) => b.copies - a.copies || b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function getSharedTemplateById(id: string): Promise<SharedTemplateRecord | null> {
+  if (mode === 'postgres' && pool) {
+    const { rows } = await pool.query('select * from shared_templates where id = $1', [id]);
+    return rows.length ? rowToSharedTemplate(rows[0]) : null;
+  }
+  const db = readFileDb();
+  return (db.sharedTemplates || []).find((record) => record.id === id) || null;
+}
+
+export async function getSharedTemplateByCode(code: string): Promise<SharedTemplateRecord | null> {
+  const normalized = code.trim().replace(/^tpl_/i, '');
+  if (!normalized) return null;
+  if (mode === 'postgres' && pool) {
+    const { rows } = await pool.query('select * from shared_templates where upper(code) = upper($1)', [normalized]);
+    return rows.length ? rowToSharedTemplate(rows[0]) : null;
+  }
+  const db = readFileDb();
+  return (db.sharedTemplates || []).find((record) => record.code.toUpperCase() === normalized.toUpperCase()) || null;
+}
+
+export async function saveSharedTemplate(record: SharedTemplateRecord): Promise<SharedTemplateRecord> {
+  if (mode === 'postgres' && pool) {
+    const { rows } = await pool.query(
+      `insert into shared_templates (id, owner_id, code, title, is_public, payload, copies, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
+       on conflict (id) do update
+         set code = excluded.code,
+             title = excluded.title,
+             is_public = excluded.is_public,
+             payload = excluded.payload,
+             updated_at = now()
+       returning *`,
+      [
+        record.id,
+        record.ownerId,
+        record.code.toUpperCase(),
+        record.title,
+        record.isPublic,
+        record.payload,
+        record.copies,
+        record.createdAt,
+      ],
+    );
+    return rowToSharedTemplate(rows[0]);
+  }
+  await writeFileDb((db) => {
+    if (!db.sharedTemplates) db.sharedTemplates = [];
+    const idx = db.sharedTemplates.findIndex((entry) => entry.id === record.id);
+    const saved = { ...record, code: record.code.toUpperCase(), updatedAt: new Date().toISOString() };
+    if (idx >= 0) db.sharedTemplates[idx] = { ...db.sharedTemplates[idx], ...saved };
+    else db.sharedTemplates.unshift(saved);
+  });
+  return {
+    ...record,
+    code: record.code.toUpperCase(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export async function deleteSharedTemplate(id: string, ownerId: string): Promise<boolean> {
+  if (mode === 'postgres' && pool) {
+    const { rowCount } = await pool.query('delete from shared_templates where id = $1 and owner_id = $2', [id, ownerId]);
+    return (rowCount || 0) > 0;
+  }
+  let deleted = false;
+  await writeFileDb((db) => {
+    const before = db.sharedTemplates?.length || 0;
+    db.sharedTemplates = (db.sharedTemplates || []).filter(
+      (record) => !(record.id === id && record.ownerId === ownerId),
+    );
+    deleted = (db.sharedTemplates.length || 0) < before;
+  });
+  return deleted;
+}
+
+export async function incrementSharedTemplateCopies(code: string): Promise<SharedTemplateRecord | null> {
+  const normalized = code.trim().replace(/^tpl_/i, '').toUpperCase();
+  if (!normalized) return null;
+  if (mode === 'postgres' && pool) {
+    const { rows } = await pool.query(
+      `update shared_templates set copies = copies + 1, updated_at = updated_at
+       where upper(code) = $1 returning *`,
+      [normalized],
+    );
+    return rows.length ? rowToSharedTemplate(rows[0]) : null;
+  }
+  let updated: SharedTemplateRecord | null = null;
+  await writeFileDb((db) => {
+    const list = db.sharedTemplates || [];
+    const idx = list.findIndex((record) => record.code.toUpperCase() === normalized);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], copies: (list[idx].copies || 0) + 1 };
+      updated = list[idx];
+    }
+  });
+  return updated;
 }
 
 /* ------------------------------------------------------------------ */

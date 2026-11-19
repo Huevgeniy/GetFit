@@ -29,13 +29,18 @@ import {
   Swords,
   Bell,
   BellOff,
-  Send
+  Send,
+  Table,
+  Settings,
+  RotateCcw,
+  Layers
 } from 'lucide-react';
 import { UserProfile, Achievement, InBodyRecord, PersonalRecord, RecordHistoryItem, FriendBattle } from '../types';
 import { InBodyTracker } from './InBodyTracker';
 import { FriendsAndBattlesView } from './FriendsAndBattlesView';
 import { hapticImpact, hapticNotify } from '../lib/telegram';
-import { testNotification } from '../lib/api';
+import { exportDiaryCsv, testNotification } from '../lib/api';
+import { FEATURES, FeatureKey, getFeatureFlags, isAdvancedMode } from '../lib/features';
 
 interface ProfileViewProps {
   user: UserProfile;
@@ -52,6 +57,8 @@ interface ProfileViewProps {
   onAddBattle?: (battle: FriendBattle) => void;
   onUpdateBattleProgress?: (battleId: string, amount: number) => void;
   onOpenAiSettings?: () => void;
+  /** Запускает обучение заново из настроек. */
+  onRestartTour?: () => void;
 }
 
 const AVAILABLE_DISCIPLINES = [
@@ -80,9 +87,60 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onAddBattle = () => {},
   onUpdateBattleProgress = () => {},
   onOpenAiSettings,
+  onRestartTour,
 }) => {
   const [profileTab, setProfileTab] = useState<'general' | 'friends_battles' | 'records' | 'disciplines' | 'inbody' | 'achievements'>('general');
   const [importStatus, setImportStatus] = useState<string | null>(null);
+
+  // Базовый режим: четыре вкладки. Дополнительные разделы включает пользователь.
+  const advancedMode = isAdvancedMode(user);
+  const features = getFeatureFlags(user);
+  const canUseBattles = advancedMode && features.battles;
+  const canUseAchievements = advancedMode && features.discipline;
+
+  useEffect(() => {
+    if (profileTab === 'friends_battles' && !canUseBattles) setProfileTab('general');
+    if (profileTab === 'achievements' && !canUseAchievements) setProfileTab('general');
+  }, [profileTab, canUseBattles, canUseAchievements]);
+
+  const handleToggleAdvanced = () => {
+    hapticImpact('light');
+    if (advancedMode) {
+      onUpdateUser({ uiMode: 'basic' });
+      return;
+    }
+    // При включении расширенного режима разделы остаются выключенными:
+    // пользователь сам решает, что ему нужно.
+    onUpdateUser({ uiMode: 'advanced', enabledFeatures: { ...(user.enabledFeatures || {}) } });
+  };
+
+  const handleToggleFeature = (key: FeatureKey) => {
+    if (!advancedMode) return;
+    hapticImpact('light');
+    onUpdateUser({ enabledFeatures: { ...features, [key]: !features[key] } });
+  };
+
+  const handleEnableAllFeatures = () => {
+    if (!advancedMode) return;
+    hapticImpact('light');
+    onUpdateUser({
+      enabledFeatures: FEATURES.reduce((acc, feature) => {
+        acc[feature.key] = true;
+        return acc;
+      }, {} as Record<FeatureKey, boolean>),
+    });
+  };
+
+  const handleResetFeatures = () => {
+    if (!advancedMode) return;
+    hapticImpact('light');
+    onUpdateUser({
+      enabledFeatures: FEATURES.reduce((acc, feature) => {
+        acc[feature.key] = false;
+        return acc;
+      }, {} as Record<FeatureKey, boolean>),
+    });
+  };
 
   // Напоминания: по умолчанию включены (undefined считаем включённым)
   const notificationsOn = user?.notificationsEnabled !== false;
@@ -109,6 +167,24 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   });
   const [showImportArea, setShowImportArea] = useState(false);
   const [importText, setImportText] = useState('');
+
+  // Выгрузка дневника в CSV через бота (файл открывается в Google Sheets и Excel)
+  const [exportState, setExportState] = useState<{ status: 'idle' | 'busy' | 'ok' | 'error'; message?: string }>({
+    status: 'idle',
+  });
+
+  const handleExportCsv = async () => {
+    setExportState({ status: 'busy' });
+    hapticImpact('light');
+    const result = await exportDiaryCsv();
+    if (result.sent) {
+      hapticNotify('success');
+      setExportState({ status: 'ok' });
+    } else {
+      hapticNotify('error');
+      setExportState({ status: 'error', message: result.error || 'Не удалось отправить файл' });
+    }
+  };
 
   const handleExportClick = async () => {
     if (!onExportData) return;
@@ -362,17 +438,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <span>Параметры</span>
         </button>
 
-        <button
-          onClick={() => setProfileTab('friends_battles')}
-          className={`flex-1 py-2 px-2.5 rounded-lg font-semibold transition-all whitespace-nowrap flex items-center justify-center gap-1 ${
-            profileTab === 'friends_battles'
-              ? 'bg-emerald-500 text-slate-950 shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Swords className="w-3 h-3" />
-          <span>Друзья & Зарубы</span>
-        </button>
+        {canUseBattles && (
+          <button
+            onClick={() => setProfileTab('friends_battles')}
+            className={`flex-1 py-2 px-2.5 rounded-lg font-semibold transition-all whitespace-nowrap flex items-center justify-center gap-1 ${
+              profileTab === 'friends_battles'
+                ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Swords className="w-3 h-3" />
+            <span>Друзья & Зарубы</span>
+          </button>
+        )}
 
         <button
           onClick={() => setProfileTab('records')}
@@ -410,17 +488,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <span>InBody</span>
         </button>
 
-        <button
-          onClick={() => setProfileTab('achievements')}
-          className={`flex-1 py-2 px-2.5 rounded-lg font-semibold transition-all whitespace-nowrap flex items-center justify-center gap-1 ${
-            profileTab === 'achievements'
-              ? 'bg-emerald-500 text-slate-950 shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Award className="w-3 h-3" />
-          <span>Награды</span>
-        </button>
+        {canUseAchievements && (
+          <button
+            onClick={() => setProfileTab('achievements')}
+            className={`flex-1 py-2 px-2.5 rounded-lg font-semibold transition-all whitespace-nowrap flex items-center justify-center gap-1 ${
+              profileTab === 'achievements'
+                ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Award className="w-3 h-3" />
+            <span>Награды</span>
+          </button>
+        )}
       </div>
 
       {/* TAB 1: General Goals & Steps */}
@@ -663,6 +743,150 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             )}
             {notifyTest.status === 'error' && (
               <p className="text-[10px] text-amber-400 leading-snug">⚠️ {notifyTest.message}</p>
+            )}
+          </div>
+
+          {/* Режим приложения: базовый или расширенный */}
+          <div id="feature-settings" className="bg-[#101820] border border-[#22303f] rounded-2xl p-3.5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Settings className="w-4 h-4 text-emerald-400" />
+              <div>
+                <div className="text-xs font-bold text-slate-200">Режим приложения</div>
+                <div className="text-[10px] text-slate-400">
+                  Базовый — только главное. Расширенный — включай нужные разделы по одному.
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 bg-[#0b1016] border border-[#1b2533] rounded-xl p-3">
+              <div className="flex items-center gap-2.5">
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center border ${
+                  !advancedMode
+                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                    : 'bg-[#18232f] border-[#2b3a4a] text-slate-400'
+                }`}>
+                  <Layers className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-200">Базовый режим</div>
+                  <div className="text-[10px] text-slate-400">
+                    {!advancedMode
+                      ? 'Включён: 4 вкладки — Тренировки, Питание, Прогресс, Профиль'
+                      : 'Выключен: базовые вкладки остаются, ниже можно включить доп. разделы'}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                id="advanced-mode-toggle"
+                onClick={handleToggleAdvanced}
+                className={`w-12 h-6 rounded-full border transition-colors shrink-0 relative ${
+                  !advancedMode ? 'bg-emerald-500/30 border-emerald-500/60' : 'bg-[#18232f] border-[#2b3a4a]'
+                }`}
+                title={!advancedMode ? 'Включить расширенный режим' : 'Вернуться в базовый режим'}
+              >
+                <span
+                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-slate-100 transition-all ${
+                    !advancedMode ? 'left-6' : 'left-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div className="text-[11px] text-slate-400 leading-relaxed bg-[#0b1016] border border-[#1b2533] rounded-xl p-2.5">
+              {!advancedMode ? (
+                <>
+                  <span className="text-slate-200 font-semibold">Что остаётся в базовом режиме:</span>{' '}
+                  тренировки и шаблоны, питание и сон, графики прогресса с кнопкой{' '}
+                  <span className="text-cyan-300 font-semibold">«Отчёт за период»</span>, профиль, InBody,
+                  рекорды и спорт. Марафоны, зарубы, дисциплина, разряды, лаборатория и циклы выключены.
+                </>
+              ) : (
+                <>
+                  <span className="text-slate-200 font-semibold">Как это работает:</span>{' '}
+                  выключи «Базовый режим», затем включи только нужные разделы. Изменения применяются сразу:
+                  новые вкладки появятся внизу, а разделы внутри «Тренировок» и «Профиля» — на своих местах.
+                </>
+              )}
+            </div>
+
+            {advancedMode && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
+                    Дополнительные разделы
+                  </span>
+                  <div className="flex items-center gap-2 text-[10px] font-semibold">
+                    <button
+                      type="button"
+                      onClick={handleEnableAllFeatures}
+                      className="text-emerald-400 hover:text-emerald-300 flex items-center gap-0.5"
+                    >
+                      <Check className="w-3 h-3" />
+                      Включить всё
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetFeatures}
+                      className="text-slate-500 hover:text-slate-300"
+                    >
+                      Сбросить
+                    </button>
+                  </div>
+                </div>
+
+                {FEATURES.map(feature => {
+                  const enabled = features[feature.key];
+                  return (
+                    <button
+                      key={feature.key}
+                      type="button"
+                      id={`feature-toggle-${feature.key}`}
+                      role="switch"
+                      aria-checked={enabled}
+                      onClick={() => handleToggleFeature(feature.key)}
+                      className={`w-full text-left rounded-xl border p-2.5 flex items-start justify-between gap-3 transition-colors ${
+                        enabled
+                          ? 'bg-emerald-950/30 border-emerald-500/40'
+                          : 'bg-[#0b1016] border-[#1b2533] hover:border-[#2b3d51]'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-bold text-slate-200">{feature.label}</span>
+                          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+                            enabled
+                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                              : 'bg-[#151f2b] text-slate-500 border-[#243447]'
+                          }`}>
+                            {enabled ? 'вкл' : 'выкл'}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 leading-snug">{feature.description}</div>
+                        <div className="text-[10px] text-cyan-400/90 mt-1 font-mono">{feature.where}</div>
+                      </div>
+                      <span className={`mt-0.5 w-10 h-5 rounded-full border transition-colors shrink-0 relative ${
+                        enabled ? 'bg-emerald-500/30 border-emerald-500/60' : 'bg-[#18232f] border-[#2b3a4a]'
+                      }`}>
+                        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-slate-100 transition-all ${
+                          enabled ? 'left-5' : 'left-0.5'
+                        }`} />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {onRestartTour && (
+              <button
+                type="button"
+                onClick={onRestartTour}
+                className="w-full py-2 bg-[#141c24] hover:border-emerald-500/50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Пройти обучение заново</span>
+              </button>
             )}
           </div>
 
