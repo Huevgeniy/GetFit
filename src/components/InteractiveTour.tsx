@@ -1,7 +1,6 @@
 import React, {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -9,8 +8,8 @@ import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 
 import { NavTab } from './Navigation';
-import { FeatureFlags } from '../lib/features';
 import { hapticImpact } from '../lib/telegram';
+import { buildMainTourSteps, TourId, TourStep } from '../lib/tours';
 import {
   buildFocusRect,
   buildPanelRects,
@@ -22,24 +21,17 @@ import {
   CardLayout,
 } from '../lib/tourGeometry';
 
-type TourTarget = string | (() => Element | null);
-
-interface TourStep {
-  id: string;
-  /** На какую вкладку приложения перейти перед показом шага. */
-  tab?: NavTab;
-  target?: TourTarget;
-  title: string;
-  description: string;
-  bullets?: string[];
-}
-
 interface InteractiveTourProps {
   isOpen: boolean;
   onClose: () => void;
   onNavigateTab: (tab: NavTab) => void;
-  /** В тур попадают только включённые дополнительные разделы. */
-  features?: FeatureFlags;
+  /**
+   * Шаги конкретного тура. Если не переданы, показываем основной тур —
+   * так компонент остаётся самодостаточным в рендер-тестах.
+   */
+  steps?: TourStep[];
+  /** Идентификатор для разметки и отладки: основной тур или раздел. */
+  tourId?: TourId;
 }
 
 interface Geometry {
@@ -48,202 +40,6 @@ interface Geometry {
   card: CardLayout;
   radius: string;
 }
-
-const CORE_STEPS: TourStep[] = [
-  {
-    id: 'welcome',
-    title: 'Добро пожаловать в GetFitBot',
-    description:
-      'Приложение начинается с базового режима: только четыре главные вкладки. Дополнительные разделы можно включить позже в профиле.',
-    bullets: [
-      'Тренировки, питание, прогресс и профиль — внизу',
-      'Базовый режим не перегружает первый экран',
-      'Обучение можно пройти заново через «?» в шапке',
-    ],
-  },
-  {
-    id: 'navigation',
-    target: 'nav',
-    title: 'Четыре вкладки внизу',
-    description:
-      'Переключайтесь между тренировками, питанием, прогрессом и профилем. Если включить несколько дополнительных разделов, они прячутся под «Ещё».',
-    bullets: [
-      '«Тренировки» — планы, свободная тренировка и шаблоны',
-      '«Питание» — еда, КБЖУ, вода и сон',
-      '«Прогресс» — графики и отчёт за период',
-      '«Профиль» — параметры, InBody, рекорды и настройки',
-    ],
-  },
-  {
-    id: 'templates',
-    tab: 'workouts',
-    target: '#tour-templates-block',
-    title: 'Шаблоны тренировок',
-    description:
-      'Соберите тренировку один раз — и запускайте её в один клик. Шаблоны можно хранить у себя или передавать другу ссылкой.',
-    bullets: [
-      'Упражнения по группам мышц, подходы, вес и отдых',
-      'Своя библиотека и готовые шаблоны',
-      'Поделиться можно ссылкой или кодом',
-    ],
-  },
-  {
-    id: 'quick-workout',
-    tab: 'workouts',
-    target: '#tour-quick-workout-btn',
-    title: 'Быстрая тренировка',
-    description:
-      'Если плана нет, начните свободную тренировку: добавляйте упражнения по ходу и записывайте подходы.',
-    bullets: [
-      'ИИ распознаёт записи вроде «жим 100 на 10»',
-      'Вес, повторения и таймер отдыха — под рукой',
-      'После финиша тренировку можно сохранить как шаблон',
-    ],
-  },
-  {
-    id: 'readiness',
-    tab: 'workouts',
-    target: '#tour-readiness-card',
-    title: 'Готовность и Smart RPE',
-    description:
-      'Оцените сон, стресс и боль за 30 секунд — приложение подскажет, стоит ли снизить рабочие веса.',
-    bullets: [
-      'Корректировка RPE под состояние',
-      'Помогает не уйти в перетренированность',
-      'Работает и без ИИ-ключей — по локальной эвристике',
-    ],
-  },
-  {
-    id: 'nutrition',
-    tab: 'nutrition',
-    target: '#tour-nutrition-subtabs',
-    title: 'Питание и сон',
-    description:
-      'Калории, белки, жиры, углеводы, вода и сон — в одном разделе. Приёмы пищи можно вносить вручную или текстом.',
-    bullets: [
-      'Дневная цель и остаток по КБЖУ',
-      'Отдельные вкладки для еды, сна и ИИ-анализа',
-      'Данные участвуют в отчёте за период',
-    ],
-  },
-  {
-    id: 'progress',
-    tab: 'charts',
-    target: '#open-period-stats',
-    title: 'Прогресс и отчёт за период',
-    description:
-      'Графики показывают динамику, а отчёт считает итоги прямо в приложении — без сообщений бота по расписанию.',
-    bullets: [
-      'Периоды: 7, 30, 90 дней или всё время',
-      'Тоннаж, подходы, RPE, сон, калории, шаги и вес',
-      'Сравнение с предыдущим периодом',
-    ],
-  },
-  {
-    id: 'settings',
-    tab: 'profile',
-    target: '#tour-feature-mode',
-    title: 'Базовый и расширенный режим',
-    description:
-      'В профиле находится переключатель режима. Базовый оставляет четыре вкладки, расширенный показывает тумблеры дополнительных разделов.',
-    bullets: [
-      'Каждый дополнительный раздел включается отдельно',
-      'Больше одного раздела — появляется «Ещё»',
-      'Обучение можно запустить заново в любой момент',
-    ],
-  },
-  {
-    id: 'ai',
-    tab: 'profile',
-    target: '#header-ai-brain-btn',
-    title: 'ИИ-помощник',
-    description:
-      'Кнопка с мозгом в шапке открывает настройки ИИ: личный промт, травмы, ограничения и спортивное питание.',
-    bullets: [
-      'Провайдер и резерв показываются честно',
-      'Без ключей работает локальная эвристика',
-      'Настройки применяются к тренировкам и разбору питания',
-    ],
-  },
-];
-
-const ADVANCED_STEPS: Record<string, TourStep> = {
-  marathons: {
-    id: 'marathons',
-    tab: 'workouts',
-    target: '#tour-marathon-tab',
-    title: 'Марафоны целей',
-    description:
-      'Дополнительная вкладка внутри «Тренировок»: серии дней по шагам, упражнениям или привычкам.',
-    bullets: ['Остаток можно переносить в копилку', 'Серия не теряется из-за одного пропуска'],
-  },
-  battles: {
-    id: 'battles',
-    tab: 'battles',
-    target: '#tour-battles-tabs',
-    title: 'Зарубы с друзьями',
-    description:
-      'Дуэли 1 на 1 по шагам, жиму, подтягиваниям или дисциплине. Прогресс видят оба участника.',
-    bullets: ['Создайте вызов и отправьте ссылку', 'Результат хранится на сервере'],
-  },
-  discipline: {
-    id: 'discipline',
-    tab: 'discipline',
-    target: '#tour-discipline-score',
-    title: 'Дисциплина и штрафы',
-    description:
-      'Очки за выполненные тренировки, календарь обязательств и штрафные задания за пропуски.',
-    bullets: ['Переносы без потери очков', 'ИИ-арбитр подберёт справедливое задание'],
-  },
-  ranks: {
-    id: 'ranks',
-    tab: 'ranks',
-    target: '#tour-ranks-banner',
-    title: 'Спортивные разряды',
-    description:
-      'Нормативы WRPF, WSF и других федераций — от юношеских разрядов до КМС и МС.',
-    bullets: ['Выберите движение и свой вес', 'Сравните результат и сохраните цель'],
-  },
-  lab: {
-    id: 'lab',
-    tab: 'lab',
-    target: '#tour-lab-banner',
-    title: 'Лаборатория N=1',
-    description:
-      'Личные эксперименты: проверяйте сон, добавки и восстановление на себе.',
-    bullets: ['Гипотеза и дневник показателей', 'ИИ поможет сформулировать вывод'],
-  },
-  periodization: {
-    id: 'periodization',
-    tab: 'periodization',
-    target: '#tour-periodization-header',
-    title: 'Циклы и периодизация',
-    description:
-      'Блоки гипертрофии, силы и делоада с аналитикой тоннажа и среднего RPE.',
-    bullets: ['Тренировки группируются в циклы', 'Видно, когда переходить к следующему блоку'],
-  },
-};
-
-const FINAL_STEP: TourStep = {
-  id: 'finish',
-  title: 'Всё готово',
-  description:
-    'Это основные разделы приложения. Начните с тренировки или внесите питание — данные сохранятся и попадут в отчёты.',
-  bullets: [
-    'Обучение всегда доступно по кнопке «?» в шапке',
-    'Дополнительные разделы включаются в профиле',
-    'Закрыть приложение можно обычной кнопкой Telegram',
-  ],
-};
-
-const buildSteps = (features?: FeatureFlags): TourStep[] => {
-  const extra = features
-    ? Object.keys(ADVANCED_STEPS)
-        .filter((key) => Boolean(features[key as keyof FeatureFlags]))
-        .map((key) => ADVANCED_STEPS[key])
-    : [];
-  return [...CORE_STEPS, ...extra, FINAL_STEP];
-};
 
 /* ------------------------------------------------------------------ */
 /* Вспомогательные функции браузера                                    */
@@ -352,8 +148,14 @@ const animateScrollTo = (targetY: number): Promise<void> => {
       else finish();
     };
     requestAnimationFrame(step);
-    // Страховка, если rAF заморожен в фоновом окне.
-    setTimeout(finish, duration + 140);
+    // Страховка, если rAF заморожен в фоновом окне: доводим прокрутку
+    // до конечной точки, иначе рамка подсветки остаётся за экраном.
+    setTimeout(() => {
+      if (!finished) {
+        window.scrollTo(0, targetY);
+        finish();
+      }
+    }, duration + 140);
   });
 };
 
@@ -365,11 +167,12 @@ export const InteractiveTour: React.FC<InteractiveTourProps> = ({
   isOpen,
   onClose,
   onNavigateTab,
-  features,
+  steps: stepsProp,
+  tourId = 'main',
 }) => {
   const [stepIndex, setStepIndex] = useState(0);
   /** Фиксируем набор шагов на момент открытия: облако не должно менять тур на ходу. */
-  const [tourFeatures, setTourFeatures] = useState<FeatureFlags | undefined>(features);
+  const [steps, setSteps] = useState<TourStep[]>(() => stepsProp || buildMainTourSteps());
   const [geometry, setGeometry] = useState<Geometry | null>(null);
   const [viewport, setViewport] = useState(measureViewport);
   const [compact, setCompact] = useState(false);
@@ -387,7 +190,6 @@ export const InteractiveTour: React.FC<InteractiveTourProps> = ({
   onNavigateTabRef.current = onNavigateTab;
   onCloseRef.current = onClose;
 
-  const steps = useMemo(() => buildSteps(tourFeatures), [tourFeatures]);
   const stepsRef = useRef(steps);
   stepsRef.current = steps;
 
@@ -400,11 +202,6 @@ export const InteractiveTour: React.FC<InteractiveTourProps> = ({
   const progressPercent = Math.round(((safeIndex + 1) / Math.max(1, steps.length)) * 100);
 
   const complete = useCallback(() => {
-    try {
-      localStorage.setItem('getfit_tour_completed', 'true');
-    } catch {
-      /* приватный режим */
-    }
     hapticImpact('medium');
     onCloseRef.current();
   }, []);
@@ -495,10 +292,10 @@ export const InteractiveTour: React.FC<InteractiveTourProps> = ({
     });
   }, [positionNow, resolveTarget]);
 
-  // Снимок фич и сброс шага при каждом открытии.
+  // Снимок шагов и сброс прогресса при каждом открытии.
   useEffect(() => {
     if (!isOpen) return;
-    setTourFeatures(features);
+    setSteps(stepsProp && stepsProp.length > 0 ? stepsProp : buildMainTourSteps());
     setStepIndex(0);
     hapticImpact('medium');
     // Намеренно только на открытие: набор шагов не должен меняться во время тура.
@@ -521,6 +318,18 @@ export const InteractiveTour: React.FC<InteractiveTourProps> = ({
       if (step.tab) onNavigateTabRef.current(step.tab);
       await nextFrame();
       if (cancelled || token !== runIdRef.current) return;
+
+      // Под-вкладки и модалки открываем до поиска цели: они могут быть ленивыми.
+      if (step.prepare) {
+        try {
+          await step.prepare();
+        } catch {
+          /* цель просто не найдётся — шаг покажется без рамки */
+        }
+        if (cancelled || token !== runIdRef.current) return;
+        await nextFrame();
+        if (cancelled || token !== runIdRef.current) return;
+      }
 
       let target = await waitForTarget(step, token);
       if (cancelled || token !== runIdRef.current) return;
@@ -763,6 +572,7 @@ export const InteractiveTour: React.FC<InteractiveTourProps> = ({
       ref={rootRef}
       className={`tour-root${scrolling ? ' is-scrolling' : ''}`}
       data-tour-root
+      data-tour-id={tourId}
     >
       {/* Четыре панели: blur только вне «дырки». */}
       <div

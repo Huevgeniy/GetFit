@@ -260,9 +260,9 @@ if (advancedToggle) {
     'каждый тумблер объясняет, что включает',
     text().includes('Серии дней с шагами') &&
       text().includes('Дуэли 1 на 1') &&
-      text().includes('Нормативы WRPF') &&
+      text().includes('Нормативы по пауэрлифтингу') &&
       text().includes('Личные эксперименты') &&
-      text().includes('Блоки гипертрофии'),
+      text().includes('Блоки роста мышц'),
     text().slice(-400),
   );
   check(

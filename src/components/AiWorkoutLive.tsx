@@ -849,7 +849,7 @@ export const AiWorkoutLive: React.FC<AiWorkoutLiveProps> = ({
                     <div className="flex-1">
                       <div className="flex items-center justify-between text-[11px] text-slate-400">
                         <span>В прошлый раз ({previousWorkoutBench.date}):</span>
-                        <span className="text-emerald-400 font-mono font-bold">1ПМ ~ {previousWorkoutBench.best1RM} кг</span>
+                        <span className="text-emerald-400 font-mono font-bold">максимум ~ {previousWorkoutBench.best1RM} кг</span>
                       </div>
                       <div className="text-slate-300 font-mono text-[11px] mt-0.5">
                         Сделано:{' '}
@@ -1149,7 +1149,7 @@ export const AiWorkoutLive: React.FC<AiWorkoutLiveProps> = ({
                           : 'bg-[#192330] text-slate-300 hover:bg-[#223041]'
                       }`}
                     >
-                      Только 1ПМ
+                      Только максимум
                     </button>
                   </div>
 
@@ -1165,7 +1165,7 @@ export const AiWorkoutLive: React.FC<AiWorkoutLiveProps> = ({
                         }}
                         className="rounded bg-[#1a2533] border-[#293b4e] text-emerald-500 focus:ring-0"
                       />
-                      <span>Показывать 1ПМ (расчетный максимум)</span>
+                      <span>Показывать расчётный максимум</span>
                     </label>
 
                     <label className="flex items-center gap-2 cursor-pointer text-slate-300">
@@ -1259,7 +1259,7 @@ export const AiWorkoutLive: React.FC<AiWorkoutLiveProps> = ({
                     <span className="w-10">Сет</span>
                     <span className="w-16">Вес</span>
                     <span className="w-14">Повт</span>
-                    {show1RMColumn && <span className="w-16">1ПМ</span>}
+                    {show1RMColumn && <span className="w-16">Макс.</span>}
                     {showNormalizedCol && <span className="w-20 text-right">На {normalizedWeightStep}кг</span>}
                     {showRestTimeColumn && <span className="flex-1 text-right">Отдых</span>}
                   </div>

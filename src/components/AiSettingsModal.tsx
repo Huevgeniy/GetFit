@@ -24,7 +24,7 @@ interface AiSettingsModalProps {
 const QUICK_PROMPT_PRESETS = [
   'Фокус на жим лежа и гипертрофию верха тела',
   'Не предлагать становую тягу и осевую нагрузку (грыжа поясницы)',
-  'Строго научный подход, шкала RPE и авторегуляция нагрузки',
+  'Строго научный подход и нагрузка по самочувствию',
   'Подготовка к соревнованиям по пауэрлифтингу WRPF',
   'Тренируюсь дома: только гантели до 24 кг и турник',
   'Акцент на восстановление, суставы и снижение травматизма',
@@ -93,9 +93,9 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-1.5">
-                Настройки и Промт ИИ-Тренера
+                Настройки ИИ-тренера
               </h2>
-              <p className="text-xs text-slate-400">Персонализация интеллекта под твой организм</p>
+              <p className="text-xs text-slate-400">Подстройте подсказки под свои цели и особенности</p>
             </div>
           </div>
           <button
@@ -106,14 +106,14 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({
           </button>
         </div>
 
-        {/* Dual AI Engine Indicator */}
+        {/* AI provider status */}
         <div className="my-4 p-3 rounded-xl bg-gradient-to-r from-cyan-950/40 via-emerald-950/30 to-slate-900 border border-cyan-500/30 flex items-start gap-3">
           <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0 mt-0.5">
             <Cpu className="w-4 h-4" />
           </div>
           <div className="text-xs">
             <div className="flex items-center gap-2 font-bold text-white">
-              <span>ИИ-движок активен</span>
+              <span>ИИ подключён</span>
               <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 Синхронизировано
               </span>
@@ -135,10 +135,10 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({
             </label>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { id: 'strength_powerlifting', label: 'Пауэрлифтинг & 1ПМ', desc: 'WRPF нормативы, сила' },
-                { id: 'hypertrophy_bodybuilding', label: 'Бодибилдинг & Масса', desc: 'Гипертрофия, объем' },
-                { id: 'streetlifting_calisthenics', label: 'Стритлифтинг', desc: 'Подтягивания/брусья с весом' },
-                { id: 'functional_endurance', label: 'ОФП & Выносливость', desc: 'Функционал, дыхалка' },
+                { id: 'strength_powerlifting', label: 'Пауэрлифтинг', desc: 'Нормативы WRPF, сила' },
+                { id: 'hypertrophy_bodybuilding', label: 'Бодибилдинг и масса', desc: 'Рост мышц и объёма' },
+                { id: 'streetlifting_calisthenics', label: 'Стритлифтинг', desc: 'Подтягивания и брусья с весом' },
+                { id: 'functional_endurance', label: 'Общая форма и выносливость', desc: 'Функционал и дыхание' },
               ].map(style => (
                 <button
                   key={style.id}
@@ -162,14 +162,14 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                Личный промт и директивы для ИИ
+                Личные указания для ИИ
               </label>
-              <span className="text-[10px] text-slate-400">Внедряется в каждый запрос</span>
+              <span className="text-[10px] text-slate-400">Учитываются в каждом запросе</span>
             </div>
             <textarea
               value={personalPrompt}
               onChange={e => setPersonalPrompt(e.target.value)}
-              placeholder="Например: Я готовлюсь к нормативу КМС по жиму WRPF в категории до 82.5 кг. Всегда предлагай прогрессию по RPE. Не предлагай становую тягу..."
+              placeholder="Например: Готовлюсь к нормативу КМС по жиму WRPF в категории до 82,5 кг. Предлагай прогрессию по самочувствию. Не предлагай становую тягу..."
               rows={4}
               className="w-full bg-[#0a0f14] border border-[#1e293b] rounded-xl p-3 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500/60 transition"
             />
@@ -178,7 +178,7 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({
             <div className="mt-2">
               <div className="text-[11px] text-slate-400 mb-1.5 flex items-center gap-1">
                 <Zap className="w-3 h-3 text-amber-400" />
-                Быстро добавить в промт одним нажатием:
+                Быстро добавить в указания:
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {QUICK_PROMPT_PRESETS.map((preset, idx) => (
@@ -217,13 +217,13 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({
           <div>
             <label className="text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
               <Pill className="w-3.5 h-3.5 text-emerald-400" />
-              Спортивное питание и добавки (для аналитики Research Lab)
+              Спортивное питание и добавки (для разбора в лаборатории)
             </label>
             <input
               type="text"
               value={supplements}
               onChange={e => setSupplements(e.target.value)}
-              placeholder="Креатин 5г, Омега-3 2000мг, Протеин 30г"
+              placeholder="Креатин 5 г, Омега-3 2000 мг, Протеин 30 г"
               className="w-full bg-[#0a0f14] border border-[#1e293b] rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/60 transition"
             />
             <div className="flex flex-wrap gap-1.5 mt-2">

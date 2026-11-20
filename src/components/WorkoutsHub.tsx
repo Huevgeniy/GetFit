@@ -61,6 +61,8 @@ interface WorkoutsHubProps {
   features?: FeatureFlags;
   /** Увеличивается, когда шаблон добавлен по deep-link — сразу открываем библиотеку. */
   openTemplatesSignal?: number;
+  /** Пользователь открыл марафоны: приложение может показать обучение раздела. */
+  onMarathonOpened?: () => void;
 }
 
 export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
@@ -77,6 +79,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
   onSaveTemplate,
   features,
   openTemplatesSignal = 0,
+  onMarathonOpened,
 }) => {
   const [subTab, setSubTab] = useState<'workouts' | 'marathons'>('workouts');
   const [showNewPlanModal, setShowNewPlanModal] = useState(false);
@@ -121,7 +124,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
       },
       {
         id: 'tmpl_volume_upper',
-        title: 'Верх тела: Спина & Брусья',
+        title: 'Верх тела: спина и брусья',
         scheduledDay: 'Среда',
         estimatedDurationMinutes: 60,
         isCustomTemplate: true,
@@ -303,9 +306,14 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
     ]);
   };
 
+  const openMarathons = () => {
+    setSubTab('marathons');
+    onMarathonOpened?.();
+  };
+
   return (
     <div className="space-y-4 pb-20">
-      {/* Sub tabs: Тренировки & Планы vs Марафоны целей (марафоны — доп. раздел) */}
+      {/* Sub tabs: Тренировки и планы vs Марафоны целей (марафоны — доп. раздел) */}
       {features?.marathons && (
         <div
           id="tour-marathon-tab"
@@ -320,10 +328,11 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
             }`}
           >
             <Dumbbell className="w-4 h-4" />
-            <span>Тренировки & Планы</span>
+            <span>Тренировки и планы</span>
           </button>
           <button
-            onClick={() => setSubTab('marathons')}
+            id="tour-marathon-tab-btn"
+            onClick={openMarathons}
             className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
               subTab === 'marathons'
                 ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
@@ -345,7 +354,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
           {/* Disciplinary Marathons banner (Screenshot 4) */}
           {features?.marathons && (
           <button
-            onClick={() => setSubTab('marathons')}
+            onClick={openMarathons}
             className="w-full bg-gradient-to-r from-[#101c27] via-[#0d1620] to-[#121c27] hover:border-emerald-500/50 border border-emerald-500/30 rounded-2xl p-3.5 flex items-center justify-between text-left transition-all group"
           >
             <div className="flex items-center gap-3">
@@ -368,7 +377,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
           </button>
           )}
 
-          {/* Widget: Recommendation for Today (Smart RPE & Autoregulation) */}
+          {/* Widget: recommendation for today */}
           <div id="tour-readiness-card" className="bg-gradient-to-br from-[#121f2b] via-[#0d1620] to-[#14232c] border border-cyan-500/40 rounded-2xl p-4 shadow-lg shadow-cyan-950/20">
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-2.5">
@@ -379,7 +388,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
                   <div className="flex items-center gap-1.5">
                     <h3 className="text-xs font-bold text-slate-100">Рекомендация на сегодня</h3>
                     <span className="text-[9px] uppercase font-bold text-cyan-400 bg-cyan-950 px-1.5 py-0.5 rounded border border-cyan-500/30 font-mono">
-                      Smart RPE
+                      по самочувствию
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 mt-0.5">
@@ -414,7 +423,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
 
                 {(todayReadiness.rpeAdjustmentRecommendation || todayReadiness.autoAdjustRecommendation) && (
                   <div className="bg-[#0b1117] p-2.5 rounded-xl border border-cyan-500/30 text-[11px] text-cyan-200 leading-relaxed font-sans">
-                    💡 <span className="font-semibold text-white">ИИ-Авторегуляция:</span> {todayReadiness.rpeAdjustmentRecommendation || todayReadiness.autoAdjustRecommendation}
+                    💡 <span className="font-semibold text-white">Подсказка по нагрузке:</span> {todayReadiness.rpeAdjustmentRecommendation || todayReadiness.autoAdjustRecommendation}
                   </div>
                 )}
 
@@ -430,7 +439,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
             ) : (
               <div className="mt-3 pt-3 border-t border-[#1c2a38] flex items-center justify-between">
                 <p className="text-[11px] text-slate-300 leading-snug">
-                  Заполни сон и самочувствие (30 сек) — ИИ точно скорректирует рабочие веса и RPE!
+                  Заполните сон и самочувствие за 30 секунд — приложение подскажет рабочий вес.
                 </p>
                 <button
                   onClick={() => setShowReadinessModal(true)}
@@ -757,7 +766,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
                         <span>•</span>
                         <span>{rec.durationMinutes} мин</span>
                         <span>•</span>
-                        <span className="text-emerald-400 font-bold">{rec.totalTonnageKg} кг тоннаж</span>
+                        <span className="text-emerald-400 font-bold">{rec.totalTonnageKg} кг общий вес</span>
                       </div>
                     </div>
 
@@ -802,7 +811,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
                           <div className="flex items-center justify-between text-slate-300 font-semibold">
                             <span>{ex.name}</span>
                             <span className="text-emerald-400 font-mono text-[11px]">
-                              1ПМ: {ex.best1RM} кг
+                              максимум: {ex.best1RM} кг
                             </span>
                           </div>
                           <div className="flex flex-wrap gap-1.5 font-mono text-[11px]">
@@ -854,7 +863,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
                   type="text"
                   value={newTitle}
                   onChange={e => setNewTitle(e.target.value)}
-                  placeholder="Спина & Бицепс (Тяговый день)"
+                  placeholder="Спина и бицепс (тяговый день)"
                   required
                   className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
                 />
@@ -1005,7 +1014,7 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
           </div>
         </div>
       )}
-      {/* Daily Readiness & Smart RPE Modal */}
+      {/* Daily readiness modal */}
       {showReadinessModal && (
         <Suspense fallback={null}>
           <DailyReadinessModal

@@ -65,6 +65,17 @@ import {
   updateBattleProgress,
 } from './lib/api';
 import { getFeatureFlags } from './lib/features';
+import {
+  buildMainTourSteps,
+  buildSectionTour,
+  isTourDone,
+  markTourDone,
+  resetAllTours,
+  resetTour,
+  sectionForTab,
+  SECTION_TOUR_IDS,
+  TourId,
+} from './lib/tours';
 import { readLegacyStepLog } from './lib/steps';
 
 import { 
@@ -235,8 +246,15 @@ export default function App() {
   // Interactive Onboarding Tour state.
   // Автостарт включаем только после гидратации данных: иначе тур успевает
   // открыться на пустом экране и показывает не те разделы.
-  const [isTourOpen, setIsTourOpen] = useState(false);
+  const [activeTour, setActiveTour] = useState<TourId | null>(null);
+  /** Прохождение туров хранится по пользователю: в облаке один аккаунт — один набор. */
+  const [userId, setUserId] = useState<string | null>(null);
+  /** Перерисовывает статусы в профиле после сброса или повторного прохождения. */
+  const [tourStateVersion, setTourStateVersion] = useState(0);
+  /** Пользователь открыл марафоны: для них тур запускается не по вкладке, а по под-вкладке. */
+  const [marathonsOpened, setMarathonsOpened] = useState(false);
   const autoTourStartedRef = useRef(false);
+  const autoSectionTourRef = useRef<string | null>(null);
 
   // Отчёт по периодам — модальное окно внутри «Прогресса», не отдельная вкладка
   const [isStatsOpen, setIsStatsOpen] = useState(false);
@@ -342,6 +360,8 @@ export default function App() {
     (async () => {
       const session = await ensureSession();
       if (cancelled) return;
+      // Ключи обучения привязаны к пользователю: у нового аккаунта тур снова первый.
+      if (session.userId) setUserId(session.userId);
       if (!session.authorized) {
         setSyncStatus('local');
         hydratedRef.current = true;
@@ -525,18 +545,54 @@ export default function App() {
     applyTelegramUi();
   }, []);
 
-  // Закрытие тура всегда фиксируем: иначе автостарт откроет его снова.
+  // Закрытие/завершение тура фиксируем для текущего пользователя: иначе
+  // автостарт откроет его снова.
   const handleCloseTour = () => {
-    setIsTourOpen(false);
-    try {
-      localStorage.setItem('getfit_tour_completed', 'true');
-    } catch {
-      /* приватный режим */
+    if (activeTour) {
+      markTourDone(activeTour, userId);
+      setTourStateVersion(version => version + 1);
     }
+    setActiveTour(null);
   };
 
+  /** Повторный показ тура из профиля: сбрасываем только его флаг. */
+  const handleReplayTour = (tourId: TourId) => {
+    resetTour(tourId, userId);
+    setTourStateVersion(version => version + 1);
+    hapticImpact('light');
+    setActiveTour(tourId);
+  };
+
+  /** Полный сброс обучения: сразу показываем основной тур заново. */
+  const handleResetTours = () => {
+    resetAllTours(userId);
+    setTourStateVersion(version => version + 1);
+    autoTourStartedRef.current = true;
+    autoSectionTourRef.current = null;
+    setMarathonsOpened(false);
+    hapticNotify('success');
+    setActiveTour('main');
+  };
+
+  const tourStatus = useMemo(() => {
+    const status = {} as Record<TourId, boolean>;
+    status.main = isTourDone('main', userId);
+    SECTION_TOUR_IDS.forEach(tourId => {
+      status[tourId] = isTourDone(tourId, userId);
+    });
+    return status;
+  }, [userId, tourStateVersion]);
+
+  const activeTourSteps = useMemo(() => {
+    if (!activeTour) return undefined;
+    return activeTour === 'main'
+      ? buildMainTourSteps(features)
+      : buildSectionTour(activeTour);
+  }, [activeTour, features]);
+
   // Кнопка «Назад» в шапке Telegram закрывает верхний модальный экран
-  const anyModalOpen = isTourOpen || isGlobalAiChatOpen || isAiSettingsOpen || isLiveWorkoutOpen || isStatsOpen;
+  const anyModalOpen =
+    Boolean(activeTour) || isGlobalAiChatOpen || isAiSettingsOpen || isLiveWorkoutOpen || isStatsOpen;
   useEffect(() => {
     if (!anyModalOpen) return;
     const cleanup = setupBackButton(true, () => {
@@ -544,31 +600,63 @@ export default function App() {
       else if (isStatsOpen) setIsStatsOpen(false);
       else if (isGlobalAiChatOpen) setIsGlobalAiChatOpen(false);
       else if (isAiSettingsOpen) setIsAiSettingsOpen(false);
-      else if (isTourOpen) handleCloseTour();
+      else if (activeTour) handleCloseTour();
     });
     return () => {
       cleanup();
       setupBackButton(false, () => undefined);
     };
-  }, [anyModalOpen, isLiveWorkoutOpen, isStatsOpen, isGlobalAiChatOpen, isAiSettingsOpen, isTourOpen]);
+  }, [anyModalOpen, isLiveWorkoutOpen, isStatsOpen, isGlobalAiChatOpen, isAiSettingsOpen, activeTour]);
 
-  // Автостарт обучения: ждём гидратацию и свободный экран.
+  // Автостарт основного обучения: ждём гидратацию и свободный экран.
   // Набор шагов фиксируется в момент открытия, поэтому тумблеры не «прыгают».
   useEffect(() => {
     if (!isHydrated || anyModalOpen || autoTourStartedRef.current) return;
-    let completed = true;
-    try {
-      completed = localStorage.getItem('getfit_tour_completed') === 'true';
-    } catch {
-      completed = false;
-    }
-    if (completed) return;
+    if (isTourDone('main', userId)) return;
     const timer = window.setTimeout(() => {
       autoTourStartedRef.current = true;
-      setIsTourOpen(true);
+      setActiveTour('main');
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [isHydrated, anyModalOpen]);
+  }, [isHydrated, anyModalOpen, userId]);
+
+  // Первый заход в дополнительный раздел после основного тура — короткое обучение.
+  useEffect(() => {
+    if (!isHydrated || anyModalOpen) return;
+    const section = sectionForTab(currentTab);
+    if (!section) return;
+    if (!isTourDone('main', userId)) return;
+    if (isTourDone(section, userId)) return;
+    if (autoSectionTourRef.current === section) return;
+    const timer = window.setTimeout(() => {
+      autoSectionTourRef.current = section;
+      setActiveTour(section);
+    }, 550);
+    return () => window.clearTimeout(timer);
+  }, [isHydrated, currentTab, userId, anyModalOpen]);
+
+  // Если пользователь ушёл с «Тренировок», марафоны больше не считаются открытыми:
+  // обучение запустится при следующем осознанном заходе в под-вкладку.
+  useEffect(() => {
+    if (currentTab !== 'workouts') setMarathonsOpened(false);
+  }, [currentTab]);
+
+  // Марафоны живут под-вкладкой внутри «Тренировок», поэтому сигнал приходит
+  // из WorkoutsHub, а не из смены нижней вкладки.
+  useEffect(() => {
+    if (!isHydrated || anyModalOpen || !marathonsOpened || !features.marathons) return;
+    // Марафоны живут внутри «Тренировок»: не запускаем тур, если пользователь
+    // уже ушёл с этой вкладки.
+    if (currentTab !== 'workouts') return;
+    if (!isTourDone('main', userId)) return;
+    if (isTourDone('marathons', userId)) return;
+    if (autoSectionTourRef.current === 'marathons') return;
+    const timer = window.setTimeout(() => {
+      autoSectionTourRef.current = 'marathons';
+      setActiveTour('marathons');
+    }, 550);
+    return () => window.clearTimeout(timer);
+  }, [isHydrated, marathonsOpened, features.marathons, userId, anyModalOpen, currentTab]);
 
   // Уведомление о зарубе само скрывается (со ссылкой держим дольше — её копируют)
   useEffect(() => {
@@ -713,7 +801,12 @@ export default function App() {
   ] as const;
 
   /** Копирует полный слепок данных в буфер обмена (в WebView скачивание файла ненадёжно). */
-  const handleExportData = async (): Promise<{ ok: boolean; size?: number; error?: string }> => {
+  const handleExportData = async (): Promise<{
+    ok: boolean;
+    size?: number;
+    text?: string;
+    error?: string;
+  }> => {
     try {
       const payload = {
         app: 'GetFitBot',
@@ -723,8 +816,8 @@ export default function App() {
       };
       const text = JSON.stringify(payload, null, 2);
       const copied = await copyToClipboard(text);
-      if (!copied) return { ok: false, error: 'Не удалось скопировать — выдели текст вручную' };
-      return { ok: true, size: text.length };
+      if (!copied) return { ok: false, text, error: 'Не удалось скопировать — скачайте файл' };
+      return { ok: true, size: text.length, text };
     } catch (err: any) {
       return { ok: false, error: err?.message || 'Ошибка экспорта' };
     }
@@ -800,7 +893,7 @@ export default function App() {
     const nowIso = new Date().toISOString();
     const newRecord: WorkoutRecord = {
       id: `rec_nli_${Date.now()}`,
-      title: 'ИИ-Лог (NLI / Голос)',
+      title: 'Запись через ИИ (голос или текст)',
       date: 'Сегодня',
       startedAt: nowIso,
       completedAt: nowIso,
@@ -887,9 +980,9 @@ export default function App() {
         sleepQuality,
         readinessScore,
         overallReadinessScore: readinessScore,
-        autoAdjustRecommendation: sleepHours < 6.5 
-          ? 'Недосып: снизь интенсивность или RPE рабочих подходов на 5-10%.' 
-          : 'Высокая готовность ЦНС: отличный день для силовых подходов!',
+        autoAdjustRecommendation: sleepHours < 6.5
+          ? 'Недосып: снизьте рабочий вес или оставьте один подход в запасе.'
+          : 'Нервная система восстановлена: хороший день для силовых подходов!',
       },
     }));
   };
@@ -906,9 +999,9 @@ export default function App() {
         endDate: new Date(Date.now() + (durationDays || 21) * 86400000).toISOString().split('T')[0],
         durationDays: durationDays || 21,
         status: 'active',
-        dependentMetric: { name: dependentMetric || '1ПМ Жим', unit: 'кг', type: 'performance' },
-        independentMetrics: (independentMetrics || ['Креатин 5г/день']).map(m => ({ name: m, unit: 'ед', targetValue: 1, type: 'supplement' })),
-        baselineValue: 'База',
+        dependentMetric: { name: dependentMetric || 'Лучший вес в жиме лёжа', unit: 'кг', type: 'performance' },
+        independentMetrics: (independentMetrics || ['Креатин 5 г в день']).map(m => ({ name: m, unit: 'ед', targetValue: 1, type: 'supplement' })),
+        baselineValue: 'Базовый замер',
         dailyLogs: {},
       };
       list.unshift(newExp);
@@ -970,7 +1063,7 @@ export default function App() {
           onOpenLiveWorkout={() => setIsLiveWorkoutOpen(true)}
           onProfileClick={() => setCurrentTab('profile')}
           onOpenAiSettings={() => setIsAiSettingsOpen(true)}
-          onOpenTutorial={() => setIsTourOpen(true)}
+          onOpenTutorial={() => setActiveTour('main')}
         />
 
         {/* Постоянное предупреждение о хранилище: в потоке, а не поверх контента */}
@@ -1036,6 +1129,7 @@ export default function App() {
                   onSaveTemplate={handleSaveCustomTemplate}
                   features={features}
                   openTemplatesSignal={templateOpenSignal}
+                  onMarathonOpened={() => setMarathonsOpened(true)}
                 />
               )}
 
@@ -1136,7 +1230,12 @@ export default function App() {
                   onAddBattle={handleAddBattle}
                   onUpdateBattleProgress={handleUpdateBattleProgress}
                   onOpenAiSettings={() => setIsAiSettingsOpen(true)}
-                  onRestartTour={() => setIsTourOpen(true)}
+                  activeTour={activeTour}
+                  tourStatus={tourStatus}
+                  onReplayTour={handleReplayTour}
+                  onResetTours={handleResetTours}
+                  syncStatus={syncStatus}
+                  storageMode={storageMode}
                   aiProviders={aiProviders}
                 />
               )}
@@ -1145,18 +1244,18 @@ export default function App() {
           )}
         </main>
 
-        {/* Global Floating AI Concierge / NLI Button (when live workout is not actively taking over) */}
+        {/* Global AI assistant button (when a live workout is not open) */}
         {!isLiveWorkoutOpen && (
           <button
             onClick={() => setIsGlobalAiChatOpen(true)}
             className="fixed bottom-[72px] right-4 sm:right-[max(1rem,calc(50%-224px))] z-30 h-12 px-3.5 rounded-2xl bg-gradient-to-tr from-emerald-600 to-emerald-400 text-slate-950 flex items-center gap-2 shadow-xl shadow-emerald-500/25 hover:scale-105 active:scale-95 transition-all border border-emerald-300/40 group"
-            title="Голосовой и текстовый ввод тренировок, метрик и сна"
+            title="Голосовой и текстовый ввод тренировок, показателей и сна"
           >
             <div className="relative">
               <Bot className="w-5 h-5 group-hover:rotate-6 transition-transform text-slate-950" />
               <Mic className="w-3 h-3 text-slate-950 absolute -bottom-1 -right-1" />
             </div>
-            <span className="text-xs font-bold tracking-tight hidden sm:inline text-slate-950">ИИ-Логгер</span>
+            <span className="text-xs font-bold tracking-tight hidden sm:inline text-slate-950">ИИ-помощник</span>
             <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse" />
           </button>
         )}
@@ -1189,13 +1288,15 @@ export default function App() {
         {/* Interactive Onboarding First-Time User Guide & Help Tour */}
         {suspense(
         <InteractiveTour
-          isOpen={isTourOpen}
+          key={activeTour ?? 'idle'}
+          isOpen={Boolean(activeTour)}
+          steps={activeTourSteps}
+          tourId={activeTour ?? 'main'}
           onClose={handleCloseTour}
           onNavigateTab={(tab) => {
             setIsLiveWorkoutOpen(false);
             setCurrentTab(tab);
           }}
-          features={features}
         />
         )}
 

@@ -34,12 +34,46 @@ interface ResearchLabViewProps {
   onUpdateUser?: (updated: Partial<UserProfile>) => void;
 }
 
+/** Категории и типы замера хранятся латиницей, но показываем их по-русски. */
+const METRIC_CATEGORY_LABELS: Record<string, string> = {
+  recovery: 'Восстановление',
+  supplement: 'Добавки',
+  lifestyle: 'Образ жизни',
+  nutrition: 'Питание',
+  performance: 'Результат',
+  physical: 'Тело',
+  sleep: 'Сон',
+  hydration: 'Вода',
+};
+
+const METRIC_TRACKING_LABELS: Record<string, string> = {
+  scale_1_10: 'Шкала 1–10',
+  boolean: 'Да / нет',
+  number: 'Число',
+};
+
+const metricCategoryLabel = (value?: string): string =>
+  value ? METRIC_CATEGORY_LABELS[value] || value : 'Без категории';
+
+const metricTrackingLabel = (value?: string): string =>
+  value ? METRIC_TRACKING_LABELS[value] || value : 'Число';
+
+const BLOCK_TYPE_LABELS: Record<string, string> = {
+  strength: 'Сила',
+  hypertrophy: 'Рост мышц',
+  deload: 'Разгрузка',
+  recomp: 'Перестройка тела',
+};
+
+const blockTypeLabel = (value?: string): string =>
+  value ? BLOCK_TYPE_LABELS[value] || value : 'Новый блок';
+
 const EXPERIMENT_TEMPLATES = [
   {
-    title: '💧 Гидратация 3.5л + Сон 8ч → 1ПМ в жиме лежа',
-    hypothesis: 'Увеличение суточного потребления воды до 3.5л и стабилизация сна 8ч увеличит 1ПМ в жиме лежа на 3-5% за 21 день.',
+    title: '💧 Вода 3,5 л + сон 8 ч → лучший вес в жиме лёжа',
+    hypothesis: 'Если пить до 3,5 л воды в день и спать 8 часов, лучший вес в жиме лёжа вырастет на 3–5% за 21 день.',
     durationDays: 21,
-    dependentMetric: { name: '1ПМ Жим лежа', unit: 'кг', type: 'performance' as const },
+    dependentMetric: { name: 'Лучший вес в жиме лёжа', unit: 'кг', type: 'performance' as const },
     independentMetrics: [
       { name: 'Вода', unit: 'литры', targetValue: 3.5, type: 'hydration' as const },
       { name: 'Сон', unit: 'часы', targetValue: 8, type: 'sleep' as const },
@@ -47,41 +81,41 @@ const EXPERIMENT_TEMPLATES = [
     baselineValue: '100 кг',
   },
   {
-    title: '⚡ Креатин моногидрат 5г/день → Тоннаж и повторения',
-    hypothesis: 'Ежедневный прием 5г креатина увеличит суммарный рабочий тоннаж на 7-10% в базовых движениях к 28 дню.',
+    title: '⚡ Креатин 5 г в день → общий вес и повторения',
+    hypothesis: 'Ежедневный приём 5 г креатина увеличит общий поднятый вес в базовых движениях на 7–10% к 28-му дню.',
     durationDays: 28,
-    dependentMetric: { name: 'Рабочий тоннаж', unit: 'кг', type: 'volume' as const },
+    dependentMetric: { name: 'Общий вес за тренировку', unit: 'кг', type: 'volume' as const },
     independentMetrics: [
       { name: 'Креатин', unit: 'г', targetValue: 5, type: 'supplement' as const },
     ],
     baselineValue: '12 500 кг за тренировку',
   },
   {
-    title: '☕ Кофеин 200мг за 35 мин до тренировки → Снижение RPE',
-    hypothesis: 'Прием кофеина снизит субъективное ощущение нагрузки (RPE) на тяжелых подходах с 9.0 до 8.0 при том же рабочем весе.',
+    title: '☕ Кофеин 200 мг за 35 минут → легче переносить нагрузку',
+    hypothesis: 'Кофеин перед тренировкой снизит ощущение тяжести на рабочих подходах с 9 до 8 баллов при том же весе.',
     durationDays: 14,
-    dependentMetric: { name: 'Средний RPE тяжелых подходов', unit: 'RPE (1-10)', type: 'rpe' as const },
+    dependentMetric: { name: 'Средняя тяжесть тяжёлых подходов', unit: 'баллы (1–10)', type: 'rpe' as const },
     independentMetrics: [
       { name: 'Кофеин', unit: 'мг', targetValue: 200, type: 'supplement' as const },
     ],
-    baselineValue: 'RPE 8.8',
+    baselineValue: '8,8 из 10',
   },
   {
-    title: '🥩 Белок 2.0г/кг веса тела → Скорость восстановления мышц',
-    hypothesis: 'Увеличение белка до 2.0г/кг снизит мышечную крепатуру через 48 часов после тренировки ног и ускорит суперкомпенсацию.',
+    title: '🥩 Белок 2 г на кг веса → восстановление мышц',
+    hypothesis: 'Если поднять белок до 2 г на кг веса, болезненность мышц через 48 часов после тренировки ног станет ниже.',
     durationDays: 21,
-    dependentMetric: { name: 'Крепатура через 48ч', unit: 'баллы (1-10)', type: 'recovery' as const },
+    dependentMetric: { name: 'Болезненность мышц через 48 ч', unit: 'баллы (1–10)', type: 'recovery' as const },
     independentMetrics: [
       { name: 'Белок', unit: 'г/день', targetValue: 170, type: 'nutrition' as const },
     ],
-    baselineValue: 'Крепатура 7/10',
+    baselineValue: '7 из 10',
   },
 ];
 
 const DEFAULT_TRAINING_BLOCKS: TrainingBlock[] = [
   {
     id: 'block_hypertrophy_1',
-    title: 'Блок гипертрофии и накопления объема',
+    title: 'Блок роста мышц и объёма',
     type: 'hypertrophy',
     startDate: new Date(Date.now() - 35 * 86400000).toISOString().split('T')[0],
     endDate: new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0],
@@ -89,12 +123,12 @@ const DEFAULT_TRAINING_BLOCKS: TrainingBlock[] = [
     completedWorkoutsCount: 12,
     totalTonnage: 142800,
     averageRpe: 7.8,
-    notes: 'Отличный рост объема грудных и спины, базовый вес вырос на 2.5 кг.',
+    notes: 'Хороший рост объёма груди и спины, рабочий вес вырос на 2,5 кг.',
     isCurrent: false,
   },
   {
     id: 'block_strength_peak',
-    title: 'Силовой пик (Интенсификация 1ПМ)',
+    title: 'Силовой пик',
     type: 'strength',
     startDate: new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0],
     endDate: new Date(Date.now() + 21 * 86400000).toISOString().split('T')[0],
@@ -102,7 +136,7 @@ const DEFAULT_TRAINING_BLOCKS: TrainingBlock[] = [
     completedWorkoutsCount: 3,
     totalTonnage: 38200,
     averageRpe: 8.6,
-    notes: 'Выход на пиковые силовые к нормативу WRPF.',
+    notes: 'Выход на пиковые силовые к нормативам WRPF.',
     isCurrent: true,
   },
 ];
@@ -123,13 +157,13 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
     return [
       {
         id: 'exp_hydration_bench',
-        title: '💧 Гидратация 3.5л + Сон 8ч → 1ПМ в жиме лежа',
-        hypothesis: 'Увеличение суточного потребления воды до 3.5л и стабилизация сна 8ч увеличит 1ПМ в жиме лежа на 3-5% за 21 день.',
+        title: '💧 Вода 3,5 л + сон 8 ч → лучший вес в жиме лёжа',
+        hypothesis: 'Если пить до 3,5 л воды в день и спать 8 часов, лучший вес в жиме лёжа вырастет на 3–5% за 21 день.',
         startDate: new Date(Date.now() - 9 * 86400000).toISOString().split('T')[0],
         endDate: new Date(Date.now() + 12 * 86400000).toISOString().split('T')[0],
         durationDays: 21,
         status: 'active',
-        dependentMetric: { name: '1ПМ Жим лежа', unit: 'кг', type: 'performance' },
+        dependentMetric: { name: 'Лучший вес в жиме лёжа', unit: 'кг', type: 'performance' },
         independentMetrics: [
           { name: 'Вода', unit: 'л', targetValue: 3.5, type: 'hydration' },
           { name: 'Сон', unit: 'ч', targetValue: 8, type: 'sleep' },
@@ -184,6 +218,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
 
   // Modal States
   const [showNewExperimentModal, setShowNewExperimentModal] = useState(false);
+  const [showNewMetricModal, setShowNewMetricModal] = useState(false);
   const [selectedExperiment, setSelectedExperiment] = useState<Experiment | null>(experiments[0] || null);
   const [showDailyCheckinModal, setShowDailyCheckinModal] = useState(false);
 
@@ -191,6 +226,13 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
   const [logIndependent, setLogIndependent] = useState<Record<string, number>>({});
   const [logDependent, setLogDependent] = useState<number>(100);
   const [logNotes, setLogNotes] = useState('');
+
+  // New custom metric form state
+  const [metricName, setMetricName] = useState('');
+  const [metricCategory, setMetricCategory] = useState('physical');
+  const [metricTracking, setMetricTracking] = useState('scale_1_10');
+  const [metricUnit, setMetricUnit] = useState('баллы (1–10)');
+  const [metricError, setMetricError] = useState('');
 
   // AI Analysis state
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -315,6 +357,40 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
     setShowDailyCheckinModal(false);
   };
 
+  const handleCreateMetric = (event: React.FormEvent) => {
+    event.preventDefault();
+    const name = metricName.trim();
+    if (!name) {
+      setMetricError('Введите название показателя');
+      return;
+    }
+    if (customMetrics.some(metric => metric.name.toLowerCase() === name.toLowerCase())) {
+      setMetricError('Такой показатель уже есть');
+      return;
+    }
+    const metric: CustomMetric = {
+      id: `cm_${Date.now().toString(36)}`,
+      name,
+      category: metricCategory,
+      trackingType: metricTracking,
+      unit: metricTracking === 'boolean' ? 'да/нет' : metricUnit.trim() || 'баллы (1–10)',
+      createdAt: new Date().toISOString(),
+    };
+    setCustomMetrics(prev => [...prev, metric]);
+    setMetricName('');
+    setMetricCategory('physical');
+    setMetricTracking('scale_1_10');
+    setMetricUnit('баллы (1–10)');
+    setMetricError('');
+    setShowNewMetricModal(false);
+  };
+
+  const handleDeleteMetric = (id: string) => {
+    if (confirm('Удалить этот показатель? Записанные значения тоже исчезнут.')) {
+      setCustomMetrics(prev => prev.filter(metric => metric.id !== id));
+    }
+  };
+
   const handleRunAiAnalysis = async (exp: Experiment) => {
     setIsAnalyzing(true);
     setAiAnalysisResult(null);
@@ -371,13 +447,13 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-extrabold text-white">Research Lab & Biohacking</h2>
+              <h2 className="text-base font-extrabold text-white">Лаборатория привычек</h2>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
-                N=1 Наука
+                Проверка на себе
               </span>
             </div>
             <p className="text-xs text-slate-300 mt-0.5">
-              Тестируй гипотезы на себе, управляй циклами периодизации и находи скрытые корреляции
+              Проверяйте привычки на себе, ведите циклы тренировок и находите связи между показателями
             </p>
           </div>
         </div>
@@ -387,6 +463,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
       <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-900/80 rounded-xl border border-slate-800">
         <button
           type="button"
+          id="tour-lab-tab-experiments"
           onClick={() => setSubTab('experiments')}
           className={`py-2 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
             subTab === 'experiments'
@@ -400,6 +477,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
 
         <button
           type="button"
+          id="tour-lab-tab-periodization"
           onClick={() => setSubTab('periodization')}
           className={`py-2 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
             subTab === 'periodization'
@@ -408,11 +486,12 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
           }`}
         >
           <Layers className="w-3.5 h-3.5" />
-          <span>Периодизация</span>
+          <span>Циклы</span>
         </button>
 
         <button
           type="button"
+          id="tour-lab-tab-metrics"
           onClick={() => setSubTab('custom_metrics')}
           className={`py-2 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
             subTab === 'custom_metrics'
@@ -421,16 +500,16 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
           }`}
         >
           <Sliders className="w-3.5 h-3.5" />
-          <span>Метрики & R</span>
+          <span>Свои показатели</span>
         </button>
       </div>
 
       {/* TAB 1: EXPERIMENTS (N=1 Self Studies) */}
       {subTab === 'experiments' && (
-        <div className="space-y-4">
+        <div id="tour-lab-experiments" className="space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-              Твои исследования ({experiments.length})
+              Ваши исследования ({experiments.length})
             </span>
             <button
               type="button"
@@ -461,7 +540,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/60">
-                        {exp.status === 'active' ? '● В процессе' : '✓ Завершен'}
+                        {exp.status === 'active' ? '● В процессе' : '✓ Завершён'}
                       </span>
                       <h3 className="text-sm font-bold text-white mt-1.5">{exp.title}</h3>
                     </div>
@@ -520,7 +599,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
                         ) : (
                           <BrainCircuit className="w-3.5 h-3.5" />
                         )}
-                        ИИ-Анализ N=1
+                        ИИ-разбор эксперимента
                       </button>
                     </div>
                   )}
@@ -531,7 +610,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-cyan-400 flex items-center gap-1.5">
                           <Sparkles className="w-3.5 h-3.5" />
-                          Вердикт Research Lab ({aiAnalysisResult.aiProvider === 'groq' ? 'Groq' : aiAnalysisResult.aiProvider === 'gemini' ? 'Gemini' : aiAnalysisResult.aiProvider === 'heuristic' ? 'встроенный разбор' : 'ИИ'})
+                          Вывод по эксперименту ({aiAnalysisResult.aiProvider === 'groq' ? 'Groq' : aiAnalysisResult.aiProvider === 'gemini' ? 'Gemini' : aiAnalysisResult.aiProvider === 'heuristic' ? 'встроенный разбор' : 'ИИ'})
                         </span>
                         <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                           {aiAnalysisResult.effectPercent > 0 ? `+${aiAnalysisResult.effectPercent}%` : `${aiAnalysisResult.effectPercent}%`} эффект
@@ -541,7 +620,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
                         {aiAnalysisResult.summary}
                       </p>
                       <div className="text-[11px] text-cyan-300 font-mono bg-cyan-950/50 p-2 rounded-lg border border-cyan-800/40">
-                        📊 Статистика: {aiAnalysisResult.statsText}
+                        📊 Что показали замеры: {aiAnalysisResult.statsText}
                       </div>
                       {aiAnalysisResult.recommendations && (
                         <div className="text-slate-300 text-[11px] pt-1">
@@ -560,13 +639,13 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
 
       {/* TAB 2: PERIODIZATION & TRAINING BLOCKS */}
       {subTab === 'periodization' && (
-        <div className="space-y-4">
+        <div id="tour-lab-periodization" className="space-y-4">
           <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/30 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <Layers className="w-5 h-5 text-amber-400 shrink-0" />
               <div>
-                <h3 className="text-xs font-bold text-white">Управление циклами и волнами</h3>
-                <p className="text-[11px] text-slate-300">Чередование фаз объема, силового пика и делода</p>
+                <h3 className="text-xs font-bold text-white">Циклы тренировок</h3>
+                <p className="text-[11px] text-slate-300">Чередование объёма, силового пика и разгрузки</p>
               </div>
             </div>
             <button
@@ -589,7 +668,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
                   Рекомендация методиста GetFit
                 </span>
                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase">
-                  Следующий блок: {periodizationRecommendation.nextBlockType}
+                  Следующий блок: {blockTypeLabel(periodizationRecommendation.nextBlockType)}
                 </span>
               </div>
               <p className="text-slate-200 leading-relaxed">
@@ -598,10 +677,10 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
               <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
                 <div className="p-2 rounded-lg bg-slate-950 border border-slate-800">
                   <span className="text-slate-400 block">Длительность:</span>
-                  <span className="font-bold text-white">{periodizationRecommendation.recommendedDurationWeeks} недели</span>
+                  <span className="font-bold text-white">{periodizationRecommendation.recommendedDurationWeeks} нед.</span>
                 </div>
                 <div className="p-2 rounded-lg bg-slate-950 border border-slate-800">
-                  <span className="text-slate-400 block">Интенсивность:</span>
+                  <span className="text-slate-400 block">Тяжесть подходов:</span>
                   <span className="font-bold text-amber-400">{periodizationRecommendation.intensityRange}</span>
                 </div>
               </div>
@@ -632,7 +711,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
                       ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
                       : 'bg-slate-800 text-slate-400 border-slate-700'
                   }`}>
-                    {block.isCurrent ? 'Текущий активный блок' : 'Завершенный блок'}
+                    {block.isCurrent ? 'Текущий активный блок' : 'Завершённый блок'}
                   </span>
                   <span className="text-xs font-semibold text-slate-400">
                     {block.startDate} — {block.endDate}
@@ -644,7 +723,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
 
                 <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-slate-800/80 text-center">
                   <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-800">
-                    <span className="text-[10px] text-slate-400 block">Тоннаж</span>
+                    <span className="text-[10px] text-slate-400 block">Общий вес</span>
                     <span className="text-xs font-extrabold text-amber-400">
                       {(block.totalTonnage || 0).toLocaleString('ru-RU')} кг
                     </span>
@@ -656,9 +735,9 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
                     </span>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-900/60 border border-slate-800">
-                    <span className="text-[10px] text-slate-400 block">Ср. RPE</span>
+                    <span className="text-[10px] text-slate-400 block">Средняя тяжесть</span>
                     <span className="text-xs font-extrabold text-emerald-400">
-                      {block.averageRpe || 8.0}
+                      {block.averageRpe || 8.0} / 10
                     </span>
                   </div>
                 </div>
@@ -670,46 +749,188 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
 
       {/* TAB 3: CUSTOM METRICS & CORRELATIONS */}
       {subTab === 'custom_metrics' && (
-        <div className="space-y-4">
-          <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30">
-            <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
-              <Sliders className="w-4 h-4 text-emerald-400" />
-              Конструктор персональных биомаркеров
-            </h3>
-            <p className="text-[11px] text-slate-300 mt-0.5">
-              Фиксируй любые факторы (боль, кофеин, сон, стресс, сауна) и сопоставляй с ростом силовых
-            </p>
+        <div id="tour-lab-metrics" className="space-y-4">
+          <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Sliders className="w-4 h-4 text-emerald-400" />
+                Свои показатели
+              </h3>
+              <p className="text-[11px] text-slate-300 mt-0.5">
+                Записывайте любые факторы (боль, кофеин, сон, стресс, сауна) и сравнивайте их с результатами тренировок
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowNewMetricModal(true)}
+              className="shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition flex items-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Добавить
+            </button>
           </div>
 
           <div className="space-y-2.5">
             {customMetrics.map(cm => (
               <div
                 key={cm.id}
-                className="p-3 bg-[#0e141a] rounded-xl border border-slate-800 flex items-center justify-between"
+                className="p-3 bg-[#0e141a] rounded-xl border border-slate-800 flex items-center justify-between gap-2"
               >
-                <div>
-                  <div className="text-xs font-bold text-white">{cm.name}</div>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-white truncate">{cm.name}</div>
                   <div className="text-[11px] text-slate-400 mt-0.5">
-                    Категория: {cm.category} • Единица: {cm.unit}
+                    Категория: {metricCategoryLabel(cm.category)} • Единица: {cm.unit}
                   </div>
                 </div>
-                <span className="text-xs font-mono px-2 py-1 rounded bg-slate-800 text-emerald-400 border border-slate-700">
-                  {cm.trackingType}
-                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[10px] px-2 py-1 rounded bg-slate-800 text-emerald-400 border border-slate-700">
+                    {metricTrackingLabel(cm.trackingType)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteMetric(cm.id)}
+                    aria-label={`Удалить показатель «${cm.name}»`}
+                    className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
 
+          {customMetrics.length === 0 && (
+            <div className="text-center py-8 text-slate-500 text-xs">
+              Пока нет своих показателей. Добавьте первый — например, «Боль в плече» или «Кофеин».
+            </div>
+          )}
+
           {/* Correlation Insight Sample */}
           <div className="p-4 rounded-xl bg-[#111922] border border-cyan-500/30 text-xs space-y-2">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-cyan-400">Корреляционная матрица</span>
-              <span className="text-[11px] font-mono text-emerald-400 font-bold">r = +0.81 (Высокая)</span>
+              <span className="font-bold text-cyan-400">Что с чем связано</span>
+              <span className="text-[11px] font-mono text-emerald-400 font-bold">Сильная связь</span>
             </div>
             <p className="text-slate-300 leading-relaxed">
-              Обнаружена сильная прямая связь между <strong>качеством сна (≥7.5 часов)</strong> и <strong>весом первого рабочего подхода в жиме</strong>. В дни с качественным сном тоннаж был в среднем на 8.5% выше.
+              Заметна связь: когда сон был не короче <strong>7,5 часов</strong>, рабочий вес в жиме лёжа был выше. В такие дни общий поднятый вес оказывался в среднем на <strong>8,5% больше</strong>.
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Modal: New custom metric */}
+      {showNewMetricModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <form
+            onSubmit={handleCreateMetric}
+            className="w-full max-w-md bg-[#0f1720] border border-[#1e293b] rounded-2xl p-5 shadow-2xl space-y-4"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div>
+                <h3 className="text-sm font-bold text-white">Новый показатель</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Что будем отслеживать и сравнивать с тренировками?
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNewMetricModal(false);
+                  setMetricError('');
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div>
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                Название
+              </label>
+              <input
+                type="text"
+                value={metricName}
+                onChange={event => {
+                  setMetricName(event.target.value);
+                  setMetricError('');
+                }}
+                placeholder="Например: боль в плече, кофеин, стресс"
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                autoFocus
+              />
+              {metricError && <p className="text-[10px] text-rose-400 mt-1">{metricError}</p>}
+            </div>
+
+            <div>
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                Категория
+              </label>
+              <select
+                value={metricCategory}
+                onChange={event => setMetricCategory(event.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+              >
+                <option value="physical">Тело и самочувствие</option>
+                <option value="recovery">Восстановление</option>
+                <option value="supplement">Добавки</option>
+                <option value="nutrition">Питание</option>
+                <option value="lifestyle">Образ жизни</option>
+                <option value="performance">Результат тренировки</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                Как записывать
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'scale_1_10', label: 'Шкала 1–10' },
+                  { id: 'number', label: 'Число' },
+                  { id: 'boolean', label: 'Да / нет' },
+                ].map(option => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => {
+                      setMetricTracking(option.id);
+                      setMetricUnit(option.id === 'boolean' ? 'да/нет' : 'баллы (1–10)');
+                    }}
+                    className={`px-2 py-2 rounded-lg text-[11px] font-semibold transition ${
+                      metricTracking === option.id
+                        ? 'bg-emerald-500 text-slate-950'
+                        : 'bg-slate-900 text-slate-400 border border-slate-700'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {metricTracking !== 'boolean' && (
+              <div>
+                <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                  Единица измерения
+                </label>
+                <input
+                  type="text"
+                  value={metricUnit}
+                  onChange={event => setMetricUnit(event.target.value)}
+                  placeholder="баллы, мг, часы, кг"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-bold transition"
+            >
+              Добавить показатель
+            </button>
+          </form>
         </div>
       )}
 
@@ -720,7 +941,7 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <FlaskConical className="w-4 h-4 text-cyan-400" />
-                Выбери протокол эксперимента
+                Выберите готовый эксперимент
               </h3>
               <button
                 onClick={() => setShowNewExperimentModal(false)}

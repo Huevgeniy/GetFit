@@ -288,6 +288,125 @@ check(
   JSON.stringify(smallCard),
 );
 
+// 16. Конфигурация туров: размещение разделов и существование целей
+const toursOutfile = path.join(outDir, 'tours.cjs');
+buildSync({
+  entryPoints: [path.join(root, 'src', 'lib', 'tours.ts')],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  outfile: toursOutfile,
+  logLevel: 'silent',
+});
+const {
+  buildMainTourSteps,
+  buildSectionTour,
+  SECTION_TOUR_IDS,
+} = require_(toursOutfile);
+
+const flags = (enabled = []) => ({
+  marathons: enabled.includes('marathons'),
+  battles: enabled.includes('battles'),
+  discipline: enabled.includes('discipline'),
+  ranks: enabled.includes('ranks'),
+  lab: enabled.includes('lab'),
+  periodization: enabled.includes('periodization'),
+});
+const placementOf = (steps) =>
+  steps.find((step) => step.id === 'optional-sections' || step.id === 'optional-off');
+
+const noSections = placementOf(buildMainTourSteps(flags()));
+check(
+  'без дополнительных разделов тур ведёт в настройки профиля',
+  noSections && noSections.id === 'optional-off' && noSections.tab === 'profile' &&
+    noSections.target === '#feature-settings',
+  JSON.stringify(noSections),
+);
+
+const onlyMarathons = placementOf(buildMainTourSteps(flags(['marathons'])));
+check(
+  'только марафоны: подсвечивается вкладка «Тренировки»',
+  onlyMarathons && onlyMarathons.tab === 'workouts' &&
+    onlyMarathons.target === '#tour-tab-workouts',
+  JSON.stringify(onlyMarathons),
+);
+
+const onlyBattlePlacement = placementOf(buildMainTourSteps(flags(['battles'])));
+check(
+  'только зарубы: подсвечивается их вкладка внизу',
+  onlyBattlePlacement && onlyBattlePlacement.tab === 'battles' &&
+    onlyBattlePlacement.target === '#tour-tab-battles',
+  JSON.stringify(onlyBattlePlacement),
+);
+
+const marathonsAndBattles = placementOf(buildMainTourSteps(flags(['marathons', 'battles'])));
+check(
+  'марафоны + зарубы: подсвечивается вкладка заруб',
+  marathonsAndBattles && marathonsAndBattles.target === '#tour-tab-battles' &&
+    marathonsAndBattles.bullets.some((line) => line.includes('Марафоны целей')),
+  JSON.stringify(marathonsAndBattles),
+);
+
+const marathonsAndDiscipline = placementOf(buildMainTourSteps(flags(['marathons', 'discipline'])));
+check(
+  'марафоны + дисциплина: подсвечивается вкладка дисциплины',
+  marathonsAndDiscipline && marathonsAndDiscipline.tab === 'discipline' &&
+    marathonsAndDiscipline.target === '#tour-tab-discipline' &&
+    marathonsAndDiscipline.bullets.some((line) => line.includes('Марафоны целей')),
+  JSON.stringify(marathonsAndDiscipline),
+);
+
+const manySections = placementOf(
+  buildMainTourSteps(flags(['marathons', 'battles', 'discipline', 'lab'])),
+);
+check(
+  'несколько разделов: подсвечивается кнопка «Ещё»',
+  manySections && manySections.target === '#tour-tab-more' && !manySections.tab &&
+    manySections.bullets.some((line) => line.includes('Лаборатория')) &&
+    manySections.bullets.some((line) => line.includes('Зарубы')),
+  JSON.stringify(manySections),
+);
+
+const allSteps = SECTION_TOUR_IDS.flatMap((id) => buildSectionTour(id));
+const sectionIds = allSteps.map((step) => step.id);
+check(
+  'у каждого дополнительного раздела есть свой тур из трёх шагов',
+  SECTION_TOUR_IDS.every((id) => buildSectionTour(id).length >= 3),
+  JSON.stringify(SECTION_TOUR_IDS.map((id) => [id, buildSectionTour(id).length])),
+);
+check(
+  'шаги всех туров имеют уникальные id',
+  new Set([...buildMainTourSteps(flags()).map((step) => step.id), ...sectionIds]).size ===
+    buildMainTourSteps(flags()).length + sectionIds.length,
+);
+
+const sourceFiles = fs
+  .readdirSync(path.join(root, 'src'), { recursive: true })
+  .filter((file) => typeof file === 'string' && file.endsWith('.tsx'))
+  .map((file) => fs.readFileSync(path.join(root, 'src', file), 'utf-8'))
+  .join('\n');
+const allTours = [
+  buildMainTourSteps(flags()),
+  buildMainTourSteps(flags(['marathons', 'battles', 'discipline', 'ranks', 'lab', 'periodization'])),
+  ...SECTION_TOUR_IDS.map((id) => buildSectionTour(id)),
+];
+const selectors = new Set();
+for (const step of allTours.flat()) {
+  if (typeof step.target === 'string' && step.target.startsWith('#')) {
+    selectors.add(step.target);
+  }
+  if (step.prepare) {
+    const text = step.prepare.toString();
+    for (const match of text.matchAll(/#[a-zA-Z0-9_-]+/g)) selectors.add(match[0]);
+  }
+}
+const missing = [...selectors].filter((selector) => !sourceFiles.includes(selector.slice(1)));
+check(
+  'все цели и кнопки туров существуют в разметке',
+  missing.length === 0,
+  missing.join(', '),
+);
+
 fs.rmSync(outDir, { recursive: true, force: true });
 console.log(`\n${failures === 0 ? 'ГЕОМЕТРИЯ ТУРА ПРОХОДИТ' : `ПРОВАЛОВ: ${failures}`}`);
 process.exit(failures === 0 ? 0 : 1);

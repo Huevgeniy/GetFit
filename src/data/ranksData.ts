@@ -405,13 +405,13 @@ export const SPORT_MOVEMENTS: SportMovement[] = [
   },
 
   // ==========================================
-  // ОФП / Street Workout / Фитнес
+  // Общая форма / Street Workout / Фитнес
   // ==========================================
   {
     id: 'bodyweight_pullups',
-    name: 'Подтягивания на максимум (ОФП / Фитнес)',
+    name: 'Подтягивания на максимум (общая форма)',
     category: 'fitness',
-    federation: 'ОФП / Фитнес',
+    federation: 'Общая форма / Фитнес',
     unit: 'раз',
     isLowerBetter: false,
     standardRanks: [
@@ -421,16 +421,16 @@ export const SPORT_MOVEMENTS: SportMovement[] = [
       { level: '3_adult', title: 'III Взрослый разряд', shortTitle: 'III разряд', requiredValue: 20, unit: 'раз' },
       { level: '2_adult', title: 'II Взрослый разряд', shortTitle: 'II разряд', requiredValue: 24, unit: 'раз' },
       { level: '1_adult', title: 'I Взрослый разряд', shortTitle: 'I разряд', requiredValue: 28, unit: 'раз' },
-      { level: 'cms', title: 'КМС (Стритворкаут ОФП)', shortTitle: 'КМС', requiredValue: 33, unit: 'раз' },
-      { level: 'ms', title: 'МС (Мастер спорта ОФП)', shortTitle: 'МС', requiredValue: 38, unit: 'раз' },
+      { level: 'cms', title: 'КМС (стритворкаут, общая форма)', shortTitle: 'КМС', requiredValue: 33, unit: 'раз' },
+      { level: 'ms', title: 'МС (общая форма)', shortTitle: 'МС', requiredValue: 38, unit: 'раз' },
       { level: 'msmk', title: 'МСМК (Легенда турника)', shortTitle: 'МСМК', requiredValue: 44, unit: 'раз' },
     ],
   },
   {
     id: 'bodyweight_dips',
-    name: 'Отжимания на брусьях на максимум (ОФП)',
+    name: 'Отжимания на брусьях на максимум (общая форма)',
     category: 'fitness',
-    federation: 'ОФП / Фитнес',
+    federation: 'Общая форма / Фитнес',
     unit: 'раз',
     isLowerBetter: false,
     standardRanks: [
@@ -440,7 +440,7 @@ export const SPORT_MOVEMENTS: SportMovement[] = [
       { level: '3_adult', title: 'III Взрослый разряд', shortTitle: 'III разряд', requiredValue: 38, unit: 'раз' },
       { level: '2_adult', title: 'II Взрослый разряд', shortTitle: 'II разряд', requiredValue: 46, unit: 'раз' },
       { level: '1_adult', title: 'I Взрослый разряд', shortTitle: 'I разряд', requiredValue: 55, unit: 'раз' },
-      { level: 'cms', title: 'КМС (Брусья ОФП)', shortTitle: 'КМС', requiredValue: 66, unit: 'раз' },
+      { level: 'cms', title: 'КМС (брусья, общая форма)', shortTitle: 'КМС', requiredValue: 66, unit: 'раз' },
       { level: 'ms', title: 'МС (Мастер брусьев)', shortTitle: 'МС', requiredValue: 78, unit: 'раз' },
       { level: 'msmk', title: 'МСМК (Железный трицепс)', shortTitle: 'МСМК', requiredValue: 90, unit: 'раз' },
     ],
@@ -518,7 +518,7 @@ export const SPORT_MOVEMENTS: SportMovement[] = [
     id: 'daily_steps',
     name: 'Норматив активности (Шаги)',
     category: 'steps',
-    federation: 'ОФП / Фитнес',
+    federation: 'Общая форма / Фитнес',
     unit: 'шагов',
     isLowerBetter: false,
     standardRanks: [

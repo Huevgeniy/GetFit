@@ -87,7 +87,7 @@ export const TelegramHeader: React.FC<TelegramHeaderProps> = ({
               type="button"
               onClick={onOpenAiSettings}
               className={`${iconButton} bg-gradient-to-br from-cyan-950/70 to-emerald-950/70 border-cyan-500/40 hover:border-cyan-400 text-cyan-400 shadow-sm shadow-cyan-950/40`}
-              title={`${subtitle}. Настройки интеллекта и персональный промт ИИ`}
+              title={`${subtitle}. Настройки ИИ и личные указания`}
               aria-label="Настроить ИИ"
             >
               <BrainCircuit className="w-4 h-4" />

@@ -289,7 +289,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
               previous ? formatDelta(current.workouts.length, previous.workouts.length) : null,
             )}
             {metric(
-              'Тоннаж',
+              'Общий вес',
               `${round(current.tonnage / 1000, 1)} т`,
               <Flame className="w-3 h-3 text-amber-400" />,
               previous ? formatDelta(current.tonnage, previous.tonnage) : null,
@@ -302,7 +302,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
               previous ? formatDelta(current.setsCount, previous.setsCount) : null,
             )}
             {metric(
-              'Средний RPE',
+              'Средняя тяжесть',
               current.avgRpe ? current.avgRpe.toFixed(1) : '—',
               <TrendingUp className="w-3 h-3 text-rose-400" />,
               previous && previous.avgRpe > 0 ? formatDelta(current.avgRpe, previous.avgRpe) : null,
@@ -363,7 +363,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
                 Лучший подход за период
               </div>
               <div className="text-xs text-slate-200 mt-1">
-                {current.bestSet.name}: {current.bestSet.weight} кг × {current.bestSet.reps} — расчётный 1ПМ{' '}
+                {current.bestSet.name}: {current.bestSet.weight} кг × {current.bestSet.reps} — расчётный максимум{' '}
                 <span className="font-bold text-emerald-400">{Math.round(current.bestSet.oneRM)} кг</span>
               </div>
             </div>
@@ -371,7 +371,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
 
           <div className={card}>
             <div className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold mb-2">
-              Тоннаж по интервалам
+              Общий вес по интервалам
             </div>
             <div className="flex items-end gap-1.5 h-24">
               {stats.chart.map((bucket, index) => (
@@ -386,7 +386,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
             </div>
             <p className="text-[10px] text-slate-500 mt-2">
               {current.workouts.length > 0
-                ? `Средний тоннаж за тренировку: ${Math.round(current.tonnage / current.workouts.length)} кг`
+                ? `Средний поднятый вес за тренировку: ${Math.round(current.tonnage / current.workouts.length)} кг`
                 : 'Тренировок за период не было'}
             </p>
           </div>
@@ -395,7 +395,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
 
       <p className="text-[10px] text-slate-500 px-1">
         Серия: {user.streakDays || 0} дн. · рекорд: {user.longestStreak || 0} дн. · дисциплина: {user.disciplineScore ?? 100}%.
-        Данные считаются по твоему дневнику синхронизированному в облаке.
+        Данные считаются по вашему дневнику, синхронизированному с облаком.
       </p>
     </div>
   );

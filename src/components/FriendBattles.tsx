@@ -54,7 +54,7 @@ const INITIAL_COMMUNITY_POSTS: CommunityPost[] = [
     authorName: 'Елена Соколова',
     authorUsername: '@elena_fit',
     type: 'complex',
-    title: 'Комплекс ОФП: 100 отжиманий + 50 подтягиваний',
+    title: 'Комплекс общей формы: 100 отжиманий + 50 подтягиваний',
     description: 'Сдала контрольный норматив на время. Разминка суставов обязательна!',
     details: {
       recordValue: '08:45 мин',
@@ -314,7 +314,7 @@ export const FriendBattles: React.FC<FriendBattlesProps> = ({
           }`}
         >
           <UserPlus className="w-3.5 h-3.5" />
-          <span>Друзья & Пари</span>
+          <span>Друзья и пари</span>
         </button>
 
         <button
@@ -681,7 +681,7 @@ export const FriendBattles: React.FC<FriendBattlesProps> = ({
                   className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
                 >
                   <option value="steps">Дневные / недельные шаги</option>
-                  <option value="bench_press">Жим лежа (1ПМ или рабочий вес)</option>
+                  <option value="bench_press">Жим лёжа (максимум или рабочий вес)</option>
                   <option value="pullups">Подтягивания на максимум</option>
                   <option value="discipline_streak">Дисциплина (тренировки без пропусков)</option>
                 </select>

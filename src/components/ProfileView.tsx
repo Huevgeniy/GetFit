@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   User, 
   Scale, 
@@ -41,6 +41,7 @@ import { FriendsAndBattlesView } from './FriendsAndBattlesView';
 import { hapticImpact, hapticNotify } from '../lib/telegram';
 import { exportDiaryCsv, testNotification } from '../lib/api';
 import { FEATURES, FeatureKey, getFeatureFlags, isAdvancedMode } from '../lib/features';
+import { TourId } from '../lib/tours';
 import { localDayKey } from '../lib/steps';
 
 interface ProfileViewProps {
@@ -52,14 +53,21 @@ interface ProfileViewProps {
   onUpdatePersonalRecord: (recordId: string, newValue: string, notes?: string) => void;
   onShareRecordToCommunity: (record: PersonalRecord) => void;
   onResetAllData: () => void;
-  onExportData?: () => Promise<{ ok: boolean; size?: number; error?: string }> | void;
+  onExportData?: () => Promise<{ ok: boolean; size?: number; text?: string; error?: string }> | void;
   onImportData?: (jsonStr: string) => { success: boolean; error?: string };
   battles?: FriendBattle[];
   onAddBattle?: (battle: FriendBattle) => void;
   onUpdateBattleProgress?: (battleId: string, amount: number) => void;
   onOpenAiSettings?: () => void;
-  /** Запускает обучение заново из настроек. */
-  onRestartTour?: () => void;
+  /** Текущий тур: нужен, чтобы показать «идёт сейчас» и не запускать два сразу. */
+  activeTour?: TourId | null;
+  /** Пройден ли основной тур и туры дополнительных разделов. */
+  tourStatus?: Record<TourId, boolean>;
+  onReplayTour?: (tourId: TourId) => void;
+  onResetTours?: () => void;
+  /** Состояние облака: показываем честно, а не только «синхронизировано». */
+  syncStatus?: 'idle' | 'syncing' | 'synced' | 'offline' | 'local';
+  storageMode?: 'postgres' | 'file' | 'unavailable' | null;
   /** Реально подключённые на сервере провайдеры ИИ. */
   aiProviders?: AiProvidersInfo | null;
 }
@@ -67,12 +75,12 @@ interface ProfileViewProps {
 const AVAILABLE_DISCIPLINES = [
   { id: 'powerlifting', label: 'Пауэрлифтинг (WRPF)', icon: '🏋️', desc: 'Жим, присед, становая тяга' },
   { id: 'streetlifting', label: 'Стритлифтинг (WSF)', icon: '⛓️', desc: 'Подтягивания и брусья с весом' },
-  { id: 'bodybuilding', label: 'Бодибилдинг', icon: '💪', desc: 'Гипертрофия и пропорции' },
-  { id: 'fitness', label: 'ОФП & Воркаут', icon: '🤸', desc: 'Турники, брусья, функционал' },
-  { id: 'athletics', label: 'Легкая атлетика', icon: '🏃', desc: 'Бег 100м, 1000м, выносливость' },
+  { id: 'bodybuilding', label: 'Бодибилдинг', icon: '💪', desc: 'Рост мышц и пропорции' },
+  { id: 'fitness', label: 'Общая форма и уличные тренировки', icon: '🤸', desc: 'Турники, брусья, функционал' },
+  { id: 'athletics', label: 'Легкая атлетика', icon: '🏃', desc: 'Бег 100 м, 1000 м, выносливость' },
   { id: 'swimming', label: 'Плавание', icon: '🏊', desc: 'Вольный стиль, дыхание' },
-  { id: 'crossfit', label: 'Кроссфит & Комплексы', icon: '⏱️', desc: 'Высокоинтенсивные WOD и связки' },
-  { id: 'combat', label: 'Единоборства', icon: '🥊', desc: 'Бокс, борьба, кондиции' },
+  { id: 'crossfit', label: 'Кроссфит и комплексы', icon: '⏱️', desc: 'Интенсивные комплексы и связки' },
+  { id: 'combat', label: 'Единоборства', icon: '🥊', desc: 'Бокс, борьба, общая форма' },
 ];
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
@@ -90,7 +98,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onAddBattle = () => {},
   onUpdateBattleProgress = () => {},
   onOpenAiSettings,
-  onRestartTour,
+  activeTour,
+  tourStatus,
+  onReplayTour,
+  onResetTours,
+  syncStatus = 'idle',
+  storageMode = null,
   aiProviders,
 }) => {
   const [profileTab, setProfileTab] = useState<'general' | 'friends_battles' | 'records' | 'disciplines' | 'inbody' | 'achievements'>('general');
@@ -200,7 +213,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       hapticNotify('success');
       setBackupState({
         status: 'ok',
-        message: `Копия скопирована в буфер (${Math.round((result.size || 0) / 1024)} КБ). Сохрани её в заметках.`,
+        message: `Копия скопирована в буфер (${Math.round((result.size || 0) / 1024)} КБ). Сохраните её в заметках.`,
       });
     } else {
       hapticNotify('error');
@@ -222,6 +235,59 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
   };
 
+  /** Скачивание файла: в браузере и Telegram Desktop работает надёжнее буфера. */
+  const handleDownloadBackup = async () => {
+    if (!onExportData) return;
+    setBackupState({ status: 'busy' });
+    hapticImpact('light');
+    const result = await onExportData();
+    const backupText = result && 'text' in result ? result.text : undefined;
+    if (!backupText) {
+      hapticNotify('error');
+      const errorText = result && 'error' in result ? result.error : undefined;
+      setBackupState({ status: 'error', message: errorText || 'Не удалось создать копию' });
+      return;
+    }
+    try {
+      const blob = new Blob([backupText], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `getfit-backup-${localDayKey()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      hapticNotify('success');
+      setBackupState({ status: 'ok', message: 'Файл резервной копии скачан.' });
+    } catch {
+      hapticNotify('error');
+      setBackupState({ status: 'error', message: 'Браузер не разрешил скачивание — скопируйте текст вручную' });
+    }
+  };
+
+  const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !onImportData) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = onImportData(String(reader.result || ''));
+      if (result.success) {
+        hapticNotify('success');
+        setBackupState({ status: 'ok', message: `Данные восстановлены из файла «${file.name}».` });
+      } else {
+        hapticNotify('error');
+        setBackupState({ status: 'error', message: result.error || 'Не удалось прочитать файл' });
+      }
+    };
+    reader.onerror = () => {
+      hapticNotify('error');
+      setBackupState({ status: 'error', message: 'Не удалось открыть файл' });
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
   // Edit Profile Modal
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
   const [editName, setEditName] = useState(user?.name || '');
@@ -232,6 +298,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [editStepGoal, setEditStepGoal] = useState(user?.dailyStepGoal || 10000);
   const [editHeight, setEditHeight] = useState(user?.heightCm || 178);
   const [editAge, setEditAge] = useState(user?.age || 24);
+  const [editGender, setEditGender] = useState<'male' | 'female'>(user?.gender || 'male');
+  const [editActivity, setEditActivity] = useState<NonNullable<UserProfile['activityLevel']>>(
+    user?.activityLevel || 'moderate',
+  );
+  const [editCalories, setEditCalories] = useState(user?.customCalorieTarget || 0);
+  const [editProtein, setEditProtein] = useState(user?.customProteinTarget || 0);
+  const [editFat, setEditFat] = useState(user?.customFatTarget || 0);
+  const [editCarbs, setEditCarbs] = useState(user?.customCarbsTarget || 0);
+  const [editFiber, setEditFiber] = useState(user?.customFiberTarget || 0);
+  const backupFileRef = useRef<HTMLInputElement | null>(null);
 
   // Шаги за сегодня берём из профиля: они синхронизируются между устройствами.
   const stepLog = user?.dailySteps || {};
@@ -260,12 +336,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const selectedDisciplines = user?.selectedDisciplines || ['powerlifting', 'streetlifting'];
 
   const aiPrimary = !aiProviders
-    ? 'провайдеры ИИ проверяются…'
+    ? 'проверяем подключение…'
     : aiProviders.groq
       ? `Groq · ${aiProviders.groqModel || 'qwen3.8-27b'}`
       : aiProviders.gemini
         ? `Gemini · ${aiProviders.geminiModel || 'flash'}`
-        : 'локальная эвристика (без ключей)';
+        : 'встроенный разбор (без ключей)';
   const aiFallback = !aiProviders
     ? ''
     : aiProviders.groq && aiProviders.gemini
@@ -280,9 +356,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setEditCurrentWeight(user?.currentWeight || 0);
     setEditTargetWeight(user?.targetWeight || 0);
     setEditGoalType(user?.weightGoalType || 'maintain');
-    setEditStepGoal(user?.dailyStepGoal || 10000);
+    setEditStepGoal(user?.dailyStepGoal ?? 10000);
     setEditHeight(user?.heightCm || 178);
     setEditAge(user?.age || 24);
+    setEditGender(user?.gender || 'male');
+    setEditActivity(user?.activityLevel || 'moderate');
+    setEditCalories(user?.customCalorieTarget || 0);
+    setEditProtein(user?.customProteinTarget || 0);
+    setEditFat(user?.customFatTarget || 0);
+    setEditCarbs(user?.customCarbsTarget || 0);
+    setEditFiber(user?.customFiberTarget || 0);
     setShowEditProfileModal(true);
   };
 
@@ -297,6 +380,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       dailyStepGoal: editStepGoal,
       heightCm: editHeight,
       age: editAge,
+      gender: editGender,
+      activityLevel: editActivity,
+      customCalorieTarget: editCalories > 0 ? editCalories : undefined,
+      customProteinTarget: editProtein > 0 ? editProtein : undefined,
+      customFatTarget: editFat > 0 ? editFat : undefined,
+      customCarbsTarget: editCarbs > 0 ? editCarbs : undefined,
+      customFiberTarget: editFiber > 0 ? editFiber : undefined,
     });
     setShowEditProfileModal(false);
   };
@@ -399,32 +489,120 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     ? Math.round(Math.abs(user.currentWeight - user.targetWeight) * 10) / 10
     : 0;
 
+  // Индекс массы тела: понятный ориентир рядом с весом и целью.
+  const heightMeters = (user?.heightCm || 0) / 100;
+  const bmi =
+    heightMeters > 0 && (user?.currentWeight || 0) > 0
+      ? Math.round(((user.currentWeight || 0) / (heightMeters * heightMeters)) * 10) / 10
+      : 0;
+  const bmiCategory =
+    bmi <= 0
+      ? 'Укажите рост и вес'
+      : bmi < 18.5
+        ? 'Ниже нормы'
+        : bmi < 25
+          ? 'Норма'
+          : bmi < 30
+            ? 'Выше нормы'
+            : 'Высокий';
+  const bmiTone =
+    bmi <= 0
+      ? 'text-slate-400'
+      : bmi >= 18.5 && bmi < 25
+        ? 'text-emerald-400'
+        : bmi < 18.5 || bmi < 30
+          ? 'text-amber-400'
+          : 'text-rose-400';
+
+  const tourItems: Array<{ id: TourId; label: string; enabled: boolean }> = [
+    { id: 'main', label: 'Основной тур', enabled: true },
+    { id: 'marathons', label: 'Марафоны целей', enabled: Boolean(features.marathons) },
+    { id: 'discipline', label: 'Дисциплина', enabled: Boolean(features.discipline) },
+    { id: 'ranks', label: 'Спортивные разряды', enabled: Boolean(features.ranks) },
+    { id: 'lab', label: 'Лаборатория', enabled: Boolean(features.lab) },
+    { id: 'periodization', label: 'Циклы тренировок', enabled: Boolean(features.periodization) },
+  ];
+  const visibleTourItems = tourItems.filter(item => item.enabled);
+
+  const syncInfo =
+    storageMode === 'unavailable'
+      ? {
+          title: 'База недоступна',
+          text: 'Данные не сохраняются. Проверьте подключение сервера к базе.',
+          tone: 'text-rose-400',
+          badge: 'нет сохранения',
+        }
+      : storageMode === 'file'
+        ? {
+            title: 'Без базы данных',
+            text: 'Сервер хранит данные в файле — они исчезнут при перезапуске.',
+            tone: 'text-amber-400',
+            badge: 'временно',
+          }
+        : syncStatus === 'local'
+          ? {
+              title: 'Локальный режим',
+              text: 'Откройте приложение через Telegram, чтобы включить облако.',
+              tone: 'text-amber-400',
+              badge: 'только устройство',
+            }
+          : syncStatus === 'offline'
+            ? {
+                title: 'Нет связи с облаком',
+                text: 'Изменения пока на устройстве. Они отправятся, когда связь вернётся.',
+                tone: 'text-amber-400',
+                badge: 'ожидает',
+              }
+            : syncStatus === 'syncing'
+              ? {
+                  title: 'Синхронизация',
+                  text: 'Сохраняем последние изменения в облаке…',
+                  tone: 'text-cyan-400',
+                  badge: 'сохраняем',
+                }
+              : syncStatus === 'synced'
+                ? {
+                    title: 'Сохранено в облаке',
+                    text: 'Данные доступны на других устройствах после входа.',
+                    tone: 'text-emerald-400',
+                    badge: 'облако',
+                  }
+                : {
+                    title: 'Синхронизация готова',
+                    text: 'Изменения сохраняются автоматически.',
+                    tone: 'text-slate-400',
+                    badge: 'ожидание',
+                  };
+
   const displayName = user?.name && user.name.trim().length > 0 ? user.name : 'Атлет';
   const displayTg = user?.telegramUsername && user.telegramUsername.trim().length > 0 ? user.telegramUsername : '@username';
 
   return (
     <div className="space-y-4 pb-24">
       {/* Profile Header Card */}
-      <div className="bg-gradient-to-br from-[#121c27] via-[#0d141c] to-[#12181f] border border-[#233345] rounded-2xl p-4 shadow-lg shadow-black/20">
+      <div
+        id="tour-profile-card"
+        className="bg-gradient-to-br from-[#121c27] via-[#0d141c] to-[#12181f] border border-[#233345] rounded-2xl p-4 shadow-lg shadow-black/20"
+      >
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-13 h-13 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-800 flex items-center justify-center text-xl font-extrabold text-slate-950 shadow-md border border-emerald-400/40">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-13 h-13 shrink-0 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-800 flex items-center justify-center text-xl font-extrabold text-slate-950 shadow-md border border-emerald-400/40">
               {displayName.charAt(0).toUpperCase()}
             </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-100">{displayName}</h2>
-              <div className="text-xs text-emerald-400 font-mono">{displayTg}</div>
+            <div className="min-w-0">
+              <h2 className="text-base font-bold text-slate-100 truncate">{displayName}</h2>
+              <div className="text-xs text-emerald-400 font-mono truncate">{displayTg}</div>
               <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2 font-mono">
-                <span>{user?.streakDays || 0} дн. стрик</span>
+                <span>{user?.streakDays || 0} дн. серия</span>
                 <span>•</span>
-                <span className="text-emerald-400">{user?.disciplineScore || 100}% дисц.</span>
+                <span className="text-emerald-400">{user?.disciplineScore || 100}% дисциплина</span>
               </div>
             </div>
           </div>
 
           <button
             onClick={handleOpenEditProfile}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#18232f] hover:bg-[#233140] text-emerald-400 text-xs font-bold border border-[#273748] transition-all active:scale-95"
+            className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#18232f] hover:bg-[#233140] text-emerald-400 text-xs font-bold border border-[#273748] transition-all active:scale-95"
             title="Редактировать профиль"
           >
             <Edit3 className="w-4 h-4" />
@@ -470,7 +648,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             }`}
           >
             <Swords className="w-3 h-3" />
-            <span>Друзья & Зарубы</span>
+            <span>Друзья и зарубы</span>
           </button>
         )}
 
@@ -507,7 +685,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           }`}
         >
           <Activity className="w-3 h-3" />
-          <span>InBody</span>
+          <span>Состав тела</span>
         </button>
 
         {canUseAchievements && (
@@ -533,7 +711,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Scale className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-xs font-bold text-slate-200">Цель по массе тела</h3>
+                <h3 className="text-xs font-bold text-slate-200">Вес и цель</h3>
               </div>
               <button
                 onClick={handleOpenEditProfile}
@@ -569,19 +747,50 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   )}
                   <span className="text-slate-300">
                     {user?.weightGoalType === 'lose'
-                      ? 'Снижение жировой прослойки / Сушка'
+                      ? 'Снижение веса'
                       : user?.weightGoalType === 'gain'
-                      ? 'Набор мышечной массы'
+                      ? 'Набор веса'
                       : user?.weightGoalType === 'recomp'
-                      ? 'Рекомпозиция тела'
-                      : 'Поддержание текущей формы'}
+                      ? 'Перестройка тела'
+                      : 'Поддержание веса'}
                   </span>
                 </div>
                 <span className="font-mono font-bold text-emerald-400">
-                  {isGoalReached ? 'Цель достигнута!' : weightDelta > 0 ? `Дельта: ${weightDelta} кг` : 'В графике'}
+                  {isGoalReached ? 'Цель достигнута!' : weightDelta > 0 ? `Разница: ${weightDelta} кг` : 'По плану'}
                 </span>
               </div>
             </div>
+          </div>
+
+          {/* BMI reference */}
+          <div className="bg-[#12181f] border border-[#1e293b] rounded-2xl p-4 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Scale className="w-4 h-4 text-cyan-400" />
+                <h3 className="text-xs font-bold text-slate-200">Индекс массы тела</h3>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenEditProfile}
+                className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold"
+              >
+                Изменить рост
+              </button>
+            </div>
+
+            <div className="flex items-end justify-between">
+              <div>
+                <span className={`text-2xl font-extrabold font-mono ${bmiTone}`}>
+                  {bmi > 0 ? bmi.toLocaleString('ru-RU', { maximumFractionDigits: 1 }) : '—'}
+                </span>
+                <span className="text-[11px] text-slate-400 ml-1.5">кг/м²</span>
+              </div>
+              <span className={`text-[11px] font-bold ${bmiTone}`}>{bmiCategory}</span>
+            </div>
+
+            <p className="text-[10px] text-slate-500 leading-snug">
+              Ориентир для взрослых: 18,5–24,9. Индекс не учитывает мышцы и жир — смотрите его вместе с анализом состава тела.
+            </p>
           </div>
 
           {/* Daily Steps Normative Section */}
@@ -589,7 +798,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Footprints className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-xs font-bold text-slate-200">Норматив шагов за сегодня</h3>
+                <h3 className="text-xs font-bold text-slate-200">Шаги за сегодня</h3>
               </div>
               <span className="text-xs font-mono font-bold text-emerald-400">
                 {todaySteps.toLocaleString('ru-RU')} / {user?.dailyStepGoal && user.dailyStepGoal > 0 ? `${user.dailyStepGoal.toLocaleString('ru-RU')} ш.` : 'Без цели'}
@@ -610,13 +819,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </>
             ) : (
               <div className="text-[11px] text-slate-400 bg-[#151e28] p-2 rounded-xl border border-[#1e2c3c]">
-                Свободный режим: норматив шагов не установлен. Вы можете фиксировать шаги вручную ниже.
+                Свободный режим: цель по шагам не задана. Можно просто записывать пройденное ниже.
               </div>
             )}
 
             <div className="pt-2 flex items-center justify-between gap-2 border-t border-[#1b2532]">
               <span className="text-[11px] text-slate-400">
-                Пройдено за сегодня (синхронизируется):
+                Пройдено за сегодня:
               </span>
 
               <div className="relative">
@@ -645,13 +854,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </div>
                 <div>
                   <h3 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
-                    <span>Интеллект & Личный промт ИИ</span>
+                    <span>ИИ-помощник</span>
                     <span className="text-[9px] bg-cyan-950 text-cyan-400 font-mono px-1.5 py-0.5 rounded border border-cyan-500/30">
-                      AI Engine
+                      настройки
                     </span>
                   </h3>
                   <p className="text-[11px] text-slate-400">
-                    Персональные наставления, ограничения, травмы и спортпит
+                    Личные указания, ограничения, травмы и добавки
                   </p>
                 </div>
               </div>
@@ -671,12 +880,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <div className="space-y-2 text-xs">
               <div className="bg-[#0b1016] p-2.5 rounded-xl border border-[#1b2533] space-y-1">
                 <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
-                  Личный промт для ИИ:
+                  Личные указания для ИИ:
                 </div>
                 <p className="text-slate-300 italic text-[11px] line-clamp-2">
                   {user?.aiPersonalPrompt?.trim() 
                     ? `«${user.aiPersonalPrompt}»`
-                    : 'Не задан (по умолчанию: доказательный пауэрлифтинг, шкала RPE и периодизация)'}
+                    : 'Не заданы (по умолчанию: силовой тренинг, тяжёлые подходы по самочувствию и циклы)'}
                 </p>
               </div>
 
@@ -689,7 +898,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </div>
 
                 <div className="bg-[#0b1016] p-2 rounded-xl border border-[#1b2533]">
-                  <span className="text-slate-400 block text-[10px]">Спортпит & БАДы:</span>
+                  <span className="text-slate-400 block text-[10px]">Добавки и спортпит:</span>
                   <span className="text-slate-200 font-semibold truncate block">
                     {user?.activeSupplements?.trim() || 'Не указаны'}
                   </span>
@@ -697,7 +906,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
 
               <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400 font-mono px-1">
-                <span className="min-w-0 truncate">Движок: {aiPrimary}</span>
+                <span className="min-w-0 truncate">Модель: {aiPrimary}</span>
                 {aiFallback && (
                   <span
                     className={`shrink-0 font-bold ${
@@ -908,18 +1117,84 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 })}
               </div>
             )}
-
-            {onRestartTour && (
-              <button
-                type="button"
-                onClick={onRestartTour}
-                className="w-full py-2 bg-[#141c24] hover:border-emerald-500/50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Пройти обучение заново</span>
-              </button>
-            )}
           </div>
+
+          {/* Синхронизация с облаком */}
+          <div id="sync-status-card" className="bg-[#101820] border border-[#22303f] rounded-2xl p-3.5 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <RefreshCw className={`w-4 h-4 ${syncInfo.tone}`} />
+                <div>
+                  <div className="text-xs font-bold text-slate-200">Синхронизация</div>
+                  <div className={`text-[10px] ${syncInfo.tone}`}>{syncInfo.title}</div>
+                </div>
+              </div>
+              <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border border-[#243447] bg-[#0b1016] ${syncInfo.tone}`}>
+                {syncInfo.badge}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-snug">{syncInfo.text}</p>
+          </div>
+
+          {/* Обучение по разделам */}
+          {onReplayTour && (
+            <div id="tour-settings" className="bg-[#101820] border border-[#22303f] rounded-2xl p-3.5 space-y-3">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="w-4 h-4 text-emerald-400" />
+                <div>
+                  <div className="text-xs font-bold text-slate-200">Обучение</div>
+                  <div className="text-[10px] text-slate-400">
+                    Короткие подсказки по основным и включённым разделам
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                {visibleTourItems.map(item => {
+                  const isActive = activeTour === item.id;
+                  const isDone = Boolean(tourStatus?.[item.id]);
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between gap-2 bg-[#0b1016] border border-[#1b2533] rounded-xl px-2.5 py-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-bold text-slate-200 truncate">{item.label}</div>
+                        <div className={`text-[9px] font-mono ${
+                          isActive ? 'text-cyan-400' : isDone ? 'text-emerald-400' : 'text-slate-500'
+                        }`}>
+                          {isActive ? 'идёт сейчас' : isDone ? 'пройдено' : 'не пройдено'}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isActive}
+                        onClick={() => onReplayTour(item.id)}
+                        className="shrink-0 px-2.5 py-1.5 rounded-lg bg-[#17222e] hover:bg-[#22303f] disabled:opacity-50 text-[10px] font-bold text-emerald-300 border border-[#273748] transition-colors"
+                      >
+                        {isActive ? 'Идёт' : isDone ? 'Заново' : 'Начать'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {onResetTours && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('Сбросить прогресс обучения и пройти основной тур заново?')) {
+                      onResetTours();
+                    }
+                  }}
+                  className="w-full py-2 bg-[#141c24] hover:border-rose-500/40 border border-[#22303f] text-slate-400 hover:text-rose-300 rounded-xl text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Сбросить прогресс обучения</span>
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Резервная копия данных */}
           <div className="bg-[#101820] border border-[#22303f] rounded-2xl p-3.5 space-y-3">
@@ -928,21 +1203,31 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <div>
                 <div className="text-xs font-bold text-slate-200">Резервная копия</div>
                 <div className="text-[10px] text-slate-400">
-                  Все данные приложения одним текстом — можно сохранить и восстановить
+                  Файл или текст со всеми данными. Сохраните перед сменой устройства
                 </div>
               </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 id="backup-export"
                 onClick={handleExportClick}
                 disabled={backupState.status === 'busy'}
-                className="flex-1 py-2 bg-[#141c24] hover:border-cyan-500/50 disabled:opacity-50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                className="py-2 bg-[#141c24] hover:border-cyan-500/50 disabled:opacity-50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>{backupState.status === 'busy' ? 'Готовлю…' : 'Скопировать копию'}</span>
+                <span>{backupState.status === 'busy' ? 'Готовлю…' : 'Скопировать'}</span>
+              </button>
+              <button
+                type="button"
+                id="backup-download"
+                onClick={handleDownloadBackup}
+                disabled={backupState.status === 'busy'}
+                className="py-2 bg-[#141c24] hover:border-cyan-500/50 disabled:opacity-50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Скачать файл</span>
               </button>
               <button
                 type="button"
@@ -951,11 +1236,27 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   setShowImportArea((prev) => !prev);
                   setBackupState({ status: 'idle' });
                 }}
-                className="flex-1 py-2 bg-[#141c24] hover:border-cyan-500/50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                className="py-2 bg-[#141c24] hover:border-cyan-500/50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
               >
                 <Upload className="w-3.5 h-3.5" />
-                <span>Восстановить</span>
+                <span>Вставить текст</span>
               </button>
+              <button
+                type="button"
+                id="backup-import-file"
+                onClick={() => backupFileRef.current?.click()}
+                className="py-2 bg-[#141c24] hover:border-cyan-500/50 border border-[#22303f] text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Загрузить файл</span>
+              </button>
+              <input
+                ref={backupFileRef}
+                type="file"
+                accept="application/json,.json"
+                onChange={handleImportFile}
+                className="hidden"
+              />
             </div>
 
             <button
@@ -967,12 +1268,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               title="Бот пришлёт CSV-файл с дневником — он открывается в Google Sheets и Excel"
             >
               <Table className="w-3.5 h-3.5" />
-              <span>{exportState.status === 'busy' ? 'Отправляю…' : 'Таблица в чат (Google Sheets)'}</span>
+              <span>{exportState.status === 'busy' ? 'Отправляю…' : 'Дневник таблицей в чат'}</span>
             </button>
 
             {exportState.status === 'ok' && (
               <p className="text-[10px] text-emerald-400 leading-snug">
-                ✅ Файл отправлен в чат с ботом — открой его через Google Sheets (Файл → Импорт).
+                ✅ Файл отправлен в чат с ботом — откройте его в Excel или Google Таблицах.
               </p>
             )}
             {exportState.status === 'error' && (
@@ -985,7 +1286,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   id="backup-import-text"
                   value={importText}
                   onChange={(e) => setImportText(e.target.value)}
-                  placeholder="Вставь сюда текст резервной копии"
+                  placeholder="Вставьте сюда текст резервной копии"
                   rows={4}
                   className="w-full bg-[#0b1016] border border-[#22303f] rounded-xl p-2 text-[10px] font-mono text-slate-300 focus:outline-none focus:border-cyan-500/50"
                 />
@@ -1046,10 +1347,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                   <Trophy className="w-4 h-4 text-emerald-400" />
-                  <span>Личные рекорды и Комплексы</span>
+                  <span>Личные рекорды и комплексы</span>
                 </h3>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Фиксируй максимумы: жим, брусья, бег 5км, заезд на велосипеде, кроссфит-комплексы (100 отжиманий + 50 подтягиваний на время).
+                  Фиксируйте максимумы: жим, брусья, бег 5 км, заезд на велосипеде, комплексы упражнений на время.
                 </p>
               </div>
             </div>
@@ -1093,7 +1394,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                               ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
                               : 'bg-purple-950/60 border-purple-500/40 text-purple-300'
                           }`}>
-                            {rec.category === 'strength' ? 'Сила' : rec.category === 'cardio' ? 'Кардио' : rec.category === 'complex' ? 'Комплекс / WOD' : 'Разное'}
+                            {rec.category === 'strength' ? 'Сила' : rec.category === 'cardio' ? 'Кардио' : rec.category === 'complex' ? 'Комплекс упражнений' : 'Разное'}
                           </span>
                           <span className="text-xs font-bold text-slate-100">{rec.title}</span>
                         </div>
@@ -1297,7 +1598,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
               <div>
                 <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                  Telegram Username (@...):
+                  Ник в Telegram:
                 </label>
                 <input
                   type="text"
@@ -1340,17 +1641,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
               <div>
                 <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                  Цель по форме:
+                  Цель по весу:
                 </label>
                 <select
                   value={editGoalType}
                   onChange={e => setEditGoalType(e.target.value as any)}
                   className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
                 >
-                  <option value="lose">Сушка / Похудение (дефицит)</option>
-                  <option value="gain">Набор массы (профицит)</option>
-                  <option value="recomp">Рекомпозиция (рост мышц при сжигании жира)</option>
-                  <option value="maintain">Поддержание формы</option>
+                  <option value="lose">Снижение веса</option>
+                  <option value="gain">Набор веса</option>
+                  <option value="recomp">Перестройка тела (меньше жира, больше мышц)</option>
+                  <option value="maintain">Поддержание веса</option>
                 </select>
               </div>
 
@@ -1382,10 +1683,122 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </div>
               </div>
 
+              <div className="pt-2 border-t border-[#1b2532] space-y-2.5">
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider">
+                    Норма питания
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-snug mt-0.5">
+                    Пол, возраст, рост и активность нужны для расчёта калорий. Свои значения ниже важнее автоматических.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                      Пол:
+                    </label>
+                    <select
+                      value={editGender}
+                      onChange={e => setEditGender(e.target.value as 'male' | 'female')}
+                      className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="male">Мужской</option>
+                      <option value="female">Женский</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                      Активность:
+                    </label>
+                    <select
+                      value={editActivity}
+                      onChange={e => setEditActivity(e.target.value as NonNullable<UserProfile['activityLevel']>)}
+                      className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="sedentary">Малоподвижная</option>
+                      <option value="moderate">Умеренная</option>
+                      <option value="active">Активная</option>
+                      <option value="very_active">Очень активная</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                      Калории:
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={editCalories || ''}
+                      onChange={e => setEditCalories(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      placeholder="авто"
+                      className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                      Белки, г:
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={editProtein || ''}
+                      onChange={e => setEditProtein(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      placeholder="авто"
+                      className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                      Жиры, г:
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={editFat || ''}
+                      onChange={e => setEditFat(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      placeholder="авто"
+                      className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                      Углеводы, г:
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={editCarbs || ''}
+                      onChange={e => setEditCarbs(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      placeholder="авто"
+                      className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                    Клетчатка, г:
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    value={editFiber || ''}
+                    onChange={e => setEditFiber(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                    placeholder="авто"
+                    className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-[10px] text-slate-400 uppercase font-bold">
-                    Норматив шагов в день:
+                    Цель шагов в день:
                   </label>
                   <button
                     type="button"
@@ -1538,9 +1951,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </label>
                   <div className="grid grid-cols-2 gap-1.5">
                     {[
-                      { id: 'strength', label: 'Силовой (1ПМ / вес)' },
+                      { id: 'strength', label: 'Силовой (вес)' },
                       { id: 'cardio', label: 'Кардио (бег, плавание)' },
-                      { id: 'complex', label: 'Комплекс / WOD' },
+                      { id: 'complex', label: 'Комплекс упражнений' },
                       { id: 'other', label: 'Произвольный тест' },
                     ].map(cat => (
                       <button

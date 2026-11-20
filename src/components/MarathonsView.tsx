@@ -319,15 +319,18 @@ export const MarathonsView: React.FC<MarathonsViewProps> = ({
       )}
 
       {/* Header & Stats Banner */}
-      <div className="bg-gradient-to-br from-[#121c27] via-[#0f1721] to-[#0c131c] border border-emerald-500/30 rounded-2xl p-4 shadow-lg shadow-emerald-500/5">
+      <div
+        id="tour-marathon-banner"
+        className="bg-gradient-to-br from-[#121c27] via-[#0f1721] to-[#0c131c] border border-emerald-500/30 rounded-2xl p-4 shadow-lg shadow-emerald-500/5"
+      >
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center gap-2 text-xs text-emerald-400 font-mono font-bold">
               <Trophy className="w-4 h-4 text-emerald-400" />
-              <span>Марафоны целей & Спортивный прогресс</span>
+              <span>Марафоны целей и прогресс</span>
             </div>
             <h2 className="text-lg font-extrabold text-slate-100 mt-1">
-              Дисциплинарные марафоны
+              Марафоны целей
             </h2>
             <p className="text-xs text-slate-400 mt-0.5 max-w-sm">
               Выбери цель на 7–30 дней (шаги, сайкл, жим, сушка). Фиксируй каждый день.
@@ -336,6 +339,7 @@ export const MarathonsView: React.FC<MarathonsViewProps> = ({
           </div>
 
           <button
+            id="tour-marathon-create"
             onClick={() => setShowCreateModal(true)}
             className="flex items-center gap-1.5 px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all active:scale-95 whitespace-nowrap"
           >
@@ -345,14 +349,17 @@ export const MarathonsView: React.FC<MarathonsViewProps> = ({
         </div>
 
         {/* Global Rollover Step Bank Card */}
-        <div className="mt-3.5 bg-[#17222e]/80 border border-emerald-500/30 rounded-xl p-3 flex items-center justify-between">
+        <div
+          id="tour-marathon-bank"
+          className="mt-3.5 bg-[#17222e]/80 border border-emerald-500/30 rounded-xl p-3 flex items-center justify-between"
+        >
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
               <Zap className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
               <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                Копилка остатка шагов (Rollover Bank)
+                Копилка шагов
               </div>
               <div className="text-base font-extrabold font-mono text-emerald-400">
                 {(user.stepBank || 0).toLocaleString('ru-RU')} шагов

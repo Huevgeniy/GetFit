@@ -52,7 +52,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
   // Reschedule form state
   const [selectedPlanId, setSelectedPlanId] = useState<string>(workoutPlans[0]?.id || '');
   const [newDateInput, setNewDateInput] = useState('Завтра');
-  const [rescheduleReason, setRescheduleReason] = useState('Восстановление мышц / ЦНС');
+  const [rescheduleReason, setRescheduleReason] = useState('Восстановление мышц и нервной системы');
 
   // Custom penalty modal category & builder state
   const [penaltyCategoryTab, setPenaltyCategoryTab] = useState<'cardio' | 'diet' | 'financial' | 'habits' | 'custom'>('cardio');
@@ -147,13 +147,13 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
         setArbitratorSuggestion({
           task: 'Внеплановое кардио 30 минут ИЛИ 500 ₽ кенту на кофе',
           points: 7,
-          explanation: 'На выбор: отработать энергией в зале либо ответить рублем перед товарищем.',
+          explanation: 'На выбор: отработать энергией в зале либо ответить рублём перед товарищем.',
         });
       } else {
         setArbitratorSuggestion({
           task: 'Холодный душ 2 утра подряд + отбой строго до 23:00',
           points: 5,
-          explanation: 'Дисциплинарная перезагрузка ЦНС, воли и биологических ритмов восстановления.',
+          explanation: 'Дисциплинарная перезагрузка нервной системы, воли и ритмов восстановления.',
         });
       }
     } finally {
@@ -272,7 +272,10 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
       </div>
 
       {/* Pending Penalties Section */}
-      <div className="bg-[#12181f] border border-[#1e293b] rounded-xl overflow-hidden">
+      <div
+        id="tour-discipline-penalties"
+        className="bg-[#12181f] border border-[#1e293b] rounded-xl overflow-hidden"
+      >
         <div className="px-4 py-2.5 bg-[#161f28] border-b border-[#1f2937] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-400" />
@@ -360,7 +363,10 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
       </div>
 
       {/* Quick Penalty Presets */}
-      <div className="bg-[#12181f] border border-[#1e293b] rounded-xl p-3.5 space-y-2.5">
+      <div
+        id="tour-discipline-presets"
+        className="bg-[#12181f] border border-[#1e293b] rounded-xl p-3.5 space-y-2.5"
+      >
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold text-slate-200">
             Быстрое дисциплинарное задание
@@ -369,11 +375,11 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
             onClick={() => setShowCustomPenaltyModal(true)}
             className="text-[10px] font-bold text-emerald-400 hover:underline"
           >
-            Конструктор штрафа +
+            Своё задание +
           </button>
         </div>
         <p className="text-[11px] text-slate-400">
-          Сорвался с режима? Выбери справедливое задание для восстановления дисциплины и стрика:
+          Сорвался с режима? Выбери понятное задание, чтобы вернуться к плану и не потерять серию дней:
         </p>
         
         <div className="grid grid-cols-2 gap-2 pt-1">
@@ -555,7 +561,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
                   onChange={e => setRescheduleReason(e.target.value)}
                   className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
                 >
-                  <option value="Восстановление мышц / ЦНС">Восстановление мышц / ЦНС</option>
+                  <option value="Восстановление мышц и нервной системы">Восстановление мышц и нервной системы</option>
                   <option value="Задержка по работе / учебе">Задержка по работе / учебе</option>
                   <option value="Недосып / самочувствие">Недосып / самочувствие</option>
                   <option value="Семейные обстоятельства">Семейные обстоятельства</option>
@@ -768,7 +774,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
                 {[
                   { label: '🍔 Пропуск ближайшего читмила', task: 'Пропуск ближайшего читмила (строго чистый рацион на выходных)', reason: 'Срыв диеты / перебор калорий', points: 6 },
                   { label: '🍫 3 дня без сахара и сладкого', task: '3 дня строго без сахара, десертов и фастфуда', reason: 'Срыв на сладкое', points: 5 },
-                  { label: '☕ 2 дня без кофе и энергетиков', task: '2 дня без кофе, энергетиков и стимуляторов ЦНС', reason: 'Перегруз нервной системы', points: 4 },
+                  { label: '☕ 2 дня без кофе и энергетиков', task: '2 дня без кофе и энергетиков', reason: 'Перегруз нервной системы', points: 4 },
                   { label: '💧 3 дня пить строго 2.5 л воды', task: 'Пить строго не менее 2.5 л чистой воды в день 3 дня', reason: 'Нарушение водного баланса', points: 4 },
                 ].map((item, idx) => (
                   <button

@@ -111,8 +111,8 @@ export const SportsRanks: React.FC<SportsRanksProps> = ({
             { id: 'all', label: 'Все' },
             { id: 'WRPF', label: 'WRPF (Пауэрлифтинг)' },
             { id: 'WSF', label: 'WSF (Стритлифтинг)' },
-            { id: 'Минспорт / ЕВСК', label: 'ЕВСК (Бег/Спорт)' },
-            { id: 'ОФП / Фитнес', label: 'ОФП & Шаги' },
+            { id: 'Минспорт / ЕВСК', label: 'ЕВСК (бег и спорт)' },
+            { id: 'Общая форма / Фитнес', label: 'Общая форма и шаги' },
           ].map(fed => (
             <button
               key={fed.id}
@@ -160,7 +160,10 @@ export const SportsRanks: React.FC<SportsRanksProps> = ({
       </div>
 
       {/* Input Form & Compare Button */}
-      <div className="bg-[#12181f] border border-[#1e293b] rounded-xl p-4">
+      <div
+        id="tour-ranks-form"
+        className="bg-[#12181f] border border-[#1e293b] rounded-xl p-4"
+      >
         <div className="grid grid-cols-2 gap-3 mb-3">
           {selectedMovement.weightCategories && (
             <div>
@@ -200,7 +203,7 @@ export const SportsRanks: React.FC<SportsRanksProps> = ({
 
       {/* Comparison Results */}
       {comparison && (
-        <div className="space-y-4">
+        <div id="tour-ranks-ladder" className="space-y-4">
           {/* Current Rank Banner */}
           <div className="bg-gradient-to-br from-[#131c26] to-[#0e141c] border border-[#243344] rounded-2xl p-4 relative overflow-hidden">
             <div className="flex items-start justify-between">

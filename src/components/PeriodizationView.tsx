@@ -30,10 +30,10 @@ interface PeriodizationViewProps {
 }
 
 const BLOCK_TYPES = [
-  { id: 'hypertrophy', label: '🏋️ Гипертрофия', color: 'bg-blue-500' },
+  { id: 'hypertrophy', label: '🏋️ Рост мышц', color: 'bg-blue-500' },
   { id: 'strength', label: '💪 Сила', color: 'bg-red-500' },
   { id: 'deload', label: '😌 Разгрузка', color: 'bg-green-500' },
-  { id: 'recomp', label: '🔄 Рекомп', color: 'bg-purple-500' },
+  { id: 'recomp', label: '🔄 Перестройка', color: 'bg-purple-500' },
   { id: 'endurance', label: '🏃 Выносливость', color: 'bg-orange-500' },
   { id: 'custom', label: '⚙️ Своё', color: 'bg-gray-500' },
 ];
@@ -142,9 +142,47 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
   };
 
   const handleDeleteBlock = (id: string) => {
-    if (confirm('Удалить этот тренировочный блок?')) {
+    if (confirm('Удалить этот цикл тренировок?')) {
       setBlocks(blocks.filter(b => b.id !== id));
     }
+  };
+
+  const openEditBlock = (block: TrainingBlock) => {
+    setSelectedBlock(block);
+    setTitle(block.title);
+    setType(block.type);
+    setStartDate(block.startDate);
+    setEndDate(block.endDate);
+    setGoals(block.goals || []);
+    setGoalInput('');
+    setNotes(block.notes || '');
+    setTargetRpeMin(block.targetRpeRange?.[0] ?? 7);
+    setTargetRpeMax(block.targetRpeRange?.[1] ?? 9);
+    setShowEditModal(true);
+  };
+
+  const handleSaveEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedBlock || !title.trim()) return;
+    setBlocks(prev =>
+      prev.map(block =>
+        block.id === selectedBlock.id
+          ? {
+              ...block,
+              title: title.trim(),
+              type,
+              startDate,
+              endDate,
+              goals: goals.length > 0 ? goals : undefined,
+              notes: notes.trim() || undefined,
+              targetRpeRange: [targetRpeMin, targetRpeMax],
+            }
+          : block,
+      ),
+    );
+    setShowEditModal(false);
+    setSelectedBlock(null);
+    resetForm();
   };
 
   const handleSetCurrent = (id: string) => {
@@ -170,23 +208,24 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
           <div>
             <h1 className="text-lg font-bold text-white flex items-center gap-2">
               <Layers className="w-5 h-5 text-emerald-400" />
-              Периодизация
+              Циклы тренировок
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              {blocks.length} блоков • {currentBlock ? 'Активен: ' + currentBlock.title : 'Нет активного'}
+              {blocks.length} циклов • {currentBlock ? 'Сейчас идёт: ' + currentBlock.title : 'Нет активного цикла'}
             </p>
           </div>
           <button
+            id="tour-periodization-create"
             onClick={() => { resetForm(); setShowCreateModal(true); }}
             className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-black px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors"
           >
             <Plus className="w-4 h-4" />
-            Блок
+            Новый цикл
           </button>
         </div>
       </div>
 
-      <div className="px-4 py-4 space-y-6">
+      <div id="tour-periodization-list" className="px-4 py-4 space-y-6">
         {/* Current Block */}
         {currentBlock && (
           <section>
@@ -196,7 +235,7 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
             <BlockCard
               block={currentBlock}
               stats={calculateBlockStats(currentBlock)}
-              onEdit={() => { setSelectedBlock(currentBlock); setShowEditModal(true); }}
+              onEdit={() => openEditBlock(currentBlock)}
               onDelete={() => handleDeleteBlock(currentBlock.id)}
               onSetCurrent={() => handleSetCurrent(currentBlock.id)}
               isCurrent
@@ -216,7 +255,7 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
                   key={block.id}
                   block={block}
                   stats={calculateBlockStats(block)}
-                  onEdit={() => { setSelectedBlock(block); setShowEditModal(true); }}
+                  onEdit={() => openEditBlock(block)}
                   onDelete={() => handleDeleteBlock(block.id)}
                   onSetCurrent={() => handleSetCurrent(block.id)}
                 />
@@ -237,7 +276,7 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
                   key={block.id}
                   block={block}
                   stats={calculateBlockStats(block)}
-                  onEdit={() => { setSelectedBlock(block); setShowEditModal(true); }}
+                  onEdit={() => openEditBlock(block)}
                   onDelete={() => handleDeleteBlock(block.id)}
                   onSetCurrent={() => handleSetCurrent(block.id)}
                   isPast
@@ -250,24 +289,33 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
         {blocks.length === 0 && (
           <div className="text-center py-12">
             <Layers className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-            <p className="text-slate-400 text-sm">Нет тренировочных блоков</p>
-            <p className="text-slate-500 text-xs mt-1">Создайте первый блок для планирования периодизации</p>
+            <p className="text-slate-400 text-sm">Пока нет циклов тренировок</p>
+            <p className="text-slate-500 text-xs mt-1">Создайте первый цикл — так проще видеть общую нагрузку</p>
           </div>
         )}
       </div>
 
-      {/* Create Modal */}
-      {showCreateModal && (
+      {/* Create / edit modal */}
+      {(showCreateModal || showEditModal) && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
           <div className="bg-[#0f161d] rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto border border-[#1a242f]">
             <div className="sticky top-0 bg-[#0f161d] border-b border-[#1a242f] px-4 py-3 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-white">Новый блок</h3>
-              <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-white">
+              <h3 className="text-lg font-bold text-white">
+                {showEditModal ? 'Редактировать цикл' : 'Новый цикл'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowCreateModal(false);
+                  setShowEditModal(false);
+                  setSelectedBlock(null);
+                }}
+                className="text-slate-400 hover:text-white"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateBlock} className="p-4 space-y-4">
+            <form onSubmit={showEditModal ? handleSaveEdit : handleCreateBlock} className="p-4 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Название</label>
                 <input
@@ -281,7 +329,7 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Тип блока</label>
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Тип цикла</label>
                 <div className="grid grid-cols-2 gap-2">
                   {BLOCK_TYPES.map(t => (
                     <button
@@ -326,7 +374,7 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">
-                  RPE диапазон
+                  Тяжесть подходов (1–10)
                 </label>
                 <div className="flex items-center gap-3">
                   <input
@@ -404,7 +452,7 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
                 className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
               >
                 <Save className="w-4 h-4" />
-                Создать блок
+                {showEditModal ? 'Сохранить изменения' : 'Создать цикл'}
               </button>
             </form>
           </div>
@@ -467,12 +515,12 @@ const BlockCard: React.FC<{
         <div className="bg-[#0b0f12] rounded-lg p-2 text-center">
           <BarChart3 className="w-3.5 h-3.5 text-slate-400 mx-auto mb-1" />
           <div className="text-lg font-bold text-white">{(stats.totalTonnage / 1000).toFixed(0)}т</div>
-          <div className="text-[10px] text-slate-500 uppercase">Тоннаж</div>
+          <div className="text-[10px] text-slate-500 uppercase">Общий вес</div>
         </div>
         <div className="bg-[#0b0f12] rounded-lg p-2 text-center">
           <Activity className="w-3.5 h-3.5 text-slate-400 mx-auto mb-1" />
           <div className="text-lg font-bold text-white">{stats.avgRpe}</div>
-          <div className="text-[10px] text-slate-500 uppercase">Средний RPE</div>
+          <div className="text-[10px] text-slate-500 uppercase">Средняя тяжесть</div>
         </div>
       </div>
 

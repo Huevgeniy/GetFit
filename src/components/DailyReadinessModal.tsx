@@ -72,19 +72,19 @@ export const DailyReadinessModal: React.FC<DailyReadinessModalProps> = ({
   let suggestedRpeMax = 9;
 
   if (calculatedScore >= 85) {
-    statusText = 'Пиковая готовность (Peak Readiness)';
+    statusText = 'Отличная готовность';
     statusColor = 'text-emerald-400 border-emerald-500/40 bg-emerald-950/40';
-    advice = 'Организм и ЦНС полностью восстановлены. Сегодня идеальный день для штурма 1ПМ, тяжелых подходов и прогрессии весов!';
+    advice = 'Нервная система и мышцы восстановлены. Хороший день для личных рекордов и тяжёлых подходов.';
     suggestedRpeMax = 9.5;
   } else if (calculatedScore >= 68) {
-    statusText = 'Рабочая готовность (Optimal)';
+    statusText = 'Рабочая готовность';
     statusColor = 'text-cyan-400 border-cyan-500/40 bg-cyan-950/40';
-    advice = 'Хороший уровень восстановления. Работай в целевом диапазоне RPE 7.5 - 8.5 без форсированных отказов.';
+    advice = 'Восстановление в норме. Работайте с тяжестью 7,5–8,5 из 10 без отказов.';
     suggestedRpeMax = 8.5;
   } else {
-    statusText = 'Повышенная утомляемость ЦНС (Fatigue)';
+    statusText = 'Повышенная утомляемость';
     statusColor = 'text-amber-400 border-amber-500/40 bg-amber-950/40';
-    advice = 'Высокий стресс или недосып. Рекомендуется снизить рабочий вес на 5-10% или сократить 1 рабочий подход (делод-корректировка).';
+    advice = 'Высокий стресс или недосып. Снизьте рабочий вес на 5–10% или уберите один тяжёлый подход.';
     suggestedRpeMax = 7.5;
   }
 
@@ -124,9 +124,9 @@ export const DailyReadinessModal: React.FC<DailyReadinessModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-1.5">
-                Оценка готовности & RPE
+                Оценка готовности
               </h2>
-              <p className="text-xs text-slate-400">Авторегуляция веса под состояние ЦНС и суставов</p>
+              <p className="text-xs text-slate-400">Подскажем нагрузку с учётом сна, стресса и состояния суставов</p>
             </div>
           </div>
           <button
@@ -140,13 +140,15 @@ export const DailyReadinessModal: React.FC<DailyReadinessModalProps> = ({
         {/* Live Score Banner */}
         <div className={`my-4 p-4 rounded-xl border ${statusColor} flex items-center justify-between gap-4 transition-all`}>
           <div>
-            <div className="text-[11px] uppercase tracking-wider font-bold opacity-80">Индекс восстановления ЦНС</div>
+            <div className="text-[11px] uppercase tracking-wider font-bold opacity-80">Восстановление организма</div>
             <div className="text-sm font-bold mt-0.5">{statusText}</div>
             <p className="text-xs mt-1 leading-relaxed opacity-90">{advice}</p>
           </div>
           <div className="text-right shrink-0">
             <div className="text-3xl font-extrabold tracking-tight">{calculatedScore}%</div>
-            <div className="text-[11px] font-semibold opacity-75">Макс RPE: {suggestedRpeMax}</div>
+            <div className="text-[11px] font-semibold opacity-75">
+              Тяжесть до {String(suggestedRpeMax).replace('.', ',')} из 10
+            </div>
           </div>
         </div>
 
@@ -287,7 +289,7 @@ export const DailyReadinessModal: React.FC<DailyReadinessModalProps> = ({
             className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-slate-950 bg-gradient-to-r from-emerald-400 to-cyan-400 hover:from-emerald-300 hover:to-cyan-300 transition shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-1.5"
           >
             <CheckCircle2 className="w-4 h-4" />
-            Применить индекс и RPE к тренировке
+            Применить к тренировке
           </button>
         </div>
       </div>

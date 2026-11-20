@@ -13,7 +13,12 @@ export type SportCategory =
   | 'combat' 
   | 'steps';
 
-export type SportFederation = 'WRPF' | 'WSF' | 'Минспорт / ЕВСК' | 'ОФП / Фитнес' | 'World Aquatics';
+export type SportFederation =
+  | 'WRPF'
+  | 'WSF'
+  | 'Минспорт / ЕВСК'
+  | 'Общая форма / Фитнес'
+  | 'World Aquatics';
 
 export type RankLevel = 
   | '3_junior' 
@@ -420,7 +425,7 @@ export interface SleepRecord {
   notes?: string;
 }
 
-// Personal Records (Личные рекорды & Комплексы)
+// Personal Records (личные рекорды и комплексы)
 export interface RecordHistoryItem {
   id: string;
   date: string;

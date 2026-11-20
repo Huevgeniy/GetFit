@@ -167,7 +167,7 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
             <div>
               <div className="text-xs font-bold text-slate-100">Отчёт за период</div>
               <div className="text-[11px] text-slate-400">
-                Тренировки, тоннаж, шаги, сон, питание и вес — нажми и выбери 7/30/90 дней
+                Тренировки, общий вес, шаги, сон, питание и вес тела — выберите 7, 30 или 90 дней
               </div>
             </div>
           </div>
@@ -198,7 +198,7 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
             }`}
           >
             <Calculator className="w-3.5 h-3.5" />
-            <span>1ПМ</span>
+            <span>Максимум</span>
           </button>
         )}
       </div>
@@ -235,7 +235,7 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
             </div>
           </div>
 
-          {/* Metric Selector (1ПМ vs Пересчет на 100 кг) */}
+          {/* Metric selector */}
           <div className="bg-[#12181f] border border-[#1e293b] rounded-xl p-3">
             <div className="flex items-center justify-between mb-2.5">
               <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
@@ -264,8 +264,8 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
                     : 'bg-[#151c24] border border-transparent text-slate-400 hover:text-slate-300'
                 }`}
               >
-                <div className="text-[10px] uppercase font-bold">1ПМ (кг)</div>
-                <div className="text-xs font-semibold mt-0.5">Расчетный максимум</div>
+                <div className="text-[10px] uppercase font-bold">Максимум (кг)</div>
+                <div className="text-xs font-semibold mt-0.5">Оценка по подходу</div>
               </button>
 
               <button
@@ -300,8 +300,8 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
                     : 'bg-[#151c24] border border-transparent text-slate-400 hover:text-slate-300'
                 }`}
               >
-                <div className="text-[10px] uppercase font-bold">Тоннаж</div>
-                <div className="text-xs font-semibold mt-0.5">Общий тоннаж (кг)</div>
+                <div className="text-[10px] uppercase font-bold">Общий вес</div>
+                <div className="text-xs font-semibold mt-0.5">Поднято за тренировку (кг)</div>
               </button>
             </div>
           </div>
@@ -312,10 +312,10 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="text-xs text-slate-400">
-                  {chartMetric === 'one_rep_max' && 'Динамика 1ПМ:'}
+                  {chartMetric === 'one_rep_max' && 'Динамика расчётного максимума:'}
                   {chartMetric === 'normalized_reps' && `Эквивалент повторов на ${baseWeightForNormalization} кг:`}
                   {chartMetric === 'max_weight' && 'Пиковый вес подхода:'}
-                  {chartMetric === 'tonnage' && 'Суммарный объем (тоннаж):'}
+                  {chartMetric === 'tonnage' && 'Общий поднятый вес:'}
                 </div>
                 <div className="text-xl font-bold font-mono text-emerald-400 mt-0.5">
                   {activePoint ? (
@@ -433,7 +433,7 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
 
                 <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
                   <div className="bg-[#141d27] p-2 rounded-lg">
-                    <div className="text-[10px] text-slate-400 uppercase">Расчетный 1ПМ</div>
+                    <div className="text-[10px] text-slate-400 uppercase">Расчётный максимум</div>
                     <div className="text-emerald-400 font-bold text-sm mt-0.5">
                       {activePoint.oneRepMax} кг
                     </div>
@@ -457,15 +457,15 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
           </div>
         </div>
       ) : (
-        /* Standalone 1RM Calculator Tab */
+        /* Standalone max calculator tab */
         <div className="space-y-4">
           <div className="bg-[#12181f] border border-[#1e293b] rounded-xl p-4">
             <div className="flex items-center gap-2 mb-3">
               <Calculator className="w-5 h-5 text-emerald-400" />
               <div>
-                <h3 className="text-sm font-bold text-slate-100">Самый честный 1ПМ калькулятор</h3>
+                <h3 className="text-sm font-bold text-slate-100">Калькулятор расчётного максимума</h3>
                 <p className="text-[11px] text-slate-400">
-                  Работает для жима лежа, приседа, становой и любого упражнения с доп. весом
+                  Работает для жима лёжа, приседа, становой и любого упражнения с дополнительным весом
                 </p>
               </div>
             </div>
@@ -506,7 +506,7 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
             {/* Honest 1RM Big Output Card */}
             <div className="bg-gradient-to-r from-emerald-950/70 to-teal-950/70 border border-emerald-500/40 rounded-xl p-4 text-center">
               <div className="text-[10px] uppercase tracking-wider text-emerald-300 font-semibold">
-                Честный консенсусный 1ПМ
+                Средняя оценка максимума
               </div>
               <div className="text-3xl font-extrabold font-mono text-emerald-400 my-1">
                 {calcResult.honestConsensus} <span className="text-sm font-normal text-slate-300">кг</span>
@@ -519,7 +519,7 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
             {/* Formula Comparison Table */}
             <div className="mt-4 pt-3 border-t border-[#1e293b]">
               <span className="text-[10px] uppercase font-bold text-slate-400 block mb-2">
-                Сравнение популярных формул 1ПМ:
+                Сравнение формул расчёта:
               </span>
               <div className="grid grid-cols-3 gap-2 text-xs font-mono">
                 <div className="bg-[#16202a] p-2 rounded-lg text-center">
@@ -540,7 +540,7 @@ export const ProgressCharts: React.FC<ProgressChartsProps> = ({
             {/* Percentages Training Table */}
             <div className="mt-4 pt-3 border-t border-[#1e293b]">
               <span className="text-[10px] uppercase font-bold text-slate-400 block mb-2">
-                Тренировочные зоны (% от 1ПМ):
+                Тренировочные зоны (% от максимума):
               </span>
               <div className="grid grid-cols-4 gap-2 text-xs font-mono">
                 {calcResult.percentages.slice(0, 4).map(p => (

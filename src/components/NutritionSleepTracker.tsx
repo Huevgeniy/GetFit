@@ -124,49 +124,62 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
     );
   }, [dailyRecords, selectedDate]);
 
-  // Target macros calculation based on user weight and goal
+  // Норма питания: базовый обмен по формуле Миффлина — Сан Жеора,
+  // затем поправка на активность и цель по весу.
   const calculatedTargets = useMemo(() => {
     const weight = user.currentWeight > 0 ? user.currentWeight : 75;
+    const height = user.heightCm && user.heightCm > 0 ? user.heightCm : 175;
+    const age = user.age && user.age > 0 ? user.age : 30;
     const goal = user.weightGoalType || 'maintain';
 
-    let calories = 2400;
+    const baseMetabolism =
+      10 * weight + 6.25 * height - 5 * age + (user.gender === 'female' ? -161 : 5);
+
+    const activityFactor =
+      user.activityLevel === 'sedentary'
+        ? 1.2
+        : user.activityLevel === 'active'
+          ? 1.55
+          : user.activityLevel === 'very_active'
+            ? 1.725
+            : 1.375;
+    const maintenanceCalories = Math.round(baseMetabolism * activityFactor);
+
+    let calories = maintenanceCalories;
     let proteinPerKg = 1.8;
     let fatPerKg = 1.0;
     let fiberTarget = 30;
 
     if (goal === 'gain') {
-      calories = Math.round(weight * 36);
-      proteinPerKg = 1.8; // от 1.6-2.0 г/кг
+      calories = Math.round(maintenanceCalories * 1.12);
+      proteinPerKg = 1.8; // 1,6–2,0 г на кг веса
       fatPerKg = 1.1;
       fiberTarget = 28;
     } else if (goal === 'lose') {
-      calories = Math.round(weight * 26);
-      proteinPerKg = 2.2; // при дефиците белок выше для сохранения сухой массы
+      calories = Math.round(maintenanceCalories * 0.82);
+      proteinPerKg = 2.2; // при дефиците белок выше, чтобы сохранить мышцы
       fatPerKg = 0.8;
       fiberTarget = 35; // больше клетчатки для сытости
     } else if (goal === 'recomp') {
-      calories = Math.round(weight * 31);
-      proteinPerKg = 2.4; // рекомпозиция требует максимального белка
+      calories = Math.round(maintenanceCalories * 0.95);
+      proteinPerKg = 2.4; // перестройка тела требует больше белка
       fatPerKg = 0.9;
       fiberTarget = 32;
-    } else {
-      // maintain
-      calories = Math.round(weight * 32);
-      proteinPerKg = 1.8;
-      fatPerKg = 1.0;
-      fiberTarget = 30;
     }
 
-    const targetProtein = Math.round(weight * proteinPerKg);
-    const targetFat = Math.round(weight * fatPerKg);
-    const remainingCalories = calories - (targetProtein * 4 + targetFat * 9);
-    const targetCarbs = Math.max(80, Math.round(remainingCalories / 4));
+    const targetProtein = user.customProteinTarget || Math.round(weight * proteinPerKg);
+    const targetFat = user.customFatTarget || Math.round(weight * fatPerKg);
+    // Свои калории тоже должны сходиться с БЖУ: остаток считаем от итоговой цели.
+    const effectiveCalories = user.customCalorieTarget || calories;
+    const remainingCalories = effectiveCalories - (targetProtein * 4 + targetFat * 9);
+    const targetCarbs =
+      user.customCarbsTarget || Math.max(80, Math.round(remainingCalories / 4));
 
     return {
-      calories: user.customCalorieTarget || calories,
-      protein: user.customProteinTarget || targetProtein,
-      fat: user.customFatTarget || targetFat,
-      carbs: user.customCarbsTarget || targetCarbs,
+      calories: effectiveCalories,
+      protein: targetProtein,
+      fat: targetFat,
+      carbs: targetCarbs,
       fiber: user.customFiberTarget || fiberTarget,
       proteinPerKg,
     };
@@ -394,27 +407,36 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
       const pCompliance = currentDayRecord.totalProtein >= calculatedTargets.protein * 0.9;
       const sleepOk = latestSleep ? latestSleep.durationHours >= 7.0 : true;
 
-      let report = `📊 **Комплексный ИИ-анализ восстановления и прогресса:**\n\n`;
+      const goalLabel =
+        user.weightGoalType === 'gain'
+          ? 'Набор веса'
+          : user.weightGoalType === 'lose'
+            ? 'Снижение веса'
+            : user.weightGoalType === 'recomp'
+              ? 'Перестройка тела'
+              : 'Поддержание веса';
+
+      let report = `📊 **Разбор питания и восстановления:**\n\n`;
 
       if (!sleepOk && latestSleep) {
-        report += `⚠️ **Дефицит сна:** Последний сон составил ${latestSleep.durationHours}ч (качество ${latestSleep.qualityScore}/10). При сне менее 7 часов секреция соматотропного гормона и синтез белка снижаются на 18-25%. Если на тренировке первый подход в жиме или тяге покажется тяжелее обычного — это временное утомление ЦНС, не снижайте рабочие веса.\n\n`;
+        report += `⚠️ **Мало сна:** Последний сон — ${latestSleep.durationHours} ч, качество ${latestSleep.qualityScore}/10. Если первый подход в жиме или тяге кажется тяжелее обычного, добавьте отдых между подходами и не гонитесь за рекордом.\n\n`;
       } else {
-        report += `✅ **Сон и ЦНС:** Средний сон ${avgSleep}ч находится в оптимальной фазе восстановления.\n\n`;
+        report += `✅ **Сон:** В среднем ${avgSleep} ч — хороший запас для восстановления.\n\n`;
       }
 
       if (pCompliance) {
-        report += `✅ **Аминокислотный пул:** Потребление белка (${currentDayRecord.totalProtein}г / цель ${calculatedTargets.protein}г) полностью покрывает пластические потребности для цели «${user.weightGoalType === 'gain' ? 'Набор массы' : user.weightGoalType === 'lose' ? 'Сушка' : 'Рекомпозиция'}».\n\n`;
+        report += `✅ **Белок:** ${currentDayRecord.totalProtein} г при цели ${calculatedTargets.protein} г. Для задачи «${goalLabel}» этого достаточно.\n\n`;
       } else {
-        report += `⚠️ **Питание:** Зафиксирован недобор белка. При цели «${user.weightGoalType}» это ограничивает суперкомпенсацию мышечных волокон.\n\n`;
+        report += `⚠️ **Белок:** ${currentDayRecord.totalProtein} г при цели ${calculatedTargets.protein} г. Для задачи «${goalLabel}» стоит добавить белок в следующие приёмы пищи.\n\n`;
       }
 
       if (user.inBodyRecords && user.inBodyRecords.length >= 2) {
         const [curr, prev] = user.inBodyRecords;
-        const smmDiff = Math.round((curr.skeletalMuscleMassKg - prev.skeletalMuscleMassKg) * 10) / 10;
+        const muscleDiff = Math.round((curr.skeletalMuscleMassKg - prev.skeletalMuscleMassKg) * 10) / 10;
         const fatDiff = Math.round((curr.bodyFatMassKg - prev.bodyFatMassKg) * 10) / 10;
-        report += `📈 **Связка с InBody:** Динамика мышечной массы (${smmDiff >= 0 ? '+' : ''}${smmDiff} кг) на фоне жировой массы (${fatDiff >= 0 ? '+' : ''}${fatDiff} кг). Рекомендуемая калорийность: ${calculatedTargets.calories} ккал.`;
+        report += `📈 **Состав тела:** мышцы ${muscleDiff >= 0 ? '+' : ''}${muscleDiff} кг, жир ${fatDiff >= 0 ? '+' : ''}${fatDiff} кг. Ориентир по калориям: ${calculatedTargets.calories} ккал.`;
       } else {
-        report += `💡 **Рекомендация:** Добавьте повторный скан InBody через 2-3 недели, чтобы ИИ сопоставил фактический темп сжигания жира и прироста SMM с калорийностью.`;
+        report += `💡 **Совет:** Сделайте повторный замер состава тела через 2–3 недели, чтобы сравнить динамику с калориями.`;
       }
 
       setAiAnalysisResult(report);
@@ -445,7 +467,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
           }`}
         >
           <Utensils className="w-3.5 h-3.5" />
-          <span>Калории & БЖУ</span>
+          <span>Калории и БЖУ</span>
         </button>
 
         <button
@@ -469,7 +491,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
           }`}
         >
           <Moon className="w-3.5 h-3.5" />
-          <span>Сон & Отдых</span>
+          <span>Сон и отдых</span>
         </button>
 
         <button
@@ -543,7 +565,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider">
-                  Цель: {user.weightGoalType === 'gain' ? 'Набор массы' : user.weightGoalType === 'lose' ? 'Сушка / Дефицит' : user.weightGoalType === 'recomp' ? 'Рекомпозиция' : 'Поддержание'}
+                  Цель: {user.weightGoalType === 'gain' ? 'Набор веса' : user.weightGoalType === 'lose' ? 'Снижение веса' : user.weightGoalType === 'recomp' ? 'Перестройка тела' : 'Поддержание веса'}
                 </span>
                 <div className="flex items-baseline gap-2 mt-0.5">
                   <span className="text-2xl font-black font-mono text-slate-100">
@@ -580,20 +602,20 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
             <div className="bg-[#151f2b] p-3 rounded-xl border border-[#202e3f] text-xs space-y-1">
               <div className="flex items-center gap-1.5 font-bold text-emerald-400">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Рекомендация по БЖУ и восстановлению:</span>
+                <span>Ориентиры по питанию и восстановлению:</span>
               </div>
               <p className="text-slate-300 text-[11px] leading-relaxed">
                 {user.weightGoalType === 'gain' && (
-                  <>При наборе массы держите белок от <strong>1.6–1.8 г/кг</strong> ({calculatedTargets.protein}г), профицит ~250–350 ккал для анаболизма без лишнего жира, и клетчатку от <strong>25г</strong>.</>
+                  <>При наборе веса держите белок <strong>1,6–1,8 г на кг</strong> ({calculatedTargets.protein} г), добавляйте 250–350 ккал сверх обычного и не меньше 25 г клетчатки.</>
                 )}
                 {user.weightGoalType === 'lose' && (
-                  <>При похудении белок повышен до <strong>2.0–2.2 г/кг</strong> ({calculatedTargets.protein}г) для сохранения мышц на дефиците. Норма клетчатки увеличена до <strong>35г</strong> для подавления чувства голода.</>
+                  <>При снижении веса белок выше — <strong>2,0–2,2 г на кг</strong> ({calculatedTargets.protein} г), чтобы сохранить мышцы. Клетчатки около 35 г: она помогает дольше оставаться сытым.</>
                 )}
                 {user.weightGoalType === 'recomp' && (
-                  <>Рекомпозиция требует высокого белка <strong>2.2–2.4 г/кг</strong> ({calculatedTargets.protein}г) при калорийности строго на уровне энергозатрат. Мышцы синтезируются за счет окисления жирового депо.</>
+                  <>При перестройке тела белок <strong>2,2–2,4 г на кг</strong> ({calculatedTargets.protein} г), а калории — примерно на уровне расхода. Жир уходит, мышцы остаются.</>
                 )}
                 {user.weightGoalType === 'maintain' && (
-                  <>Поддержание веса: сбалансированные БЖУ ({calculatedTargets.protein}г белка, {calculatedTargets.fat}г жиров, {calculatedTargets.carbs}г углеводов), клетчатка 30г для здоровой микрофлоры.</>
+                  <>Для поддержания веса: {calculatedTargets.protein} г белка, {calculatedTargets.fat} г жиров и {calculatedTargets.carbs} г углеводов в день, плюс около 30 г клетчатки.</>
                 )}
               </p>
             </div>
@@ -667,7 +689,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-xs font-bold text-slate-100">Итоги дня & Вердикт тренера</h3>
+                <h3 className="text-xs font-bold text-slate-100">Итоги дня и вывод тренера</h3>
               </div>
               {currentDayRecord.status === 'closed' && (
                 <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-500/30">

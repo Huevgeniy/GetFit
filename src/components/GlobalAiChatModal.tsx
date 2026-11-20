@@ -213,7 +213,7 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
           executed.push({
             type: 'log_workout',
             label: `Тренировка: ${ex}`,
-            details: `${weight} кг × ${reps} повторений ${sets > 1 ? `(${sets} подх.)` : ''} • RPE ~${rpe}`,
+            details: `${weight} кг × ${reps} повторений ${sets > 1 ? `(${sets} подх.)` : ''} • тяжесть ~${rpe}/10`,
             icon: 'workout',
           });
         } else if (fn === 'log_daily_state') {
@@ -417,11 +417,11 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
             <button
               type="button"
               onClick={() => setIsSettingsOpen(true)}
-              title="Личный промт и настройки ИИ"
+              title="Настройки ИИ и личные указания"
               className="px-2 py-1 rounded-lg bg-cyan-950/60 border border-cyan-500/30 text-cyan-400 hover:text-cyan-300 text-[10px] font-bold flex items-center gap-1 transition"
             >
               <Sparkles className="w-3 h-3 text-cyan-400" />
-              <span>Промт</span>
+              <span>Настройки</span>
             </button>
 
             <button

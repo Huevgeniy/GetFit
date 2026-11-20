@@ -17,7 +17,7 @@ export const MUSCLE_GROUPS: { id: CatalogExercise['muscleGroup']; label: string;
   { id: 'legs', label: 'Ноги', icon: '🦵' },
   { id: 'shoulders', label: 'Плечи (Дельты)', icon: '🥋' },
   { id: 'arms', label: 'Руки (Бицепс/Трицепс)', icon: '💪' },
-  { id: 'core', label: 'Пресс & Кор', icon: '⚡' },
+  { id: 'core', label: 'Пресс и кор', icon: '⚡' },
   { id: 'cardio', label: 'Кардио / Функционал', icon: '🏃' },
 ];
 
@@ -180,12 +180,12 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     defaultRestBetweenExercisesMinutes: 2,
   },
 
-  // Ноги & Ягодицы
+  // Ноги и ягодицы
   {
     id: 'legs_barbell_squat',
     name: 'Приседания со штангой на плечах',
     muscleGroup: 'legs',
-    muscleGroupName: 'Ноги & Ягодицы',
+    muscleGroupName: 'Ноги и ягодицы',
     defaultSets: 4,
     defaultReps: 6,
     defaultWeight: 120,
@@ -196,7 +196,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     id: 'legs_leg_press',
     name: 'Жим ногами в тренажере 45°',
     muscleGroup: 'legs',
-    muscleGroupName: 'Ноги & Ягодицы',
+    muscleGroupName: 'Ноги и ягодицы',
     defaultSets: 4,
     defaultReps: 10,
     defaultWeight: 200,
@@ -207,7 +207,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     id: 'legs_romanian_deadlift',
     name: 'Румынская тяга со штангой (на бицепс бедра)',
     muscleGroup: 'legs',
-    muscleGroupName: 'Ноги & Ягодицы',
+    muscleGroupName: 'Ноги и ягодицы',
     defaultSets: 4,
     defaultReps: 8,
     defaultWeight: 90,
@@ -218,7 +218,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     id: 'legs_lunges_dumbbell',
     name: 'Выпады с гантелями в шаге',
     muscleGroup: 'legs',
-    muscleGroupName: 'Ноги & Ягодицы',
+    muscleGroupName: 'Ноги и ягодицы',
     defaultSets: 3,
     defaultReps: 12,
     defaultWeight: 20,
@@ -229,7 +229,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     id: 'legs_extension_machine',
     name: 'Разгибания ног в тренажере сидя (квадрицепс)',
     muscleGroup: 'legs',
-    muscleGroupName: 'Ноги & Ягодицы',
+    muscleGroupName: 'Ноги и ягодицы',
     defaultSets: 3,
     defaultReps: 12,
     defaultWeight: 55,
@@ -240,7 +240,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     id: 'legs_curl_machine',
     name: 'Сгибания ног лежа в тренажере (бицепс бедра)',
     muscleGroup: 'legs',
-    muscleGroupName: 'Ноги & Ягодицы',
+    muscleGroupName: 'Ноги и ягодицы',
     defaultSets: 3,
     defaultReps: 12,
     defaultWeight: 45,
@@ -251,7 +251,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     id: 'legs_calf_raise',
     name: 'Подъем на носки стоя в тренажере (икры)',
     muscleGroup: 'legs',
-    muscleGroupName: 'Ноги & Ягодицы',
+    muscleGroupName: 'Ноги и ягодицы',
     defaultSets: 4,
     defaultReps: 15,
     defaultWeight: 70,
@@ -327,7 +327,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     defaultRestBetweenExercisesMinutes: 2,
   },
 
-  // Руки (Бицепс & Трицепс)
+  // Руки (бицепс и трицепс)
   {
     id: 'arms_barbell_curl',
     name: 'Подъем штанги на бицепс стоя',
@@ -395,12 +395,12 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     defaultRestBetweenExercisesMinutes: 2.5,
   },
 
-  // Пресс & Кор
+  // Пресс и кор
   {
     id: 'core_hanging_leg_raise',
     name: 'Подъем прямых ног в висе на перекладине',
     muscleGroup: 'core',
-    muscleGroupName: 'Пресс & Кор',
+    muscleGroupName: 'Пресс и кор',
     defaultSets: 3,
     defaultReps: 12,
     defaultWeight: 0,
@@ -411,7 +411,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     id: 'core_cable_crunch',
     name: 'Скручивания на коленях у блока ("Молитва")',
     muscleGroup: 'core',
-    muscleGroupName: 'Пресс & Кор',
+    muscleGroupName: 'Пресс и кор',
     defaultSets: 3,
     defaultReps: 15,
     defaultWeight: 45,
@@ -422,7 +422,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     id: 'core_decline_crunch',
     name: 'Скручивания на наклонной скамье с блином',
     muscleGroup: 'core',
-    muscleGroupName: 'Пресс & Кор',
+    muscleGroupName: 'Пресс и кор',
     defaultSets: 3,
     defaultReps: 15,
     defaultWeight: 10,
@@ -433,7 +433,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     id: 'core_plank',
     name: 'Планка на предплечьях с фиксацией',
     muscleGroup: 'core',
-    muscleGroupName: 'Пресс & Кор',
+    muscleGroupName: 'Пресс и кор',
     defaultSets: 3,
     defaultReps: 60, // 60 секунд
     defaultWeight: 0,
@@ -441,7 +441,7 @@ export const EXERCISE_CATALOG: CatalogExercise[] = [
     defaultRestBetweenExercisesMinutes: 2,
   },
 
-  // Кардио & Функционал
+  // Кардио и функционал
   {
     id: 'cardio_treadmill',
     name: 'Беговая дорожка (интервалы / подъем в гору)',

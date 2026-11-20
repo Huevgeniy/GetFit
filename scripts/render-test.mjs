@@ -259,8 +259,8 @@ check(
   basicProfileHtml.includes('Что остаётся в базовом режиме'),
 );
 check(
-  'в базовом профиле нет вкладки «Друзья &amp; Зарубы»',
-  !basicProfileHtml.includes('Друзья &amp; Зарубы') && !basicProfileHtml.includes('Друзья & Зарубы'),
+  'в базовом профиле нет вкладки «Друзья и зарубы»',
+  !basicProfileHtml.includes('Друзья и зарубы'),
 );
 const stepsProfileHtml = renderToString(
   React.createElement(
@@ -291,20 +291,19 @@ const advancedProfileHtml = renderToString(
 );
 check(
   'расширенный профиль показывает все тумблеры',
-  ['Марафоны целей', 'Зарубы с друзьями', 'Дисциплина и штрафы', 'Спортивные разряды', 'Лаборатория N=1', 'Циклы и периодизация'].every(
+  ['Марафоны целей', 'Зарубы с друзьями', 'Дисциплина и штрафы', 'Спортивные разряды', 'Лаборатория привычек', 'Циклы тренировок'].every(
     (label) => advancedProfileHtml.includes(label),
   ),
 );
 check(
   'расширенный профиль объясняет тумблеры',
   advancedProfileHtml.includes('Серии дней с шагами') &&
-    advancedProfileHtml.includes('Нормативы WRPF') &&
-    advancedProfileHtml.includes('Блоки гипертрофии'),
+    advancedProfileHtml.includes('Нормативы по пауэрлифтингу') &&
+    advancedProfileHtml.includes('Блоки роста мышц'),
 );
 check(
-  'расширенный профиль возвращает вкладки «Друзья &amp; Зарубы» и «Награды»',
-  (advancedProfileHtml.includes('Друзья &amp; Зарубы') || advancedProfileHtml.includes('Друзья & Зарубы')) &&
-    advancedProfileHtml.includes('Награды'),
+  'расширенный профиль возвращает вкладки «Друзья и зарубы» и «Награды»',
+  advancedProfileHtml.includes('Друзья и зарубы') && advancedProfileHtml.includes('Награды'),
 );
 
 const WorkoutsHubMod = require_(path.join(outDir, 'components', 'WorkoutsHub.js'));
@@ -394,7 +393,7 @@ const statsHtml = renderToString(
 );
 check(
   'отчёт за период содержит метрики',
-  ['Тренировок', 'Тоннаж', 'Подходов', 'Средний сон', 'Калории', 'Шаги', 'Вес'].every((label) =>
+  ['Тренировок', 'Общий вес', 'Подходов', 'Средний сон', 'Калории', 'Шаги', 'Вес'].every((label) =>
     statsHtml.includes(label),
   ),
   statsHtml.slice(0, 200),
