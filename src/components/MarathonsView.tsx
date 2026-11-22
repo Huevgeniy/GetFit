@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   Trophy, 
   Flame, 
@@ -30,34 +30,22 @@ interface MarathonsViewProps {
   user: UserProfile;
   onUpdateUser: (updated: Partial<UserProfile>) => void;
   onSelectStepsTab?: () => void;
+  /** Облачный список марафонов: его же обновляет бот из Telegram. */
+  marathons: GoalMarathon[];
+  onUpdateMarathons: (marathons: GoalMarathon[]) => void;
 }
 
 export const MarathonsView: React.FC<MarathonsViewProps> = ({
   user,
   onUpdateUser,
+  marathons,
+  onUpdateMarathons,
 }) => {
-  const [marathons, setMarathons] = useState<GoalMarathon[]>(() => {
-    try {
-      const saved = localStorage.getItem('getfit_goal_marathons');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const cleaned = parsed.filter((m: any) => 
-            m.id !== 'marathon_steps_14d' && m.id !== 'marathon_bench_30d' &&
-            !m.title?.includes('10 000 шагов каждый день') &&
-            !m.title?.includes('Силовой рывок: Жим 120 кг')
-          );
-          if (cleaned.length !== parsed.length) {
-            localStorage.setItem('getfit_goal_marathons', JSON.stringify(cleaned));
-          }
-          return cleaned;
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
+  const setMarathons = (
+    updater: GoalMarathon[] | ((prev: GoalMarathon[]) => GoalMarathon[]),
+  ) => {
+    onUpdateMarathons(typeof updater === 'function' ? updater(marathons) : updater);
+  };
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedMarathonId, setSelectedMarathonId] = useState<string | null>(null);
@@ -76,14 +64,6 @@ export const MarathonsView: React.FC<MarathonsViewProps> = ({
   const [targetMetricName, setTargetMetricName] = useState('Шаги в день');
   const [durationDays, setDurationDays] = useState(14);
   const [frequency, setFrequency] = useState<GoalMarathon['frequency']>('daily');
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('getfit_goal_marathons', JSON.stringify(marathons));
-    } catch (e) {
-      console.error('Failed to save marathons', e);
-    }
-  }, [marathons]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);

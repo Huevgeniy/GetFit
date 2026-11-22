@@ -89,6 +89,8 @@ export interface UserProfile {
   disciplineScore: number; // 0 to 100
   streakDays: number;
   longestStreak: number;
+  /** Дата последнего внесения данных через бота — защита от накрутки серии. */
+  lastBotLogDate?: string;
   selectedDisciplines: string[];
   inBodyRecords?: InBodyRecord[];
   targetRankTitle?: string;
@@ -440,6 +442,8 @@ export interface PersonalRecord {
   category: 'strength' | 'cardio' | 'complex' | 'other';
   currentBest: string; // "120 кг × 3"
   unit?: string;
+  /** Числовая оценка лучшего результата (расчётный максимум или повторы). */
+  numericValue?: number;
   history: RecordHistoryItem[];
   isPublic?: boolean;
   authorName?: string;

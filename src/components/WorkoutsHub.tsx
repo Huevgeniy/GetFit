@@ -19,7 +19,7 @@ import {
   Layers,
   Edit3
 } from 'lucide-react';
-import { WorkoutPlan, WorkoutRecord, UserProfile, DailyReadiness } from '../types';
+import { WorkoutPlan, WorkoutRecord, UserProfile, DailyReadiness, GoalMarathon } from '../types';
 import { FeatureFlags } from '../lib/features';
 
 /**
@@ -63,6 +63,9 @@ interface WorkoutsHubProps {
   openTemplatesSignal?: number;
   /** Пользователь открыл марафоны: приложение может показать обучение раздела. */
   onMarathonOpened?: () => void;
+  /** Марафоны живут в облачном состоянии — бот обновляет их вместе с тренировками. */
+  marathons?: GoalMarathon[];
+  onUpdateMarathons?: (marathons: GoalMarathon[]) => void;
 }
 
 export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
@@ -80,6 +83,8 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
   features,
   openTemplatesSignal = 0,
   onMarathonOpened,
+  marathons = [],
+  onUpdateMarathons,
 }) => {
   const [subTab, setSubTab] = useState<'workouts' | 'marathons'>('workouts');
   const [showNewPlanModal, setShowNewPlanModal] = useState(false);
@@ -347,7 +352,12 @@ export const WorkoutsHub: React.FC<WorkoutsHubProps> = ({
 
       {subTab === 'marathons' && features?.marathons ? (
         <Suspense fallback={<BlockLoader />}>
-          <MarathonsView user={user} onUpdateUser={onUpdateUser} />
+          <MarathonsView
+            user={user}
+            onUpdateUser={onUpdateUser}
+            marathons={marathons}
+            onUpdateMarathons={onUpdateMarathons || (() => {})}
+          />
         </Suspense>
       ) : (
         <>

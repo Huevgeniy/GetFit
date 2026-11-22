@@ -15,18 +15,46 @@ export function getTg(): TgWebApp | null {
   }
 }
 
+/**
+ * initData из hash. Telegram кладёт его в URL как #tgWebAppData=...
+ * Это страховка на случай, если SDK с telegram.org не загрузился: вход
+ * всё равно работает, а не превращается в пустой экран.
+ */
+function initDataFromHash(): string {
+  try {
+    const hash = window.location.hash.replace(/^#/, '');
+    if (!hash) return '';
+    const params = new URLSearchParams(hash);
+    return params.get('tgWebAppData') || params.get('initData') || '';
+  } catch {
+    return '';
+  }
+}
+
 export function isTelegram(): boolean {
-  return Boolean(getTg()?.initData);
+  return Boolean(getInitData());
 }
 
 export function getInitData(): string {
-  return getTg()?.initData || '';
+  const fromSdk = getTg()?.initData;
+  return fromSdk || initDataFromHash();
+}
+
+function startParamFromInitData(raw: string): string {
+  if (!raw) return '';
+  try {
+    return new URLSearchParams(raw).get('start_param') || '';
+  } catch {
+    return '';
+  }
 }
 
 /** Параметр deep-link: t.me/<bot>?startapp=<param> либо ?start=<param> */
 export function getStartParam(): string {
   const fromTg = getTg()?.initDataUnsafe?.start_param;
   if (fromTg) return String(fromTg);
+  const fromData = startParamFromInitData(getInitData());
+  if (fromData) return fromData;
   try {
     const params = new URLSearchParams(window.location.search);
     return params.get('startapp') || params.get('tgWebAppStartParam') || '';
@@ -36,16 +64,38 @@ export function getStartParam(): string {
 }
 
 export function getTelegramUser(): { id?: number; first_name?: string; username?: string } | null {
-  return getTg()?.initDataUnsafe?.user ?? null;
+  const fromSdk = getTg()?.initDataUnsafe?.user;
+  if (fromSdk) return fromSdk;
+  try {
+    const raw = new URLSearchParams(getInitData()).get('user');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Настраивает внешний вид Mini App и подгоняет высоту под вьюпорт Telegram.
  * Высота выносится в CSS-переменную --app-height: 100vh внутри Telegram врёт.
+ *
+ * SDK грузится асинхронно, поэтому функция сначала работает с обычным окном,
+ * а когда Telegram.WebApp появляется — подхватывает его и повторяет настройку.
  */
-export function applyTelegramUi(): void {
-  const tg = getTg();
-  if (!tg) return;
+let uiBound = false;
+let boundTg: TgWebApp | null = null;
+
+function syncViewport(tg: TgWebApp | null): void {
+  const height = tg?.viewportStableHeight || tg?.viewportHeight || window.innerHeight;
+  document.documentElement.style.setProperty('--app-height', `${height}px`);
+  const safeTop = tg?.contentSafeAreaInset?.top ?? 0;
+  const safeBottom = tg?.contentSafeAreaInset?.bottom ?? 0;
+  document.documentElement.style.setProperty('--tg-safe-top', `${safeTop}px`);
+  document.documentElement.style.setProperty('--tg-safe-bottom', `${safeBottom}px`);
+}
+
+function bindTelegram(tg: TgWebApp | null): void {
+  if (!tg || tg === boundTg) return;
+  boundTg = tg;
 
   try {
     tg.expand?.();
@@ -68,21 +118,41 @@ export function applyTelegramUi(): void {
   // Полноэкранный режим намеренно не включаем: у приложения своя шапка,
   // а в fullscreen меняются safe-area и высота вьюпорта.
 
-  const syncViewport = () => {
-    const height = tg.viewportStableHeight || tg.viewportHeight || window.innerHeight;
-    document.documentElement.style.setProperty('--app-height', `${height}px`);
-    const safeTop = tg.contentSafeAreaInset?.top ?? 0;
-    const safeBottom = tg.contentSafeAreaInset?.bottom ?? 0;
-    document.documentElement.style.setProperty('--tg-safe-top', `${safeTop}px`);
-    document.documentElement.style.setProperty('--tg-safe-bottom', `${safeBottom}px`);
-  };
-  syncViewport();
-
+  const onViewport = () => syncViewport(tg);
+  syncViewport(tg);
   try {
-    tg.onEvent?.('viewportChanged', syncViewport);
-    tg.onEvent?.('safeAreaChanged', syncViewport);
-    tg.onEvent?.('contentSafeAreaChanged', syncViewport);
+    tg.onEvent?.('viewportChanged', onViewport);
+    tg.onEvent?.('safeAreaChanged', onViewport);
+    tg.onEvent?.('contentSafeAreaChanged', onViewport);
   } catch { /* ignore */ }
+}
+
+export function applyTelegramUi(): void {
+  bindTelegram(getTg());
+  syncViewport(getTg());
+
+  if (uiBound) return;
+  uiBound = true;
+
+  const refresh = () => {
+    const tg = getTg();
+    bindTelegram(tg);
+    syncViewport(tg);
+  };
+
+  window.addEventListener('resize', refresh);
+  window.visualViewport?.addEventListener('resize', refresh);
+  window.addEventListener('load', refresh);
+
+  // Если SDK придёт после первого рендера — подхватим его без перезагрузки.
+  let attempts = 0;
+  const timer = window.setInterval(() => {
+    attempts += 1;
+    if (getTg() || attempts > 24) {
+      window.clearInterval(timer);
+      refresh();
+    }
+  }, 500);
 }
 
 export function hapticImpact(style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft' = 'light'): void {

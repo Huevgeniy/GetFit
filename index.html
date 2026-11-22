@@ -1,52 +1,89 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>GetFitBot</title>
-    <meta name="description" content="Telegram Mini App для учета тренировок, 1ПМ калькулятора, спортивных разрядов, заруб с друзьями и ИИ-тренера в реальном времени" />
+    <meta name="description" content="Telegram Mini App для учёта тренировок, питания, сна и прогресса" />
     <meta property="og:title" content="GetFitBot" />
-    <meta property="og:description" content="Telegram Mini App для учета тренировок, 1ПМ калькулятора, спортивных разрядов, заруб с друзьями и ИИ-тренера в реальном времени" />
+    <meta property="og:description" content="Telegram Mini App для учёта тренировок, питания, сна и прогресса" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script>
-      // Initialize Telegram WebApp immediately
-      window.TelegramWebAppInit = function() {
-        if (window.Telegram && window.Telegram.WebApp) {
-          const tg = window.Telegram.WebApp;
-          
-          // Expand to full height
-          tg.expand();
-          
-          // Enable closing confirmation
-          tg.enableClosingConfirmation();
-          
-          // Set header color
-          tg.setHeaderColor('#0b0f12');
-          tg.setBackgroundColor('#0b0f12');
-          
-          // Ready signal
-          tg.ready();
-          
-          // Send initData to app for auth
-          window.telegramInitData = tg.initData;
-          window.telegramUser = tg.initDataUnsafe?.user;
-          
-          console.log('[Telegram WebApp] Initialized', window.telegramUser);
-        }
-      };
-      
-      // Call init on load
-      document.addEventListener('DOMContentLoaded', window.TelegramWebAppInit);
-    </script>
+    <!--
+      SDK грузим асинхронно: если telegram.org недоступен, приложение всё равно
+      откроется, а initData прочитается из hash (см. src/lib/telegram.ts).
+    -->
+    <script async src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+      html, body { margin: 0; background: #070a0d; color: #e2e8f0; }
+      #boot-screen {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        text-align: center;
+        padding: 24px;
+      }
+      #boot-screen .boot-pulse {
+        width: 10px; height: 10px; border-radius: 999px; background: #34d399;
+        animation: boot-ping 1.2s cubic-bezier(0, 0, 0.2, 1) infinite;
+      }
+      #boot-screen .boot-title { font-size: 15px; font-weight: 700; }
+      #boot-screen .boot-hint { font-size: 12px; color: #94a3b8; max-width: 280px; line-height: 1.5; }
+      #boot-screen button {
+        margin-top: 4px; border: 0; border-radius: 10px; padding: 9px 16px;
+        background: #10b981; color: #04231a; font-weight: 700; font-size: 13px;
+      }
+      @keyframes boot-ping { 75%, 100% { transform: scale(2.2); opacity: 0; } }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-screen">
+        <span class="boot-pulse"></span>
+        <div class="boot-title">Загружаю GetFit…</div>
+        <div class="boot-hint" id="boot-hint">Если приложение давно не открывали, сервер может просыпаться до 30 секунд.</div>
+      </div>
+    </div>
+    <script>
+      // Понятное сообщение вместо пустого экрана, если бандл не загрузился.
+      (function () {
+        var shown = false;
+        function showBootError(message) {
+          if (shown) return;
+          shown = true;
+          var root = document.getElementById('root');
+          if (!root) return;
+          root.innerHTML =
+            '<div id="boot-screen">' +
+            '<div class="boot-title">Не удалось загрузить приложение</div>' +
+            '<div class="boot-hint">' + String(message || 'Проверьте интернет и попробуйте ещё раз.') + '</div>' +
+            '<button onclick="location.reload()">Обновить</button>' +
+            '</div>';
+        }
+        window.addEventListener('error', function (event) {
+          var target = event && event.target;
+          if (target && target.tagName === 'SCRIPT') {
+            showBootError('Не загрузился файл приложения. Обновите страницу.');
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function () {
+          // Ошибки API не должны закрывать интерфейс — показываем их только при пустом экране.
+          if (!document.querySelector('#root > *:not(#boot-screen)')) {
+            showBootError('Ошибка при запуске. Обновите страницу.');
+          }
+        });
+        setTimeout(function () {
+          if (document.getElementById('boot-screen') && !document.querySelector('#root > *:not(#boot-screen)')) {
+            var hint = document.getElementById('boot-hint');
+            if (hint) hint.textContent = 'Сервер отвечает дольше обычного. Подождите ещё немного или обновите страницу.';
+          }
+        }, 12000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

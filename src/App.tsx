@@ -89,6 +89,7 @@ import {
   SleepRecord,
   FoodItem,
   PersonalRecord,
+  GoalMarathon,
   AiProvidersInfo
 } from './types';
 import { 
@@ -226,6 +227,26 @@ export default function App() {
     }
   });
 
+  // Марафоны целей: теперь в облаке, чтобы бот мог отмечать прогресс
+  // по шагам и тренировкам, пока приложение закрыто.
+  const [marathons, setMarathons] = useState<GoalMarathon[]>(() => {
+    try {
+      const saved = localStorage.getItem('getfit_goal_marathons');
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(
+        (m: any) =>
+          m?.id !== 'marathon_steps_14d' &&
+          m?.id !== 'marathon_bench_30d' &&
+          !m?.title?.includes('10 000 шагов каждый день') &&
+          !m?.title?.includes('Силовой рывок: Жим 120 кг'),
+      );
+    } catch {
+      return [];
+    }
+  });
+
   const handleSaveCustomTemplate = (template: WorkoutPlan) => {
     setCustomTemplates(prev => {
       const idx = prev.findIndex(t => t.id === template.id);
@@ -326,6 +347,10 @@ export default function App() {
     localStorage.setItem('getfit_records', JSON.stringify(personalRecords));
   }, [personalRecords]);
 
+  useEffect(() => {
+    localStorage.setItem('getfit_goal_marathons', JSON.stringify(marathons));
+  }, [marathons]);
+
   /* ---------------- Синхронизация с облаком ---------------- */
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'offline' | 'local'>('idle');
   const [storageMode, setStorageMode] = useState<'postgres' | 'file' | 'unavailable' | null>(null);
@@ -337,6 +362,8 @@ export default function App() {
   const skipSaveRef = useRef(false);
   /** Старые шаги из localStorage нашли в облаке впервые — их нужно сразу сохранить. */
   const stepsMigrationRef = useRef(false);
+  /** Марафоны раньше жили только в localStorage — переносим их в облако. */
+  const marathonsMigrationRef = useRef(false);
   const syncTimerRef = useRef<number | null>(null);
   /** true, если по deep-link только что приняли зарубу (защита от устаревшего списка) */
   const joinedBattleRef = useRef(false);
@@ -352,6 +379,7 @@ export default function App() {
     customFoods,
     personalRecords,
     customTemplates,
+    marathons,
   });
 
   // Старт: сессия -> данные из облака; если облако пустое — заливаем локальные
@@ -413,6 +441,8 @@ export default function App() {
         if (Array.isArray(data.customFoods)) setCustomFoods(data.customFoods);
         if (Array.isArray(data.personalRecords)) setPersonalRecords(data.personalRecords);
         if (Array.isArray(data.customTemplates)) setCustomTemplates(data.customTemplates);
+        if (Array.isArray(data.marathons)) setMarathons(data.marathons);
+        else if (marathons.length > 0) marathonsMigrationRef.current = true;
         setSyncStatus('synced');
       } else {
         const legacySteps = readLegacyStepLog(120);
@@ -446,9 +476,10 @@ export default function App() {
     if (skipSaveRef.current) {
       skipSaveRef.current = false;
       // Обычная гидратация уже актуальна в облаке. Исключение — перенос
-      // старых шагов: его надо один раз записать, иначе он останется только здесь.
-      if (!stepsMigrationRef.current) return;
+      // старых шагов и марафонов: его надо один раз записать, иначе он останется только здесь.
+      if (!stepsMigrationRef.current && !marathonsMigrationRef.current) return;
       stepsMigrationRef.current = false;
+      marathonsMigrationRef.current = false;
     }
     setSyncStatus('syncing');
     if (syncTimerRef.current) window.clearTimeout(syncTimerRef.current);
@@ -470,6 +501,7 @@ export default function App() {
     customFoods,
     personalRecords,
     customTemplates,
+    marathons,
   ]);
 
   // Deep-link: ?startapp=<код зарубы> либо ?startapp=tpl_<код шаблона>
@@ -798,6 +830,7 @@ export default function App() {
     'customFoods',
     'personalRecords',
     'customTemplates',
+    'marathons',
   ] as const;
 
   /** Копирует полный слепок данных в буфер обмена (в WebView скачивание файла ненадёжно). */
@@ -844,6 +877,7 @@ export default function App() {
       if (Array.isArray(data.customFoods)) setCustomFoods(data.customFoods);
       if (Array.isArray(data.personalRecords)) setPersonalRecords(data.personalRecords);
       if (Array.isArray(data.customTemplates)) setCustomTemplates(data.customTemplates);
+      if (Array.isArray(data.marathons)) setMarathons(data.marathons);
       hapticNotify('success');
       return { success: true };
     } catch (err: any) {
@@ -1027,6 +1061,7 @@ export default function App() {
     setSleepRecords([]);
     setCustomFoods(BASE_FOODS_DATABASE);
     setPersonalRecords(INITIAL_PERSONAL_RECORDS);
+    setMarathons([]);
   };
 
   const pendingPenaltiesCount = penalties.filter(p => p.status === 'pending').length;
@@ -1130,6 +1165,8 @@ export default function App() {
                   features={features}
                   openTemplatesSignal={templateOpenSignal}
                   onMarathonOpened={() => setMarathonsOpened(true)}
+                  marathons={marathons}
+                  onUpdateMarathons={setMarathons}
                 />
               )}
 

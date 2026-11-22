@@ -1,4 +1,4 @@
-import { FoodItem } from '../types';
+import type { FoodItem } from '../types';
 
 export const BASE_FOODS_DATABASE: FoodItem[] = [
   // Мясо, птица, рыба, яйца

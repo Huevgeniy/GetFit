@@ -36,6 +36,14 @@ import {
 } from './server/storage.ts';
 import { runNotificationCycle } from './server/notifications.ts';
 import { extractInBodyNumbers } from './server/inbody.ts';
+import {
+  clearPendingActions,
+  heuristicMeals,
+  ingestBotTurn,
+  localDayKey,
+  pendingReply,
+  sanitizeActions,
+} from './server/bot-ingestion.ts';
 
 dotenv.config();
 
@@ -215,6 +223,9 @@ app.get('/api/health', (req, res) => {
     hasGrokKey: Boolean(GROK_KEY),
     hasTelegramToken: Boolean(process.env.TELEGRAM_BOT_TOKEN),
     storage: storageReady ? storageMode() : 'unavailable',
+    // Версию видно снаружи: помогает понять, доехал ли деплой до Render.
+    commit: (process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'dev').slice(0, 7),
+    appUrl: PUBLIC_APP_URL || null,
   });
 });
 
@@ -537,8 +548,12 @@ app.post('/api/db/sync', async (req, res) => {
 /* ------------------------------------------------------------------ */
 
 const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'get_fitbot';
-/** Публичный адрес Mini App (Render домен). Без него бот не сможет открыть приложение. */
-const PUBLIC_APP_URL = (process.env.APP_URL || '').replace(/\/+$/, '');
+/**
+ * Публичный адрес Mini App. На Render переменная RENDER_EXTERNAL_URL
+ * появляется сама, поэтому APP_URL больше не обязателен: если его забыли
+ * обновить после переезда, бот всё равно открывает правильный домен.
+ */
+const PUBLIC_APP_URL = (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '');
 
 /**
  * Ссылка-приглашение идёт через чат с ботом (`?start=<код>`), а не через
@@ -1556,37 +1571,86 @@ interface NLIResult {
 }
 
 async function processNaturalLanguageInput(message: string, userProfile?: any, currentSettings?: any): Promise<NLIResult> {
-  const systemInstruction = `Ты — GetFitBot Natural Language Interface & AI Coach, ядро интеллектуального спортивного ввода и анализа.
-Пользователь может как задать вопрос по спорту, так и ввести тренировку, замеры, сон или эксперимент на свободном русском языке, например:
-«Сегодня сделал жим 100 на 5 раз, чувствовалось тяжело, спал всего 5 часов. Еще замерил талию 82 см.»
-«Подтягивания с весом 20 кг на 6 раз»
-«Спал 8 часов, отлично отдохнул, вес утром 81.5 кг»
-«Начни эксперимент: пить креатин 5г каждый день для жима лежа»
-«Поставь цель 12 000 шагов»
-«Назначь мне штраф 50 берпи»
+  const systemInstruction = `Ты — GetFitBot Natural Language Interface & AI Coach: разбираешь свободный текст атлета и превращаешь его в структурированные данные для приложения.
+
+Примеры сообщений:
+«Сделал жим 100 на 5, 3 подхода, присед 120 3 по 8. Чувствовалось тяжело. Спал 5 часов.»
+«Прошёл 12 000 шагов, съел овсянку с бананом и курицу с рисом, вес утром 81.5 кг.»
+«Начни эксперимент: пить креатин 5 г каждый день для жима лёжа.»
+«Поставь цель 12 000 шагов.»
+«Назначь штраф 50 берпи.»
 
 ТВОЯ ЗАДАЧА:
-1. Распознать намерение и данные из сообщения.
-2. Сформировать живой, поддерживающий ответ тренера на «вы». Без терминов RPE и 1ПМ: говорите «тяжесть подхода» и «расчётный максимум». Отметьте связи, например влияние недосыпа на нагрузку, похвалите за результат или замер.
-3. Вернуть СТРОГИЙ JSON следующего формата:
+1. Извлечь ВСЕ данные, которые человек реально назвал. Не выдумывать вес, повторы, продукты и цифры, которых нет в тексте.
+2. Вернуть СТРОГИЙ JSON без комментариев и markdown:
 {
-  "reply": "Ответ пользователю на русском языке (живой, лаконичный, с поддержкой и разбором связей)",
-  "actions": [
-    // Список функций (пустой массив [], если это просто вопрос без сохранения данных):
-    // 1. log_workout:
-    // { "function": "log_workout", "args": { "exercise": "Жим штанги лежа", "weight": 100, "reps": 5, "sets": 1, "rpe": 8.5, "notes": "Чувствовалось тяжело" } }
-    // 2. log_metric:
-    // { "function": "log_metric", "args": { "name": "Талия", "value": 82, "unit": "см", "category": "body" } }
-    // 3. log_daily_state:
-    // { "function": "log_daily_state", "args": { "sleep_hours": 5, "sleep_quality": 5, "stress_level": 6, "notes": "Недосып, спал всего 5ч" } }
-    // 4. create_experiment:
-    // { "function": "create_experiment", "args": { "title": "Прием креатина 5г", "hypothesis": "Ежедневный прием 5г креатина повысит жим на 5%", "dependent_metric": "Жим лежа", "independent_metrics": ["Креатин 5г/день"], "duration_days": 21 } }
-    // 5. update_user:
-    // { "function": "update_user", "args": { "dailyStepGoal": 12000, "currentWeight": 81.5 } }
-    // 6. add_penalty:
-    // { "function": "add_penalty", "args": { "reason": "Самодисциплина", "penaltyTask": "50 берпи", "pointsDeducted": 5 } }
-  ]
+  "reply": "живой ответ тренера на русском, 2–4 предложения",
+  "actions": []
 }
+
+ФОРМАТЫ ДЕЙСТВИЙ:
+
+1) Тренировка — ОДИН объект на всю тренировку, все упражнения внутри:
+{ "function": "log_workout", "args": {
+  "title": "Грудь и трицепс",
+  "date": "2026-11-23",
+  "duration_minutes": 60,
+  "exercises": [
+    { "name": "Жим штанги лёжа", "sets": [
+      { "weight": 100, "reps": 5, "rpe": 8 },
+      { "weight": 100, "reps": 5 },
+      { "weight": 100, "reps": 4 }
+    ]},
+    { "name": "Приседания со штангой", "sets": [
+      { "weight": 120, "reps": 8 }, { "weight": 120, "reps": 8 }, { "weight": 120, "reps": 8 }
+    ]}
+  ]
+}}
+Правила:
+- «3 подхода по 5» → три отдельных объекта в sets с одинаковым весом и повторами.
+- Если назван только один подход — один объект.
+- «возможно рекорд» / «кажется, рекорд» — НЕ добавляй отдельное действие: просто запиши подходы, сервер сам проверит рекорд.
+- rpe указывай только если человек явно описал тяжесть (легко = 7, тяжело = 8.5, отказ = 9.5).
+
+2) Дневные данные — сон, шаги, вода, вес, еда:
+{ "function": "log_daily", "args": {
+  "date": "2026-11-23",
+  "sleep_hours": 7.5,
+  "sleep_quality": 8,
+  "bedtime": "23:30",
+  "wake_time": "07:00",
+  "steps": 12000,
+  "water_liters": 2.5,
+  "weight_kg": 81.5,
+  "meals": [
+    { "name": "Овсянка", "grams": 150, "calories": 550, "protein": 18, "fat": 10, "carbs": 90, "meal_type": "breakfast" },
+    { "name": "Куриная грудка", "grams": 200, "calories": 330, "protein": 62, "fat": 8, "carbs": 0, "meal_type": "lunch" }
+  ],
+  "notes": "Недосып"
+}}
+Правила:
+- Шаги — это фактическое число за день («прошёл 12 000»). Цель по шагам — отдельное действие update_user.
+- Еду разбивай на отдельные продукты. Если граммы не названы, оцени реалистичную порцию. БЖУ оцениваешь ты, в расчёте на указанную порцию.
+- Вес тела указывай в weight_kg. Если человек говорит «поставь целевой вес» — это update_user.targetWeight.
+- date — только если человек назвал день («вчера», «позавчера») или дату. Иначе не добавляй поле.
+
+3) Замеры тела:
+{ "function": "log_metric", "args": { "name": "Талия", "value": 82, "unit": "см", "category": "body" } }
+
+4) Цели и профиль:
+{ "function": "update_user", "args": { "dailyStepGoal": 12000, "currentWeight": 81.5, "targetWeight": 75 } }
+
+5) Эксперимент:
+{ "function": "create_experiment", "args": { "title": "Креатин 5 г", "hypothesis": "Ежедневный креатин повысит жим на 5%", "dependent_metric": "Жим лёжа", "independent_metrics": ["Креатин 5г/день", "Сон"], "duration_days": 21 } }
+
+6) Штраф:
+{ "function": "add_penalty", "args": { "reason": "Самодисциплина", "penaltyTask": "50 берпи", "pointsDeducted": 5 } }
+
+ВАЖНО:
+- Если это просто вопрос или совет без новых данных — "actions": [].
+- Не утверждай в reply, что данные уже сохранены: сохранение подтвердит сервер. Скажи, что понял и что это даёт.
+- В reply не используй термины RPE и 1ПМ. Говори «тяжесть подхода» и «расчётный максимум».
+- Отвечай на «вы», кратко и по делу.
 `;
 
   const contextPrompt = `Профиль атлета: ${JSON.stringify(userProfile || {})}
@@ -1632,12 +1696,14 @@ async function processNaturalLanguageInput(message: string, userProfile?: any, c
   const actions: any[] = [];
   const replyParts: string[] = [];
 
-  // 1. Workout recognition (e.g. "жим 100 на 5", "присед 120 3 по 8", "подтягивания 20 кг на 6")
-  const workoutRegex = /(?:сделал|пожал|подтянул(?:ся)?|присел|выполнил)?\s*(жим(?:\s+штанги)?(?:\s+лежа|\s+стоя|\s+узким\s+хватом)?|присед(?:ания)?(?:\s+со\s+штангой)?|станов(?:ая)?\s+тяг(?:а)?|подтягивани[яе](?:\s+на\s+турнике)?|отжимания?(?:\s+на\s+брусьях)?|брусь[яев]|тяг[аи](?:\s+в\s+наклоне)?)\s*(\d+(?:[.,]\d+)?)\s*(?:кг)?\s*(?:(?:на|х|\*)\s*(\d+)|(\d+)\s*(?:по|х|\*)\s*(\d+))/i;
-  const wMatch = message.match(workoutRegex);
-  if (wMatch) {
+  // 1. Workout recognition (e.g. "жим 100 на 5", "присед 120 3 по 8")
+  // Ищем все упражнения в сообщении, а не только первое.
+  const workoutRegex = /(?:сделал|пожал|подтянул(?:ся)?|присел|выполнил)?\s*(жим(?:\s+штанги)?(?:\s+лежа|\s+стоя|\s+узким\s+хватом)?|присед(?:ания)?(?:\s+со\s+штангой)?|станов(?:ая)?\s+тяг(?:а)?|подтягивани[яе](?:\s+на\s+турнике)?|отжимания?(?:\s+на\s+брусьях)?|брусь[яев]|тяг[аи](?:\s+в\s+наклоне)?)\s*(\d+(?:[.,]\d+)?)\s*(?:кг)?\s*(?:(?:на|х|\*)\s*(\d+)|(\d+)\s*(?:по|х|\*)\s*(\d+))/gi;
+  const parsedExercises: Array<{ name: string; sets: Array<{ weight: number; reps: number; rpe: number }> }> = [];
+  const seenExercises = new Set<string>();
+  for (const wMatch of message.matchAll(workoutRegex)) {
     const rawExName = wMatch[1].trim();
-    let exName = 'Жим штанги лежа';
+    let exName = 'Жим штанги лёжа';
     if (/присед/i.test(rawExName)) exName = 'Приседания со штангой';
     else if (/станов/i.test(rawExName) || /тяг/i.test(rawExName)) exName = 'Становая тяга';
     else if (/подтягиван/i.test(rawExName)) exName = 'Подтягивания с весом';
@@ -1652,23 +1718,36 @@ async function processNaturalLanguageInput(message: string, userProfile?: any, c
       sets = parseInt(wMatch[4], 10);
       reps = parseInt(wMatch[5], 10);
     }
+    sets = Math.max(1, Math.min(20, sets));
+    reps = Math.max(1, Math.min(100, reps));
+
+    const signature = `${exName}|${weight}|${reps}|${sets}`;
+    if (seenExercises.has(signature)) continue;
+    seenExercises.add(signature);
 
     let rpe = 8.0;
     if (/тяжело|еле|максимум|отказ/i.test(message)) rpe = 8.5;
     else if (/легко|запас/i.test(message)) rpe = 7.0;
 
+    parsedExercises.push({
+      name: exName,
+      sets: Array.from({ length: sets }, () => ({ weight, reps, rpe })),
+    });
+  }
+  if (parsedExercises.length > 0) {
     actions.push({
       function: 'log_workout',
       args: {
-        exercise: exName,
-        weight,
-        reps,
-        sets,
-        rpe,
+        exercises: parsedExercises,
         notes: message.includes('тяжело') ? 'Чувствовалось тяжело' : undefined,
+        date: /вчера/i.test(message) ? localDayKey(new Date(Date.now() - 86400000)) : undefined,
       },
     });
-    replyParts.push(`Записан подход: ${exName} ${weight} кг × ${reps} повторений (тяжесть ~${rpe}/10)!`);
+    replyParts.push(
+      `Распознал тренировку: ${parsedExercises
+        .map(ex => `${ex.name} ${ex.sets.map(set => `${set.weight} кг × ${set.reps}`).join(', ')}`)
+        .join('; ')}.`,
+    );
   }
 
   // 2. Sleep recognition (e.g. "спал 5 часов", "сон 7.5 ч")
@@ -1677,7 +1756,7 @@ async function processNaturalLanguageInput(message: string, userProfile?: any, c
     const sleepHours = parseFloat(sleepMatch[1].replace(',', '.'));
     const isLowSleep = sleepHours < 6.5;
     actions.push({
-      function: 'log_daily_state',
+      function: 'log_daily',
       args: {
         sleep_hours: sleepHours,
         sleep_quality: isLowSleep ? 5 : 8,
@@ -1718,26 +1797,49 @@ async function processNaturalLanguageInput(message: string, userProfile?: any, c
   if (weightMatch) {
     const weight = parseFloat(weightMatch[1].replace(',', '.'));
     actions.push({
-      function: 'update_user',
-      args: { currentWeight: weight },
+      function: 'log_daily',
+      args: { weight_kg: weight },
     });
     actions.push({
       function: 'log_metric',
       args: { name: 'Вес тела', value: weight, unit: 'кг', category: 'body' },
     });
-    replyParts.push(`Текущий вес обновлен: ${weight} кг.`);
+    replyParts.push(`Текущий вес обновлён: ${weight} кг.`);
   }
 
-  // 5. Steps goal
-  const stepMatch = message.match(/(?:норматив|цель|норма|план)?\s*(?:по\s+)?шаг(?:ов|ам|ами)?\s*(?:на|в|поставить|сделать|равен)?\s*(\d{3,6})/i)
-    || message.match(/(\d{3,6})\s*шаг/i);
-  if (stepMatch) {
-    const steps = parseInt(stepMatch[1], 10);
+  // 5. Steps: цель отличается от фактических шагов
+  const stepGoalMatch =
+    message.match(/(?:цель|норматив|норма|план|поставь)\s*(?:по\s+)?шаг(?:ов|ам|ами)?\s*(?:на|в|до|=|—|-)?\s*(\d{3,6})/i) ||
+    message.match(/(\d{3,6})\s*шаг(?:ов)?\s*(?:в\s+день|ежедневно|цель)/i);
+  if (stepGoalMatch) {
+    const steps = parseInt(stepGoalMatch[1], 10);
     actions.push({
       function: 'update_user',
       args: { dailyStepGoal: steps },
     });
     replyParts.push(`Цель по шагам установлена: ${steps.toLocaleString('ru-RU')} шагов.`);
+  } else {
+    const stepActualMatch =
+      message.match(/(?:прош[её]л|прошла|сходил|сходила|набрал|набрала|сделал|сделала|сегодня)\D{0,24}(\d{3,6})\s*шаг/i) ||
+      message.match(/шаг(?:ов|и)?\s*(?:—|:|-)?\s*(\d{3,6})/i);
+    if (stepActualMatch) {
+      const steps = parseInt(stepActualMatch[1], 10);
+      actions.push({
+        function: 'log_daily',
+        args: { steps },
+      });
+      replyParts.push(`Шаги за сегодня: ${steps.toLocaleString('ru-RU')}.`);
+    }
+  }
+
+  // 5.1. Еда: запасной разбор по базе продуктов
+  const meals = heuristicMeals(message);
+  if (meals.length > 0) {
+    actions.push({
+      function: 'log_daily',
+      args: { meals },
+    });
+    replyParts.push(`Распознал еду: ${meals.map(meal => `${meal.name} ${meal.grams} г`).join(', ')}.`);
   }
 
   // 6. Penalty
@@ -2016,7 +2118,34 @@ app.post('/api/battles/verify', async (req, res) => {
   }
 });
 
+/** Явная просьба сохранить данные: «внеси», «запиши», «сохрани». */
+function isSaveRequest(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized || normalized.includes('?')) return false;
+  if (/^(да|ок|окей|верно|точно|ага|сохраняй|внеси)$/.test(normalized)) return true;
+  return /(^|[\s,.!])(внеси|внесите|запиши|запишите|сохрани|сохраните|зафиксируй|зафиксируйте|добавь|добавьте|обнови|обновите|внести|записать|сохранить)(?=[\s,.!]|$)/i.test(normalized);
+}
+
+function isCancelRequest(text: string): boolean {
+  return /^(отмена|отмени|отменить|не надо|не сохраняй|не записывай|забудь|удали)([\s,.!]|$)/i.test(text.trim());
+}
+
 // Telegram Bot Handlers and Polling
+/** Вызов Telegram Bot API с таймаутом: зависший запрос не должен блокировать ответ. */
+async function telegramApi(token: string, method: string, payload?: unknown): Promise<any> {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: payload ? 'POST' : 'GET',
+      headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+      body: payload ? JSON.stringify(payload) : undefined,
+      signal: AbortSignal.timeout(8000),
+    });
+    return await res.json();
+  } catch (err: any) {
+    return { ok: false, description: err?.message || 'network error' };
+  }
+}
+
 async function handleTelegramUpdate(token: string, update: any) {
   if (!update || !update.message) return;
   const msg = update.message;
@@ -2105,7 +2234,7 @@ async function handleTelegramUpdate(token: string, update: any) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: chatId,
-        text: `📖 **Команды GetFit:**\n\n/start — Открыть главное меню и мини-приложение\n/help — Справка и возможности\n/ranks — Нормативы и спортивные разряды\n\nМожно также написать любой вопрос по тренировкам, технике или питанию прямо сюда — я отвечу как ИИ-тренер.`,
+        text: `📖 **Команды GetFit:**\n\n/start — Открыть главное меню и мини-приложение\n/help — Справка и возможности\n/ranks — Нормативы и спортивные разряды\n/diag — Проверить, почему не открывается приложение\n\nМожно также написать данные тренировки, шаги, еду и сон обычным текстом — я разберу их и запишу. Например: «сделал жим 100 на 5, прошёл 12000 шагов, спал 7 часов, внеси».`,
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
@@ -2135,7 +2264,60 @@ async function handleTelegramUpdate(token: string, update: any) {
     return;
   }
 
-  // Process message via Natural Language Interface & AI Coach in Telegram chat
+  if (text.startsWith('/diag')) {
+    const [me, webhook, menu] = await Promise.all([
+      telegramApi(token, 'getMe'),
+      telegramApi(token, 'getWebhookInfo'),
+      telegramApi(token, 'getChatMenuButton'),
+    ]);
+
+    const hookUrl = webhook?.result?.url || '';
+    const menuUrl = menu?.result?.web_app?.url || '';
+    const expectedHook = PUBLIC_APP_URL ? `${PUBLIC_APP_URL}/api/telegram/webhook` : '';
+    const commit = (process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'dev').slice(0, 7);
+    const hasMainWebApp = Boolean(me?.result?.has_main_web_app);
+    const webhookOk = Boolean(hookUrl) && (!expectedHook || hookUrl === expectedHook);
+
+    const lines = [
+      '🩺 <b>Диагностика GetFit</b>',
+      '',
+      `Публичный адрес: <code>${PUBLIC_APP_URL || 'не задан'}</code>`,
+      `Версия сборки: <code>${commit}</code>`,
+      `Хранилище: ${storageReady ? storageMode() : 'недоступно'}`,
+      `Главный Mini App в BotFather: ${hasMainWebApp ? 'да' : 'нет'}`,
+      '',
+      `<b>Webhook</b>`,
+      `URL: <code>${hookUrl || 'не установлен'}</code>`,
+      `Статус: ${webhookOk ? 'совпадает с приложением' : '⚠️ НЕ совпадает или не установлен'}`,
+      `Ожидается: <code>${expectedHook || '—'}</code>`,
+      `В очереди обновлений: ${webhook?.result?.pending_update_count ?? '—'}`,
+    ];
+    if (webhook?.result?.last_error_message) {
+      lines.push(`Последняя ошибка: <code>${String(webhook.result.last_error_message).slice(0, 200)}</code>`);
+    }
+    lines.push(
+      '',
+      `<b>Кнопка меню</b>`,
+      `URL: <code>${menuUrl || 'не настроена'}</code>`,
+      '',
+      hasMainWebApp
+        ? 'Прямые ссылки на приложение должны открываться.'
+        : '⚠️ В BotFather не настроен Main Mini App: прямые ссылки t.me открывают чат, а не приложение. Настройка: @BotFather → Bot Settings → Configure Mini App.',
+    );
+    if (!webhookOk) {
+      lines.push('', '⚠️ Бот получает сообщения, но приложение может открываться по старому адресу. Проверь APP_URL и перезапусти сервис.');
+    }
+
+    await telegramApi(token, 'sendMessage', {
+      chat_id: chatId,
+      text: lines.join('\n'),
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    });
+    return;
+  }
+
+  // Свободный ввод: ИИ разбирает текст, сервер раскладывает данные по разделам
   let aiReply = 'Отличный настрой! Откройте приложение, чтобы посмотреть подробный план и аналитику.';
   if (text) {
     try {
@@ -2145,122 +2327,35 @@ async function handleTelegramUpdate(token: string, update: any) {
       const nliResult = await processNaturalLanguageInput(text, userEntry?.user);
       aiReply = nliResult.reply;
 
-      // If user performed real data actions via Telegram, persist to database
-      if (nliResult.actions && nliResult.actions.length > 0) {
-        const state: any = userEntry && typeof userEntry === 'object' ? userEntry : {};
-        if (!state.user) {
-          state.user = {
-            id: userId,
-            name: msg.from?.first_name || 'Атлет',
-            telegramUsername: msg.from?.username,
-            disciplineScore: 90,
-            streakDays: 1,
-          };
+      const wantsSave = isSaveRequest(text);
+      const wantsCancel = isCancelRequest(text);
+
+      if (wantsCancel) {
+        const cleared = await clearPendingActions(userId);
+        if (cleared) {
+          aiReply = 'Хорошо, ничего не сохранял. Если передумаешь — просто напиши данные заново.';
         }
-        state.pastWorkouts = state.pastWorkouts || [];
-        state.sleepRecords = state.sleepRecords || [];
-        state.customMetrics = state.customMetrics || [];
-        state.penalties = state.penalties || [];
+      } else {
+        const result = await ingestBotTurn({
+          userId,
+          userName: msg.from?.first_name,
+          username: msg.from?.username,
+          text,
+          actions: sanitizeActions(nliResult.actions),
+          wantsSave,
+        });
 
-        const uData = state;
-
-        const actionNotices: string[] = [];
-
-        for (const act of nliResult.actions) {
-          if (act.function === 'log_workout') {
-            const args = act.args || {};
-            const weight = Number(args.weight) || 0;
-            const reps = Number(args.reps) || 1;
-            const sets = Number(args.sets) || 1;
-            const oneRM = Math.round(weight * (1 + reps / 30));
-            const exName = args.exercise || 'Упражнение';
-            uData.pastWorkouts.unshift({
-              id: `rec_tg_${Date.now()}`,
-              planTitle: 'Telegram AI Лог',
-              completedDate: new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' }),
-              durationMinutes: 45,
-              totalTonnage: weight * reps * sets,
-              exercises: [{
-                name: exName,
-                sets: [{ setNumber: 1, weight, reps, completed: true, rpe: Number(args.rpe) || 8 }],
-                best1RM: oneRM,
-              }],
-            });
-            if (uData.user) {
-              uData.user.streakDays = (uData.user.streakDays || 0) + 1;
-              uData.user.disciplineScore = Math.min(100, (uData.user.disciplineScore || 85) + 2);
-            }
-            actionNotices.push(`🏋️ Записан подход: ${exName} ${weight} кг × ${reps} (расчётный максимум ~${oneRM} кг)`);
-          } else if (act.function === 'log_daily_state') {
-            const args = act.args || {};
-            const sleepHours = Number(args.sleep_hours) || 7;
-            uData.sleepRecords.unshift({
-              id: `slp_tg_${Date.now()}`,
-              date: new Date().toISOString().split('T')[0],
-              durationHours: sleepHours,
-              qualityScore: Number(args.sleep_quality) || 7,
-              deepSleepMinutes: Math.round(sleepHours * 15),
-              remSleepMinutes: Math.round(sleepHours * 12),
-              restingHeartRate: 58,
-              notes: args.notes || 'Лог через Telegram',
-            });
-            actionNotices.push(`🌙 Зафиксирован сон: ${sleepHours}ч`);
-          } else if (act.function === 'log_metric') {
-            const args = act.args || {};
-            const val = Number(args.value) || 0;
-            const metricName = args.name || 'Показатель';
-            const unit = args.unit || 'см';
-            uData.customMetrics.unshift({
-              id: `cm_${Date.now()}`,
-              name: metricName,
-              unit,
-              category: args.category || 'body',
-              currentValue: val,
-              history: [{
-                id: `mh_${Date.now()}`,
-                date: new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
-                value: val,
-              }],
-            });
-            actionNotices.push(`📏 Замер сохранен: ${metricName} ${val} ${unit}`);
-          } else if (act.function === 'update_user') {
-            uData.user = { ...uData.user, ...(act.args || {}) };
-            actionNotices.push(`🎯 Параметры профиля обновлены`);
-          } else if (act.function === 'add_penalty') {
-            const args = act.args || {};
-            uData.penalties.unshift({
-              id: `pen_tg_${Date.now()}`,
-              workoutDate: new Date().toISOString().split('T')[0],
-              reason: args.reason || 'Самодисциплина',
-              penaltyTask: args.penaltyTask || 'Штраф',
-              status: 'pending',
-              date: 'Сегодня',
-              pointsDeducted: Number(args.pointsDeducted) || 5,
-            });
-            actionNotices.push(`⚠️ Назначено штрафное задание: «${args.penaltyTask}»`);
-          } else if (act.function === 'create_experiment') {
-            const args = act.args || {};
-            await upsertCollectionItem('experiments', userId, {
-              id: `exp_tg_${Date.now()}`,
-              title: args.title || 'Эксперимент через Telegram',
-              hypothesis: args.hypothesis || '',
-              startDate: new Date().toISOString().split('T')[0],
-              endDate: new Date(Date.now() + (Number(args.duration_days) || 21) * 86400000).toISOString().split('T')[0],
-              durationDays: Number(args.duration_days) || 21,
-              status: 'active',
-              dependentMetric: { name: args.dependent_metric || 'Сила', unit: 'кг', type: 'performance' },
-              independentMetrics: (args.independent_metrics || ['Фактор']).map((m: string) => ({ name: m, unit: 'ед', targetValue: 1, type: 'supplement' })),
-              baselineValue: 'База',
-              dailyLogs: {},
-            });
-            actionNotices.push(`🔬 Эксперимент создан в Лаборатории: «${args.title}»`);
-          }
-        }
-
-        await saveUserState(userId, state);
-
-        if (actionNotices.length > 0) {
-          aiReply = `✅ **Данные сохранены в GetFit:**\n${actionNotices.join('\n')}\n\n${aiReply}`;
+        if (result.mode === 'staged') {
+          const savedPart =
+            result.notices.length > 0
+              ? `✅ **Сразу сохранено:**\n${result.notices.join('\n')}`
+              : '';
+          aiReply = [savedPart, aiReply, pendingReply(result.preview)].filter(Boolean).join('\n\n');
+        } else if (result.notices.length > 0) {
+          aiReply = `✅ **Данные сохранены в GetFit:**\n${result.notices.join('\n')}\n\n${aiReply}`;
+        } else if (wantsSave) {
+          aiReply =
+            'Не нашёл данных для записи. Напиши, что внести, например: «жим 100 на 5, 3 подхода, шаги 12000, спал 7 часов, съел овсянку».';
         }
       }
     } catch (err) {
@@ -2382,6 +2477,7 @@ async function initTelegramBot() {
               { command: 'start', description: 'Запустить GetFitBot Mini App' },
               { command: 'help', description: 'Справка и команды' },
               { command: 'ranks', description: 'Таблица нормативов и разрядов' },
+              { command: 'diag', description: 'Проверить, почему не открывается приложение' },
             ],
           }),
         });
@@ -2451,8 +2547,21 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(
+      express.static(distPath, {
+        setHeaders(res, filePath) {
+          // Хэшированные файлы Vite неизменны — кэшируем навсегда.
+          if (/[\\/]assets[\\/]/.test(filePath)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          } else if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-store');
+          }
+        },
+      }),
+    );
     app.get('*', (req, res) => {
+      // index.html не кэшируем: после деплоя пользователь должен получить новую сборку.
+      res.set('Cache-Control', 'no-store');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
