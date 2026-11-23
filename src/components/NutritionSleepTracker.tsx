@@ -81,6 +81,9 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
   const [newProdFat, setNewProdFat] = useState<number>(5);
   const [newProdCarbs, setNewProdCarbs] = useState<number>(15);
   const [newProdFiber, setNewProdFiber] = useState<number>(2);
+  /** Как введены БЖУ: на 100 г или сразу на всю привычную порцию. */
+  const [newProdBasis, setNewProdBasis] = useState<'per100' | 'portion'>('per100');
+  const [newProdPortion, setNewProdPortion] = useState<number>(100);
 
   // Morning weigh-in state
   const [morningWeightInput, setMorningWeightInput] = useState<number>(user.currentWeight || 0);
@@ -98,9 +101,21 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
   const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
   const [aiAnalysisResult, setAiAnalysisResult] = useState<string | null>(null);
 
-  // Merge base foods + custom foods
+  // Merge base foods + custom foods. Повторы id/названий не допускаем:
+  // одинаковые React-ключи ломают перерисовку списка при фильтрации.
   const allFoods = useMemo(() => {
-    return [...BASE_FOODS_DATABASE, ...customFoods];
+    const seenIds = new Set<string>();
+    const seenNames = new Set<string>();
+    const merged: FoodItem[] = [];
+    for (const food of [...BASE_FOODS_DATABASE, ...customFoods]) {
+      if (!food?.id || seenIds.has(food.id)) continue;
+      const nameKey = food.name.toLowerCase().replace(/ё/g, 'е').trim();
+      if (seenNames.has(nameKey)) continue;
+      seenIds.add(food.id);
+      seenNames.add(nameKey);
+      merged.push(food);
+    }
+    return merged;
   }, [customFoods]);
 
   // Current day's record
@@ -266,6 +281,18 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
     e.preventDefault();
     if (!newProdName.trim()) return;
 
+    // Пользователь может ввести БЖУ на 100 г или сразу на всю порцию —
+    // внутри храним всегда на 100 г, а привычную порцию запоминаем отдельно.
+    const portion = Math.max(1, Math.round(newProdPortion || 100));
+    const factor = newProdBasis === 'portion' ? 100 / portion : 1;
+    const per100 = {
+      caloriesPer100g: Math.round(newProdCals * factor),
+      proteinPer100g: Math.round(newProdProt * factor * 10) / 10,
+      fatPer100g: Math.round(newProdFat * factor * 10) / 10,
+      carbsPer100g: Math.round(newProdCarbs * factor * 10) / 10,
+      fiberPer100g: Math.round(newProdFiber * factor * 10) / 10,
+    };
+
     // Check if food with same or similar name exists
     const existingIndex = customFoods.findIndex(f => f.name.toLowerCase() === newProdName.trim().toLowerCase());
     if (existingIndex >= 0) {
@@ -274,30 +301,30 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
       const count = existing.timesLogged || 1;
       const averaged: FoodItem = {
         ...existing,
-        caloriesPer100g: Math.round((existing.caloriesPer100g * count + newProdCals) / (count + 1)),
-        proteinPer100g: Math.round(((existing.proteinPer100g * count + newProdProt) / (count + 1)) * 10) / 10,
-        fatPer100g: Math.round(((existing.fatPer100g * count + newProdFat) / (count + 1)) * 10) / 10,
-        carbsPer100g: Math.round(((existing.carbsPer100g * count + newProdCarbs) / (count + 1)) * 10) / 10,
-        fiberPer100g: Math.round(((existing.fiberPer100g * count + newProdFiber) / (count + 1)) * 10) / 10,
+        caloriesPer100g: Math.round((existing.caloriesPer100g * count + per100.caloriesPer100g) / (count + 1)),
+        proteinPer100g: Math.round(((existing.proteinPer100g * count + per100.proteinPer100g) / (count + 1)) * 10) / 10,
+        fatPer100g: Math.round(((existing.fatPer100g * count + per100.fatPer100g) / (count + 1)) * 10) / 10,
+        carbsPer100g: Math.round(((existing.carbsPer100g * count + per100.carbsPer100g) / (count + 1)) * 10) / 10,
+        fiberPer100g: Math.round(((existing.fiberPer100g * count + per100.fiberPer100g) / (count + 1)) * 10) / 10,
+        defaultGrams: portion,
         timesLogged: count + 1,
       };
       onSaveCustomFood(averaged);
       setSelectedFood(averaged);
+      setInputGrams(averaged.defaultGrams || 100);
     } else {
       const newFood: FoodItem = {
         id: `custom_${Date.now()}`,
         name: newProdName.trim(),
         category: 'custom',
-        caloriesPer100g: newProdCals,
-        proteinPer100g: newProdProt,
-        fatPer100g: newProdFat,
-        carbsPer100g: newProdCarbs,
-        fiberPer100g: newProdFiber,
+        ...per100,
+        defaultGrams: portion,
         userAdded: true,
         timesLogged: 1,
       };
       onSaveCustomFood(newFood);
       setSelectedFood(newFood);
+      setInputGrams(newFood.defaultGrams || 100);
     }
 
     setIsCreatingNewProduct(false);
@@ -1015,9 +1042,55 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                   />
                 </div>
 
+                <div className="bg-[#18232f] rounded-xl p-2.5 space-y-2">
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setNewProdBasis('per100')}
+                      className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold ${
+                        newProdBasis === 'per100'
+                          ? 'bg-emerald-500 text-slate-950'
+                          : 'bg-[#0e151c] text-slate-400'
+                      }`}
+                    >
+                      БЖУ на 100 г
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewProdBasis('portion')}
+                      className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold ${
+                        newProdBasis === 'portion'
+                          ? 'bg-emerald-500 text-slate-950'
+                          : 'bg-[#0e151c] text-slate-400'
+                      }`}
+                    >
+                      БЖУ на всю порцию
+                    </button>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-1">
+                      {newProdBasis === 'portion' ? 'Вес этой порции (г)' : 'Порция по умолчанию (г)'}
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={newProdPortion}
+                      onChange={e => setNewProdPortion(parseFloat(e.target.value) || 0)}
+                      className="w-full bg-[#0e151c] border border-[#263546] rounded-xl px-3 py-1.5 font-mono text-xs text-slate-100"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    {newProdBasis === 'portion'
+                      ? 'Введите граммовку и БЖУ готового блюда целиком — приложение пересчитает на 100 г и запомнит порцию.'
+                      : 'Введите БЖУ на 100 г. Порция подставится автоматически при выборе продукта.'}
+                  </p>
+                </div>
+
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   <div>
-                    <label className="text-[10px] text-slate-400 block mb-1">Ккал на 100г</label>
+                    <label className="text-[10px] text-slate-400 block mb-1">
+                      {newProdBasis === 'portion' ? 'Ккал за порцию' : 'Ккал на 100 г'}
+                    </label>
                     <input
                       type="number"
                       value={newProdCals}
@@ -1027,7 +1100,9 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-slate-400 block mb-1">Белки (г)</label>
+                    <label className="text-[10px] text-slate-400 block mb-1">
+                      {newProdBasis === 'portion' ? 'Белки за порцию (г)' : 'Белки на 100 г'}
+                    </label>
                     <input
                       type="number"
                       step="0.1"
@@ -1038,7 +1113,9 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-slate-400 block mb-1">Жиры (г)</label>
+                    <label className="text-[10px] text-slate-400 block mb-1">
+                      {newProdBasis === 'portion' ? 'Жиры за порцию (г)' : 'Жиры на 100 г'}
+                    </label>
                     <input
                       type="number"
                       step="0.1"
@@ -1049,7 +1126,9 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-slate-400 block mb-1">Углеводы (г)</label>
+                    <label className="text-[10px] text-slate-400 block mb-1">
+                      {newProdBasis === 'portion' ? 'Углеводы за порцию (г)' : 'Углеводы на 100 г'}
+                    </label>
                     <input
                       type="number"
                       step="0.1"
@@ -1060,7 +1139,9 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                   </div>
 
                   <div className="col-span-2 sm:col-span-1">
-                    <label className="text-[10px] text-emerald-400 font-bold block mb-1">Клетчатка (г)</label>
+                    <label className="text-[10px] text-emerald-400 font-bold block mb-1">
+                      {newProdBasis === 'portion' ? 'Клетчатка за порцию (г)' : 'Клетчатка на 100 г'}
+                    </label>
                     <input
                       type="number"
                       step="0.1"
@@ -1134,7 +1215,10 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                     return (
                       <div
                         key={food.id}
-                        onClick={() => setSelectedFood(food)}
+                        onClick={() => {
+                          setSelectedFood(food);
+                          setInputGrams(food.defaultGrams || 100);
+                        }}
                         className={`p-2.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between text-xs ${
                           isSelected
                             ? 'bg-emerald-950/60 border-emerald-500 text-emerald-300'

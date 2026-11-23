@@ -41,9 +41,15 @@ import {
   heuristicMeals,
   ingestBotTurn,
   localDayKey,
+  parseDishSaveCommand,
   pendingReply,
   sanitizeActions,
 } from './server/bot-ingestion.ts';
+import {
+  answerDataQuestion,
+  buildStateContext,
+  shouldAnswerDirectly,
+} from './server/state-context.ts';
 
 dotenv.config();
 
@@ -1570,7 +1576,13 @@ interface NLIResult {
   aiProvider: string;
 }
 
-async function processNaturalLanguageInput(message: string, userProfile?: any, currentSettings?: any): Promise<NLIResult> {
+async function processNaturalLanguageInput(
+  message: string,
+  userProfile?: any,
+  currentSettings?: any,
+  dataContext?: Record<string, any>,
+  savedFoods: any[] = [],
+): Promise<NLIResult> {
   const systemInstruction = `Ты — GetFitBot Natural Language Interface & AI Coach: разбираешь свободный текст атлета и превращаешь его в структурированные данные для приложения.
 
 Примеры сообщений:
@@ -1631,8 +1643,24 @@ async function processNaturalLanguageInput(message: string, userProfile?: any, c
 Правила:
 - Шаги — это фактическое число за день («прошёл 12 000»). Цель по шагам — отдельное действие update_user.
 - Еду разбивай на отдельные продукты. Если граммы не названы, оцени реалистичную порцию. БЖУ оцениваешь ты, в расчёте на указанную порцию.
+- Если название еды совпадает с блюдом из «savedDishes» — используй точное название блюда и НЕ оценивай БЖУ. Граммы добавляй только если человек их назвал.
 - Вес тела указывай в weight_kg. Если человек говорит «поставь целевой вес» — это update_user.targetWeight.
 - date — только если человек назвал день («вчера», «позавчера») или дату. Иначе не добавляй поле.
+
+2.1) Сохранение готового блюда (если человек просит запомнить):
+{ "function": "save_dish", "args": {
+  "name": "Завтрак стандартный",
+  "grams": 500,
+  "calories": 600,
+  "protein": 35,
+  "fat": 20,
+  "carbs": 60,
+  "fiber": 8
+}}
+Правила:
+- БЖУ и калории указывай за всю порцию grams, а не на 100 г.
+- Сохраняй только то, что человек реально назвал. Если БЖУ нет — не выдумывай, а попроси написать граммовку и БЖУ.
+- Если блюдо уже есть в «savedDishes» контекста, обнови его тем же названием.
 
 3) Замеры тела:
 { "function": "log_metric", "args": { "name": "Талия", "value": 82, "unit": "см", "category": "body" } }
@@ -1648,6 +1676,8 @@ async function processNaturalLanguageInput(message: string, userProfile?: any, c
 
 ВАЖНО:
 - Если это просто вопрос или совет без новых данных — "actions": [].
+- На вопросы о своих данных (калории, белок, шаги, сон, вес, тренировки, подходы, рекорды) отвечай по «dataContext». Не говори, что не имеешь доступа к данным. Если в контексте чего-то нет — честно скажи, что это ещё не записано.
+- Не выдумывай цифры: используй только dataContext и текст сообщения.
 - Не утверждай в reply, что данные уже сохранены: сохранение подтвердит сервер. Скажи, что понял и что это даёт.
 - В reply не используй термины RPE и 1ПМ. Говори «тяжесть подхода» и «расчётный максимум».
 - Отвечай на «вы», кратко и по делу.
@@ -1655,9 +1685,11 @@ async function processNaturalLanguageInput(message: string, userProfile?: any, c
 
   const contextPrompt = `Профиль атлета: ${JSON.stringify(userProfile || {})}
 Текущие настройки/контекст: ${JSON.stringify(currentSettings || {})}
+Данные приложения на сегодня: ${JSON.stringify(dataContext || {})}
+Сохранённые блюда: ${JSON.stringify(dataContext?.savedDishes || [])}
 Сообщение атлета: "${message}"
 
-Выдели намерения, извлеки данные и сформируй ответ.`;
+Выдели намерения, извлеки данные и сформируй ответ. Если это вопрос — ответь по данным приложения.`;
 
   const aiResult = await callUnifiedAI({
     systemInstruction,
@@ -1695,6 +1727,13 @@ async function processNaturalLanguageInput(message: string, userProfile?: any, c
   // Robust algorithmic regex heuristic fallback
   const actions: any[] = [];
   const replyParts: string[] = [];
+
+  // 0. Сохранение готового блюда без ИИ
+  const dishSave = parseDishSaveCommand(message);
+  if (dishSave) {
+    actions.push(dishSave);
+    replyParts.push(`Запомнил блюдо «${String(dishSave.args?.name || '').trim()}».`);
+  }
 
   // 1. Workout recognition (e.g. "жим 100 на 5", "присед 120 3 по 8")
   // Ищем все упражнения в сообщении, а не только первое.
@@ -1838,8 +1877,8 @@ async function processNaturalLanguageInput(message: string, userProfile?: any, c
     }
   }
 
-  // 5.1. Еда: запасной разбор по базе продуктов
-  const meals = heuristicMeals(message);
+  // 5.1. Еда: запасной разбор по базе продуктов и сохранённым блюдам
+  const meals = heuristicMeals(message, savedFoods);
   if (meals.length > 0) {
     actions.push({
       function: 'log_daily',
@@ -2247,7 +2286,7 @@ async function handleTelegramUpdate(token: string, update: any) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: chatId,
-        text: `📖 **Команды GetFit:**\n\n/start — Открыть главное меню и мини-приложение\n/help — Справка и возможности\n/ranks — Нормативы и спортивные разряды\n/diag — Проверить, почему не открывается приложение\n\nМожно также писать данные обычным текстом. Я покажу, что понял, и запишу после слова «внеси». Например: «жим 100 на 5, 3 подхода, шаги 12000, спал 7 часов, съел овсянку». Потом напиши «внеси».`,
+        text: `📖 **Команды GetFit:**\n\n/start — Открыть главное меню и мини-приложение\n/help — Справка и возможности\n/ranks — Нормативы и спортивные разряды\n/dishes — Мои сохранённые блюда\n/diag — Проверить, почему не открывается приложение\n\nМожно также писать данные обычным текстом. Я покажу, что понял, и запишу после слова «внеси». Например: «жим 100 на 5, 3 подхода, шаги 12000, спал 7 часов, съел овсянку». Потом напиши «внеси».`,
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
@@ -2274,6 +2313,32 @@ async function handleTelegramUpdate(token: string, update: any) {
         },
       }),
     });
+    return;
+  }
+
+  if (/^\/dishes(?:\s|$)/i.test(text)) {
+    try {
+      const stored = await getUserState(`tg:${chatId}`);
+      const dishes = buildStateContext(stored?.state || {}).savedDishes as Array<any>;
+      const list = dishes
+        .slice(0, 25)
+        .map((dish: any) => {
+          const calories = Math.round(
+            (Number(dish.caloriesPer100g) || 0) * ((Number(dish.grams) || 100) / 100),
+          );
+          return `• <b>${dish.name}</b> — ${dish.grams} г, ${calories} ккал (Б ${dish.proteinPer100g} / Ж ${dish.fatPer100g} / У ${dish.carbsPer100g} на 100 г)`;
+        })
+        .join('\n');
+      await telegramApi(token, 'sendMessage', {
+        chat_id: chatId,
+        text: list
+          ? `🍱 <b>Мои блюда</b>\n\n${list}\n\nНапишите название в чат, и я внесу его в дневник. Например: «съел завтрак стандартный».`
+          : 'Сохранённых блюд пока нет.\n\nНапишите, например:\n<code>Запомни блюдо завтрак стандартный: 500 г, 600 ккал, 35 белка, 20 жиров, 60 углеводов</code>\n\nЯ запомню граммовку и БЖУ — потом достаточно названия.',
+        parse_mode: 'HTML',
+      });
+    } catch (err: any) {
+      console.error('[telegram] dishes list:', err?.message);
+    }
     return;
   }
 
@@ -2341,13 +2406,48 @@ async function handleTelegramUpdate(token: string, update: any) {
       const wantsSave = isSaveRequest(text);
       const wantsCancel = isCancelRequest(text);
       const bareIngest = isBareIngestCommand(text);
+      const state = userEntry || {};
+      const dataContext = buildStateContext(state);
+      const savedFoods = Array.isArray(state.customFoods) ? state.customFoods : [];
 
       // На голое «внеси» и «отмена» ИИ не нужен: экономим время и не путаем ответ.
       let nliActions: any[] = [];
+      let answeredDirectly = false;
+
       if (!bareIngest && !wantsCancel) {
-        const nliResult = await processNaturalLanguageInput(text, userEntry?.user);
-        aiReply = nliResult.reply;
-        nliActions = nliResult.actions || [];
+        // Сохранение блюда разбираем сами: модель может «поплыть» в цифрах.
+        const dishSave = parseDishSaveCommand(text);
+        if (dishSave) {
+          const result = await ingestBotTurn({
+            userId,
+            userName: msg.from?.first_name,
+            username: msg.from?.username,
+            text,
+            actions: [dishSave],
+            wantsSave: false,
+          });
+          aiReply = result.notices.length
+            ? result.notices.join('\n\n')
+            : 'Не хватило данных для сохранения блюда. Напишите название, граммовку и БЖУ, например: «Запомни блюдо завтрак стандартный: 500 г, 600 ккал, 35 белка, 20 жиров, 60 углеводов».';
+          answeredDirectly = true;
+        } else {
+          // Вопросы по своим данным отвечаем сразу и точно, без ИИ.
+          const directAnswer = answerDataQuestion(text, state);
+          if (directAnswer) {
+            aiReply = directAnswer;
+            answeredDirectly = true;
+          } else {
+            const nliResult = await processNaturalLanguageInput(
+              text,
+              state.user,
+              undefined,
+              dataContext,
+              savedFoods,
+            );
+            aiReply = nliResult.reply;
+            nliActions = nliResult.actions || [];
+          }
+        }
       }
 
       if (wantsCancel) {
@@ -2355,7 +2455,7 @@ async function handleTelegramUpdate(token: string, update: any) {
         aiReply = cleared
           ? 'Хорошо, ничего не сохранял. Если передумаешь — просто напиши данные заново.'
           : 'Нечего отменять — черновика сейчас нет.';
-      } else {
+      } else if (!answeredDirectly) {
         const result = await ingestBotTurn({
           userId,
           userName: msg.from?.first_name,

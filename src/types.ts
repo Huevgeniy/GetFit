@@ -380,6 +380,8 @@ export interface FoodItem {
   fiberPer100g: number; // Клетчатка (г)
   userAdded?: boolean;
   timesLogged?: number;
+  /** Привычная порция сохранённого блюда — подставляется в дневник и в чат. */
+  defaultGrams?: number;
 }
 
 export interface LoggedMealItem {

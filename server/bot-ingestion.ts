@@ -17,6 +17,7 @@ import type {
   CompletedSet,
   DailyNutritionRecord,
   ExerciseLog,
+  FoodItem,
   GoalMarathon,
   LoggedMealItem,
   PersonalRecord,
@@ -25,6 +26,7 @@ import type {
   WorkoutRecord,
 } from '../src/types.ts';
 import { BASE_FOODS_DATABASE } from '../src/data/foodsData.ts';
+import { sanitizeCustomFoods } from '../src/lib/customFoods.ts';
 import {
   getUserState,
   listCollection,
@@ -273,6 +275,13 @@ function describeOneAction(action: BotAction): string[] {
   } else if (action.function === 'log_metric') {
     const name = String(args.name || 'Показатель').trim();
     lines.push(`📏 ${name}: ${args.value ?? '—'} ${args.unit || ''}`.trim());
+  } else if (action.function === 'save_dish') {
+    const name = String(args.name || args.dish || 'Блюдо').trim();
+    const grams = numOpt(args.grams ?? args.portion_grams ?? args.weight);
+    const calories = numOpt(args.calories ?? args.kcal);
+    lines.push(
+      `🍱 Блюдо «${name}»${grams ? ` — ${Math.round(grams)} г` : ''}${calories ? `, ${Math.round(calories)} ккал` : ''}`,
+    );
   } else if (action.function === 'update_user') {
     if (numOpt(args.dailyStepGoal) !== undefined) {
       lines.push(`🎯 Цель по шагам: ${formatNumber(num(args.dailyStepGoal))}`);
@@ -310,7 +319,7 @@ export function isDataAction(action: BotAction): boolean {
 }
 
 export function isCommandAction(action: BotAction): boolean {
-  return ['update_user', 'create_experiment', 'add_penalty'].includes(action.function);
+  return ['update_user', 'create_experiment', 'add_penalty', 'save_dish'].includes(action.function);
 }
 
 export function sanitizeActions(raw: unknown): BotAction[] {
@@ -323,6 +332,7 @@ export function sanitizeActions(raw: unknown): BotAction[] {
     'update_user',
     'create_experiment',
     'add_penalty',
+    'save_dish',
   ]);
   return raw
     .filter((item) => item && typeof item === 'object' && known.has(String((item as any).function)))
@@ -435,6 +445,132 @@ function findFood(name: string) {
   return best;
 }
 
+/** Свои блюда из облака: только они, без базовой базы и дублей. */
+function savedFoods(state: StoredState): FoodItem[] {
+  return sanitizeCustomFoods(state.customFoods, BASE_FOODS_DATABASE);
+}
+
+/**
+ * Ищет сохранённое блюдо по названию: «завтрак стандартный» должно находиться
+ * и в «съел завтрак стандартный», и в «на завтрак был стандартный завтрак».
+ */
+function findSavedDish(name: string, foods: FoodItem[]): FoodItem | null {
+  const target = normalizeName(name);
+  if (!target) return null;
+
+  let best: FoodItem | null = null;
+  let bestScore = 0;
+  for (const food of foods) {
+    const foodName = normalizeName(food.name);
+    if (!foodName) continue;
+
+    let score = 0;
+    if (target === foodName) score = 100;
+    else if (target.includes(foodName)) score = 70 + foodName.length;
+    else if (foodName.includes(target) && target.length >= 4) score = 50 + target.length;
+    else if (namesMatch(name, food.name)) score = 30;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = food;
+    }
+  }
+  return best;
+}
+
+/** Граммовка, названная прямо рядом с блюдом: «500 г завтрак стандартный». */
+function gramsNearDish(text: string, dish: FoodItem): number | undefined {
+  const words = normalizeName(dish.name)
+    .split(' ')
+    .filter((word) => word.length > 2)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (words.length === 0) return undefined;
+
+  const phrase = words.join('[^\\d]{0,24}');
+  const patterns = [
+    new RegExp(`${phrase}[^\\d]{0,16}(\\d{2,4})\\s*(?:г|гр|грамм)`, 'i'),
+    new RegExp(`(\\d{2,4})\\s*(?:г|гр|грамм)\\s+${phrase}`, 'i'),
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    const grams = Number(match[1]);
+    if (Number.isFinite(grams) && grams > 0) return Math.max(10, Math.min(5000, grams));
+  }
+  return undefined;
+}
+
+/** Граммовка рядом с блюдом, иначе — привычная порция блюда. */
+function savedDishGrams(text: string, dish: FoodItem): number {
+  return Math.max(1, Math.round(gramsNearDish(text, dish) ?? dish.defaultGrams ?? 100));
+}
+
+/**
+ * Сохраняет блюдо в тот же список, что и приложение (`customFoods`).
+ * По умолчанию БЖУ приходит за всю порцию; `per_100g: true` — уже на 100 г.
+ */
+function saveDishToState(state: StoredState, args: Record<string, any>, notices: string[]): boolean {
+  const name = String(args.name || args.dish || '').replace(/^[«"']|[»"']$/g, '').trim().slice(0, 120);
+  if (!name) return false;
+
+  const grams = Math.max(1, Math.min(5000, Math.round(numOpt(args.grams ?? args.portion_grams ?? args.weight) || 100)));
+  const per100 = args.per_100g === true;
+  const factor = per100 ? 1 : 100 / grams;
+
+  const base = findFood(name);
+  const rawCalories = numOpt(args.calories ?? args.kcal);
+  const rawProtein = numOpt(args.protein ?? args.proteins);
+  const rawFat = numOpt(args.fat ?? args.fats);
+  const rawCarbs = numOpt(args.carbs ?? args.carbohydrates);
+  const rawFiber = numOpt(args.fiber);
+
+  const hasUserMacros =
+    rawCalories !== undefined ||
+    rawProtein !== undefined ||
+    rawFat !== undefined ||
+    rawCarbs !== undefined;
+  if (!hasUserMacros && !base) return false;
+
+  const caloriesPer100g = hasUserMacros
+    ? Math.round(
+        (rawCalories ??
+          (rawProtein || 0) * 4 + (rawFat || 0) * 9 + (rawCarbs || 0) * 4) * factor,
+      )
+    : Math.round(base!.caloriesPer100g);
+  const proteinPer100g = round1(hasUserMacros ? (rawProtein || 0) * factor : base!.proteinPer100g);
+  const fatPer100g = round1(hasUserMacros ? (rawFat || 0) * factor : base!.fatPer100g);
+  const carbsPer100g = round1(hasUserMacros ? (rawCarbs || 0) * factor : base!.carbsPer100g);
+  const fiberPer100g = round1(hasUserMacros ? (rawFiber || 0) * factor : base!.fiberPer100g);
+
+  const foods = savedFoods(state);
+  const existing = findSavedDish(name, foods);
+  const dish: FoodItem = {
+    id: existing?.id || `dish_${hashId('dish', normalizeName(name))}`,
+    name,
+    category: 'custom',
+    caloriesPer100g: Math.max(0, caloriesPer100g),
+    proteinPer100g: Math.max(0, proteinPer100g),
+    fatPer100g: Math.max(0, fatPer100g),
+    carbsPer100g: Math.max(0, carbsPer100g),
+    fiberPer100g: Math.max(0, fiberPer100g),
+    userAdded: true,
+    timesLogged: existing?.timesLogged || 0,
+    defaultGrams: grams,
+  };
+
+  state.customFoods = existing
+    ? foods.map((food) => (food.id === existing.id ? dish : food))
+    : [...foods, dish];
+
+  const portionCalories = Math.round(dish.caloriesPer100g * (grams / 100));
+  notices.push(
+    `🍱 Блюдо сохранено: «${dish.name}» — ${grams} г, ${portionCalories} ккал ` +
+      `(Б ${round1(dish.proteinPer100g * (grams / 100))} / Ж ${round1(dish.fatPer100g * (grams / 100))} / У ${round1(dish.carbsPer100g * (grams / 100))}). ` +
+      'Теперь пишите только название — я подставлю граммовку и БЖУ.',
+  );
+  return true;
+}
+
 const ROUGH_100G: Array<[RegExp, number, number, number, number]> = [
   [/суп|борщ|щи/i, 60, 3, 3, 6],
   [/салат/i, 90, 2, 6, 6],
@@ -460,8 +596,24 @@ const ROUGH_100G: Array<[RegExp, number, number, number, number]> = [
   [/хлеб/i, 250, 8, 3, 48],
 ];
 
-function mealMacros(meal: Record<string, any>, grams: number) {
-  const food = findFood(String(meal?.name || ''));
+function mealMacros(meal: Record<string, any>, grams: number, saved: FoodItem[] = []) {
+  const name = String(meal?.name || '');
+  // Сначала свои блюда: «курица с макаронами» не должна разваливаться
+  // на базовую курицу и базовые макароны.
+  const savedDish = findSavedDish(name, saved);
+  if (savedDish) {
+    const ratio = grams / 100;
+    return {
+      calories: Math.round(savedDish.caloriesPer100g * ratio),
+      protein: round1(savedDish.proteinPer100g * ratio),
+      fat: round1(savedDish.fatPer100g * ratio),
+      carbs: round1(savedDish.carbsPer100g * ratio),
+      fiber: round1(savedDish.fiberPer100g * ratio),
+      foodId: savedDish.id,
+    };
+  }
+
+  const food = findFood(name);
   if (food) {
     const ratio = grams / 100;
     return {
@@ -494,7 +646,6 @@ function mealMacros(meal: Record<string, any>, grams: number) {
     };
   }
 
-  const name = String(meal?.name || '');
   const rough = ROUGH_100G.find(([pattern]) => pattern.test(name));
   const per100 = rough ? { calories: rough[1], protein: rough[2], fat: rough[3], carbs: rough[4] } : { calories: 120, protein: 4, fat: 4, carbs: 12 };
   const ratio = grams / 100;
@@ -544,12 +695,144 @@ const COMMON_FOOD_PATTERNS: Array<[RegExp, string, number]> = [
   [/масл[оа].*(слив|подсол|олив)/i, 'Масло оливковое Extra Virgin', 15],
 ];
 
-export function heuristicMeals(text: string): Array<{ name: string; grams: number }> {
+function firstNumber(patterns: RegExp[], text: string): number | undefined {
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    const value = numOpt(match[1]);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+/**
+ * Разбирает «Запомни блюдо завтрак стандартный: 500 г, 600 ккал, 35 белка…»
+ * без ИИ. Нужен, чтобы сохранение блюд работало даже при недоступной модели.
+ */
+export function parseDishSaveCommand(text: string): BotAction | null {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+
+  const slash = /^\/(?:dish|блюдо)\s+/i.exec(raw);
+  // После кириллицы \b не работает как граница слова — используем явный разделитель.
+  const trigger =
+    /(?:запомни|сохрани|добавь|занеси|запиши)\s+(?:как\s+)?(?:мо[её]\s+)?(?:готовое\s+)?(?:блюдо|продукт|рецепт)(?=\s|[:;,—–-]|$)/i.exec(
+      raw,
+    );
+  if (!slash && !trigger) return null;
+
+  const triggerMatch = trigger as RegExpExecArray;
+  let rest = slash
+    ? raw.slice(slash[0].length)
+    : raw.slice(triggerMatch.index + triggerMatch[0].length);
+  rest = rest.replace(/^\s*[:—–-]\s*/, '').trim();
+  rest = rest.replace(/^[«"']+/, '');
+
+  // Название заканчивается там, где начинаются цифры или БЖУ.
+  const cut = rest.search(/(?:\d|[,;:]|\s[—–-]\s)/);
+  let name = (cut >= 0 ? rest.slice(0, cut) : rest)
+    .replace(/[«»"']/g, '')
+    .replace(/[\s:—–-]+$/, '')
+    .trim();
+  name = name.replace(/\s+/g, ' ').slice(0, 120);
+  if (!name) return null;
+
+  const per100Mode = /(?:на|в)\s*100\s*г/i.test(raw);
+
+  const portion =
+    firstNumber(
+      [
+        /(?:порци\w*|вес\w*)\D{0,14}(\d{2,4})\s*(?:г|гр|грамм)/i,
+        /(\d{3,4})\s*(?:г|гр|грамм)(?!\s*(?:белк|жир|углевод|клетч))/i,
+      ],
+      raw,
+    ) || 100;
+
+  const calories = firstNumber(
+    [/(\d{2,4})\s*(?:ккал|калор\w*|kcal)/i, /(?:калор\w*|ккал)\s*[:=—–-]?\s*(\d{2,4})/i],
+    raw,
+  );
+  const protein = firstNumber(
+    [
+      /(?:белк\w*|белка)\s*[:=—–-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+      /(\d{1,3}(?:[.,]\d+)?)\s*(?:г(?:рамм)?\s*)?белк/i,
+      /(?:^|[\s,;])Б\s*[:=—–-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+    ],
+    raw,
+  );
+  const fat = firstNumber(
+    [
+      /(?:жир\w*|жира)\s*[:=—–-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+      /(\d{1,3}(?:[.,]\d+)?)\s*(?:г(?:рамм)?\s*)?жир/i,
+      /(?:^|[\s,;])Ж\s*[:=—–-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+    ],
+    raw,
+  );
+  const carbs = firstNumber(
+    [
+      /(?:углевод\w*|углев)\s*[:=—–-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+      /(\d{1,3}(?:[.,]\d+)?)\s*(?:г(?:рамм)?\s*)?углевод/i,
+      /(?:^|[\s,;])У\s*[:=—–-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+    ],
+    raw,
+  );
+  const fiber = firstNumber(
+    [
+      /(?:клетчат\w*)\s*[:=—–-]?\s*(\d{1,3}(?:[.,]\d+)?)/i,
+      /(\d{1,3}(?:[.,]\d+)?)\s*(?:г(?:рамм)?\s*)?клетчат/i,
+    ],
+    raw,
+  );
+
+  if (
+    calories === undefined &&
+    protein === undefined &&
+    fat === undefined &&
+    carbs === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    function: 'save_dish',
+    args: {
+      name,
+      grams: Math.max(1, Math.min(5000, Math.round(portion))),
+      ...(calories !== undefined ? { calories } : {}),
+      ...(protein !== undefined ? { protein } : {}),
+      ...(fat !== undefined ? { fat } : {}),
+      ...(carbs !== undefined ? { carbs } : {}),
+      ...(fiber !== undefined ? { fiber } : {}),
+      ...(per100Mode ? { per_100g: true } : {}),
+    },
+  };
+}
+
+export function heuristicMeals(
+  text: string,
+  saved: FoodItem[] = [],
+): Array<{ name: string; grams: number }> {
   if (!MEAL_TEXT_HINT.test(text)) return [];
   const found: Array<{ name: string; grams: number }> = [];
   const seen = new Set<string>();
+
+  // Сохранённые блюда ищем первыми и целиком: если в тексте «курица с макаронами»,
+  // это одно блюдо, а не курица + макароны по отдельности.
+  const savedNames = new Set<string>();
+  for (const dish of saved) {
+    if (!namesMatch(text, dish.name) && !normalizeName(text).includes(normalizeName(dish.name))) continue;
+    const key = normalizeName(dish.name);
+    if (!key || seen.has(key)) continue;
+    found.push({ name: dish.name, grams: savedDishGrams(text, dish) });
+    seen.add(key);
+    savedNames.add(key);
+  }
+
   for (const [pattern, name, defaultGrams] of COMMON_FOOD_PATTERNS) {
     if (!pattern.test(text) || seen.has(name)) continue;
+    // Базовый продукт уже входит в найденное сохранённое блюдо.
+    const coveredByDish = [...savedNames].some((dishName) => pattern.test(dishName));
+    if (coveredByDish) continue;
     const explicit = /(\d{2,4})\s*(?:г|гр|грамм)/i.exec(text);
     const grams = explicit ? Math.max(10, Math.min(1500, Number(explicit[1]))) : defaultGrams;
     found.push({ name, grams });
@@ -559,7 +842,7 @@ export function heuristicMeals(text: string): Array<{ name: string; grams: numbe
   return found;
 }
 
-function applyMeals(state: StoredState, day: string, meals: any[], notices: string[]) {
+function applyMeals(state: StoredState, day: string, meals: any[], notices: string[], rawText = '') {
   if (!Array.isArray(meals) || meals.length === 0) return;
   const user = state.user as UserProfile;
   state.dailyNutritionRecords = Array.isArray(state.dailyNutritionRecords) ? state.dailyNutritionRecords : [];
@@ -569,17 +852,31 @@ function applyMeals(state: StoredState, day: string, meals: any[], notices: stri
     state.dailyNutritionRecords.unshift(record);
   }
 
+  const dishes = savedFoods(state);
   const added: string[] = [];
   for (const raw of meals) {
     const name = String(raw?.name || raw?.dish || '').trim();
     if (!name) continue;
-    const grams = Math.max(1, Math.round(numOpt(raw?.grams ?? raw?.weight ?? raw?.amount) || 100));
+    const savedDish = findSavedDish(name, dishes);
+    // Для сохранённого блюда доверяем граммовке из сообщения, а не оценке ИИ:
+    // если человек не назвал вес, подставляем привычную порцию блюда.
+    const explicitGrams = numOpt(raw?.grams ?? raw?.weight ?? raw?.amount);
+    const gramsFromText = savedDish ? gramsNearDish(rawText, savedDish) : undefined;
+    const grams = savedDish
+      ? Math.max(1, Math.round(gramsFromText ?? savedDish.defaultGrams ?? explicitGrams ?? 100))
+      : Math.max(1, Math.round(explicitGrams ?? 100));
     const mealType = ['breakfast', 'lunch', 'dinner', 'snack'].includes(String(raw?.meal_type))
       ? (raw.meal_type as LoggedMealItem['mealType'])
       : mealTypeForNow();
-    const macros = mealMacros(raw, grams);
+    const macros = mealMacros(raw, grams, dishes);
     const id = `meal_tg_${day}_${hashId(name.toLowerCase(), grams, mealType)}`;
     if (record.meals.some((meal) => meal.id === id)) continue;
+    if (macros.foodId) {
+      const stored = Array.isArray(state.customFoods)
+        ? state.customFoods.find((food: FoodItem) => food?.id === macros.foodId)
+        : undefined;
+      if (stored) stored.timesLogged = (stored.timesLogged || 0) + 1;
+    }
     record.meals.push({
       id,
       foodId: macros.foodId,
@@ -950,6 +1247,7 @@ async function autofillExperiments(userId: string, data: ExperimentData, notices
 
 interface Aggregate {
   workout?: WorkoutRecord;
+  dishes: Array<Record<string, any>>;
   dailyByDay: Map<string, {
     sleepHours?: number;
     sleepQuality?: number;
@@ -971,6 +1269,7 @@ interface Aggregate {
 
 function aggregateActions(actions: BotAction[]): Aggregate {
   const aggregate: Aggregate = {
+    dishes: [],
     dailyByDay: new Map(),
     metrics: [],
     profilePatch: {},
@@ -1022,6 +1321,11 @@ function aggregateActions(actions: BotAction[]): Aggregate {
         });
         if (/вес|масса тела/i.test(name)) aggregate.profilePatch.currentWeight = value;
       }
+      continue;
+    }
+
+    if (action.function === 'save_dish') {
+      aggregate.dishes.push(args);
       continue;
     }
 
@@ -1182,6 +1486,8 @@ function ensureState(state: StoredState, userId: string, userName?: string, user
   if (!Array.isArray(state.personalRecords)) state.personalRecords = [];
   if (!Array.isArray(state.penalties)) state.penalties = [];
   if (!Array.isArray(state.marathons)) state.marathons = [];
+  // Чистим старые облачные данные: база продуктов больше не живёт в customFoods.
+  state.customFoods = sanitizeCustomFoods(state.customFoods, BASE_FOODS_DATABASE);
 }
 
 async function applyAggregate(
@@ -1195,6 +1501,13 @@ async function applyAggregate(
   const user = state.user as UserProfile;
   let hasMeaningfulData = false;
   const savedMetricKeys = new Set<string>();
+
+  // 0. Сохранённые блюда — раньше еды, чтобы в этом же сообщении
+  // «запомни блюдо X и съел X» сразу нашлось правильное БЖУ.
+  // Это справочник, а не дневная запись: серию дисциплины за него не начисляем.
+  for (const dish of aggregate.dishes) {
+    saveDishToState(state, dish, notices);
+  }
 
   // 1. Тренировка
   if (aggregate.workout) {
@@ -1284,7 +1597,7 @@ async function applyAggregate(
     }
 
     if (bucket.meals.length > 0) {
-      applyMeals(state, day, bucket.meals, notices);
+      applyMeals(state, day, bucket.meals, notices, rawText);
       hasMeaningfulData = true;
     }
 

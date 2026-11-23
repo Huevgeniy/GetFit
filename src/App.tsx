@@ -101,6 +101,7 @@ import {
   INITIAL_ACHIEVEMENTS,
   INITIAL_PERSONAL_RECORDS
 } from './data/initialData';
+import { sanitizeCustomFoods } from './lib/customFoods';
 import { BASE_FOODS_DATABASE } from './data/foodsData';
 
 export default function App() {
@@ -201,9 +202,13 @@ export default function App() {
   const [customFoods, setCustomFoods] = useState<FoodItem[]>(() => {
     try {
       const saved = localStorage.getItem('getfit_custom_foods');
-      return saved ? JSON.parse(saved) : BASE_FOODS_DATABASE;
+      // В старых версиях сюда попадала вся база продуктов. Теперь здесь только
+      // свои блюда, а база всегда подмешивается отдельно на экране питания.
+      return saved
+        ? sanitizeCustomFoods(JSON.parse(saved), BASE_FOODS_DATABASE)
+        : [];
     } catch {
-      return BASE_FOODS_DATABASE;
+      return [];
     }
   });
 
@@ -364,6 +369,8 @@ export default function App() {
   const stepsMigrationRef = useRef(false);
   /** Марафоны раньше жили только в localStorage — переносим их в облако. */
   const marathonsMigrationRef = useRef(false);
+  /** В старом облаке в customFoods лежала база продуктов — чистим и сохраняем. */
+  const customFoodsMigrationRef = useRef(false);
   const syncTimerRef = useRef<number | null>(null);
   /** true, если по deep-link только что приняли зарубу (защита от устаревшего списка) */
   const joinedBattleRef = useRef(false);
@@ -438,7 +445,16 @@ export default function App() {
         if (Array.isArray(data.achievements)) setAchievements(data.achievements);
         if (Array.isArray(data.dailyNutritionRecords)) setDailyNutritionRecords(data.dailyNutritionRecords);
         if (Array.isArray(data.sleepRecords)) setSleepRecords(data.sleepRecords);
-        if (Array.isArray(data.customFoods)) setCustomFoods(data.customFoods);
+        if (Array.isArray(data.customFoods)) {
+          const cleanedCustomFoods = sanitizeCustomFoods(
+            data.customFoods,
+            BASE_FOODS_DATABASE,
+          );
+          if (cleanedCustomFoods.length !== data.customFoods.length) {
+            customFoodsMigrationRef.current = true;
+          }
+          setCustomFoods(cleanedCustomFoods);
+        }
         if (Array.isArray(data.personalRecords)) setPersonalRecords(data.personalRecords);
         if (Array.isArray(data.customTemplates)) setCustomTemplates(data.customTemplates);
         if (Array.isArray(data.marathons)) setMarathons(data.marathons);
@@ -477,9 +493,16 @@ export default function App() {
       skipSaveRef.current = false;
       // Обычная гидратация уже актуальна в облаке. Исключение — перенос
       // старых шагов и марафонов: его надо один раз записать, иначе он останется только здесь.
-      if (!stepsMigrationRef.current && !marathonsMigrationRef.current) return;
+      if (
+        !stepsMigrationRef.current &&
+        !marathonsMigrationRef.current &&
+        !customFoodsMigrationRef.current
+      ) {
+        return;
+      }
       stepsMigrationRef.current = false;
       marathonsMigrationRef.current = false;
+      customFoodsMigrationRef.current = false;
     }
     setSyncStatus('syncing');
     if (syncTimerRef.current) window.clearTimeout(syncTimerRef.current);
@@ -874,7 +897,9 @@ export default function App() {
       if (Array.isArray(data.achievements)) setAchievements(data.achievements);
       if (Array.isArray(data.dailyNutritionRecords)) setDailyNutritionRecords(data.dailyNutritionRecords);
       if (Array.isArray(data.sleepRecords)) setSleepRecords(data.sleepRecords);
-      if (Array.isArray(data.customFoods)) setCustomFoods(data.customFoods);
+      if (Array.isArray(data.customFoods)) {
+        setCustomFoods(sanitizeCustomFoods(data.customFoods, BASE_FOODS_DATABASE));
+      }
       if (Array.isArray(data.personalRecords)) setPersonalRecords(data.personalRecords);
       if (Array.isArray(data.customTemplates)) setCustomTemplates(data.customTemplates);
       if (Array.isArray(data.marathons)) setMarathons(data.marathons);
@@ -1059,7 +1084,7 @@ export default function App() {
     setAchievements(INITIAL_ACHIEVEMENTS);
     setDailyNutritionRecords([]);
     setSleepRecords([]);
-    setCustomFoods(BASE_FOODS_DATABASE);
+    setCustomFoods([]);
     setPersonalRecords(INITIAL_PERSONAL_RECORDS);
     setMarathons([]);
   };
