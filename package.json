@@ -23,6 +23,7 @@
     "test:render": "node scripts/render-test.mjs",
     "test:dom": "node scripts/dom-test.mjs",
     "test:notify": "node scripts/notifications-test.mjs",
+    "test:telegram": "node scripts/telegram-fallback-test.mjs",
     "test:ingest": "node scripts/ingestion-test.mjs",
     "test:inbody": "node scripts/inbody-test.mjs",
     "test:deploy": "node scripts/live-check.mjs",

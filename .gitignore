@@ -24,6 +24,7 @@ bun.lock
 .tmp-libtest/
 .tmp-render/
 .tmp-dom/
+.tmp-telegram/
 
 # Python
 __pycache__/

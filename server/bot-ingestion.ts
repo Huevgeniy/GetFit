@@ -97,6 +97,17 @@ function normalizeName(value: string): string {
 }
 
 /**
+ * Один и тот же показатель может прийти как «Вес», «Масса тела» или
+ * «Вес тела». Приводим такие названия к одному ключу, чтобы в Лаборатории
+ * не появлялось две одинаковые строки.
+ */
+function metricKey(value: string): string {
+  const key = normalizeName(value);
+  if (/^(вес|масса|масса тела|вес тела|вес кг)$/.test(key)) return 'вес тела';
+  return key;
+}
+
+/**
  * Сравнивает названия упражнений и показателей мягко: «жим лёжа» должно
  * находить «жим штанги лёжа», а «приседания» — «приседания со штангой».
  */
@@ -800,8 +811,8 @@ async function saveCustomMetric(
 ): Promise<void> {
   try {
     const metrics = await listCollection('custom_metrics', userId);
-    const normalized = normalizeName(metric.name);
-    const existing = metrics.find((item: any) => normalizeName(String(item?.name || '')) === normalized);
+    const normalized = metricKey(metric.name);
+    const existing = metrics.find((item: any) => metricKey(String(item?.name || '')) === normalized);
     const nowIso = new Date().toISOString();
     if (existing) {
       const next = {
@@ -1286,7 +1297,7 @@ async function applyAggregate(
 
   // 3. Замеры → свои показатели
   for (const metric of aggregate.metrics) {
-    const key = `${normalizeName(metric.name)}|${localDayKey()}`;
+    const key = `${metricKey(metric.name)}|${localDayKey()}`;
     if (savedMetricKeys.has(key)) continue;
     savedMetricKeys.add(key);
     await saveCustomMetric(userId, metric, localDayKey(), notices);

@@ -142,6 +142,10 @@ const actions = [
     function: 'log_metric',
     args: { name: 'Талия', value: 82, unit: 'см', category: 'body' },
   },
+  {
+    function: 'log_metric',
+    args: { name: 'Вес', value: 80.2, unit: 'кг', category: 'body' },
+  },
 ];
 
 // 1. Без «внеси» данные только показываются, но не сохраняются
@@ -214,6 +218,11 @@ const waist = metrics.find((metric) => metric.name === 'Талия');
 const weightMetric = metrics.find((metric) => metric.name === 'Вес тела');
 check('замер талии попал в свои показатели', waist?.values?.[today]?.value === 82, JSON.stringify(waist?.values));
 check('вес тела попал в свои показатели', weightMetric?.values?.[today]?.value === 80.2, JSON.stringify(weightMetric?.values));
+check(
+  'вес не задваивается как «Вес» и «Вес тела»',
+  metrics.filter((metric) => /^(вес|масса|вес тела)$/i.test(String(metric.name || '').trim())).length === 1,
+  JSON.stringify(metrics.map((metric) => metric.name)),
+);
 
 // 3. Повторная обработка не создаёт дубликаты
 await ingest.ingestBotTurn({
