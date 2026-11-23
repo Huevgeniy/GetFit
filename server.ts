@@ -1721,6 +1721,12 @@ async function processNaturalLanguageInput(message: string, userProfile?: any, c
     sets = Math.max(1, Math.min(20, sets));
     reps = Math.max(1, Math.min(100, reps));
 
+    // «жим 100 на 5, 3 подхода» — количество подходов может стоять отдельно
+    if (!wMatch[4]) {
+      const setsMention = /(\d{1,2})\s*(?:подход|подх)/i.exec(message);
+      if (setsMention) sets = Math.max(1, Math.min(20, parseInt(setsMention[1], 10)));
+    }
+
     const signature = `${exName}|${weight}|${reps}|${sets}`;
     if (seenExercises.has(signature)) continue;
     seenExercises.add(signature);
@@ -2130,6 +2136,13 @@ function isCancelRequest(text: string): boolean {
   return /^(отмена|отмени|отменить|не надо|не сохраняй|не записывай|забудь|удали)([\s,.!]|$)/i.test(text.trim());
 }
 
+/** Голое «внеси» без данных: не тратим запрос к ИИ, просто сохраняем черновик. */
+function isBareIngestCommand(text: string): boolean {
+  return /^(внеси|внесите|запиши|запишите|сохрани|сохраните|зафиксируй|зафиксируйте|сохраняй|внести|записать|сохранить)$/i.test(
+    text.trim(),
+  );
+}
+
 // Telegram Bot Handlers and Polling
 /** Вызов Telegram Bot API с таймаутом: зависший запрос не должен блокировать ответ. */
 async function telegramApi(token: string, method: string, payload?: unknown): Promise<any> {
@@ -2318,30 +2331,37 @@ async function handleTelegramUpdate(token: string, update: any) {
   }
 
   // Свободный ввод: ИИ разбирает текст, сервер раскладывает данные по разделам
-  let aiReply = 'Отличный настрой! Откройте приложение, чтобы посмотреть подробный план и аналитику.';
+  let aiReply = '';
   if (text) {
     try {
       const userId = `tg:${chatId}`;
       const stored = await getUserState(userId);
       const userEntry: any = stored?.state;
-      const nliResult = await processNaturalLanguageInput(text, userEntry?.user);
-      aiReply = nliResult.reply;
 
       const wantsSave = isSaveRequest(text);
       const wantsCancel = isCancelRequest(text);
+      const bareIngest = isBareIngestCommand(text);
+
+      // На голое «внеси» и «отмена» ИИ не нужен: экономим время и не путаем ответ.
+      let nliActions: any[] = [];
+      if (!bareIngest && !wantsCancel) {
+        const nliResult = await processNaturalLanguageInput(text, userEntry?.user);
+        aiReply = nliResult.reply;
+        nliActions = nliResult.actions || [];
+      }
 
       if (wantsCancel) {
         const cleared = await clearPendingActions(userId);
-        if (cleared) {
-          aiReply = 'Хорошо, ничего не сохранял. Если передумаешь — просто напиши данные заново.';
-        }
+        aiReply = cleared
+          ? 'Хорошо, ничего не сохранял. Если передумаешь — просто напиши данные заново.'
+          : 'Нечего отменять — черновика сейчас нет.';
       } else {
         const result = await ingestBotTurn({
           userId,
           userName: msg.from?.first_name,
           username: msg.from?.username,
           text,
-          actions: sanitizeActions(nliResult.actions),
+          actions: sanitizeActions(nliActions),
           wantsSave,
         });
 
@@ -2352,15 +2372,24 @@ async function handleTelegramUpdate(token: string, update: any) {
               : '';
           aiReply = [savedPart, aiReply, pendingReply(result.preview)].filter(Boolean).join('\n\n');
         } else if (result.notices.length > 0) {
-          aiReply = `✅ **Данные сохранены в GetFit:**\n${result.notices.join('\n')}\n\n${aiReply}`;
+          const savedPart = `✅ **Данные сохранены в GetFit:**\n${result.notices.join('\n')}`;
+          aiReply = [savedPart, aiReply].filter(Boolean).join('\n\n');
+        } else if (result.mode === 'applied') {
+          const savedPart = '✅ **Данные обновлены в GetFit** — без дубликатов.';
+          aiReply = [savedPart, aiReply].filter(Boolean).join('\n\n');
         } else if (wantsSave) {
           aiReply =
             'Не нашёл данных для записи. Напиши, что внести, например: «жим 100 на 5, 3 подхода, шаги 12000, спал 7 часов, съел овсянку».';
         }
       }
+      if (!aiReply.trim()) {
+        aiReply = 'Понял. Открой приложение, чтобы посмотреть данные, или напиши, что ещё внести.';
+      }
     } catch (err) {
       console.error('Telegram NLI AI error:', err);
     }
+  } else {
+    aiReply = 'Напиши, что внести: тренировку, шаги, еду, сон или замеры.';
   }
 
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {

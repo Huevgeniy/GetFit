@@ -225,13 +225,14 @@ check(
 );
 
 // 3. Повторная обработка не создаёт дубликаты
-await ingest.ingestBotTurn({
+const repeatResult = await ingest.ingestBotTurn({
   userId,
   userName: 'Тест',
   text: 'Жим 100 на 5, шаги 12000, спал 7.5',
   actions,
   wantsSave: true,
 });
+check('повторная команда выполнена без ошибки', repeatResult.mode === 'applied', repeatResult.mode);
 stored = await storage.getUserState(userId);
 const repeated = stored.state;
 check('повтор не дублирует тренировку', repeated.pastWorkouts.length === 1, String(repeated.pastWorkouts.length));

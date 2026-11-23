@@ -1465,7 +1465,9 @@ export async function ingestBotTurn(options: IngestTurnOptions): Promise<IngestT
     const aggregate = aggregateActions(toApply);
     const applied = await applyAggregate(state, options.userId, aggregate, toApply, options.text);
     notices = applied.notices;
-    if (notices.length > 0 && mode !== 'staged') mode = 'applied';
+    // Даже если всё уже было сохранено раньше, команда выполнена:
+    // это позволяет отличить повтор от «нечего сохранять».
+    if (mode !== 'staged') mode = 'applied';
   }
 
   // pending мог быть создан в этом же ходе — сохраняем состояние один раз
