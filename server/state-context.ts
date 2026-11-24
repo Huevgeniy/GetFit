@@ -348,6 +348,14 @@ export function buildStateContext(state: StoredState): Record<string, any> {
             grams: Math.round(num(meal.grams)),
             calories: Math.round(num(meal.calories)),
             protein: round1(num(meal.protein)),
+            components: Array.isArray(meal.components)
+              ? meal.components.map((component) => ({
+                  name: component.name,
+                  grams: Math.round(num(component.grams)),
+                  calories: Math.round(num(component.calories)),
+                  protein: round1(num(component.protein)),
+                }))
+              : undefined,
           })),
         }
       : null,
@@ -485,12 +493,15 @@ function answerMeals(text: string, state: StoredState): string {
   if (!record || meals.length === 0) {
     return `За ${humanDate(day)} приёмов пищи в дневнике нет.`;
   }
-  const lines = meals
-    .slice(0, 12)
-    .map(
-      (meal) =>
-        `• ${meal.name}${num(meal.grams) > 0 ? ` — ${Math.round(num(meal.grams))} г` : ''}: ${Math.round(num(meal.calories))} ккал, Б ${round1(num(meal.protein))}`,
-    );
+  const lines = meals.slice(0, 12).map((meal) => {
+    const head = `• ${meal.name}${num(meal.grams) > 0 ? ` — ${Math.round(num(meal.grams))} г` : ''}: ${Math.round(num(meal.calories))} ккал, Б ${round1(num(meal.protein))}`;
+    const components = Array.isArray(meal.components) ? meal.components : [];
+    if (components.length === 0) return head;
+    const composition = components
+      .map((component) => `${component.name} ${Math.round(num(component.grams))} г`)
+      .join(', ');
+    return `${head}\n  состав: ${composition}`;
+  });
   return `Питание за ${humanDate(day)} (${Math.round(num(record.totalCalories))} ккал):\n${lines.join('\n')}`;
 }
 

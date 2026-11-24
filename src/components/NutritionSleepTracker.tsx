@@ -35,6 +35,51 @@ import {
 import { BASE_FOODS_DATABASE } from '../data/foodsData';
 import { apiFetch } from '../lib/api';
 
+const MEAL_TYPE_LABELS: Record<LoggedMealItem['mealType'], string> = {
+  breakfast: 'Завтрак',
+  lunch: 'Обед',
+  dinner: 'Ужин',
+  snack: 'Перекус',
+};
+
+const FOOD_CATEGORY_TABS = [
+  { id: 'all', label: 'Все' },
+  { id: 'meat', label: 'Мясо/Птица/Яйца' },
+  { id: 'dairy', label: 'Молочка/Творог' },
+  { id: 'grains', label: 'Крупы/Хлеб' },
+  { id: 'fruits', label: 'Фрукты/Ягоды' },
+  { id: 'vegetables', label: 'Овощи' },
+  { id: 'oils_nuts', label: 'Масла/Орехи' },
+  { id: 'custom', label: 'Мои продукты' },
+];
+
+const round1 = (value: number): number => Math.round(value * 10 + 1e-9) / 10;
+
+/** Ингредиент, который пользователь собирает в один приём пищи. */
+interface CompositeIngredient {
+  rowId: string;
+  foodId: string;
+  name: string;
+  grams: number;
+  caloriesPer100g: number;
+  proteinPer100g: number;
+  fatPer100g: number;
+  carbsPer100g: number;
+  fiberPer100g: number;
+}
+
+/** Пересчитывает БЖУ ингредиента на указанную граммовку. */
+const macrosForGrams = (item: CompositeIngredient, grams: number) => {
+  const ratio = Math.max(0, grams) / 100;
+  return {
+    calories: Math.round(item.caloriesPer100g * ratio),
+    protein: round1(item.proteinPer100g * ratio),
+    fat: round1(item.fatPer100g * ratio),
+    carbs: round1(item.carbsPer100g * ratio),
+    fiber: round1(item.fiberPer100g * ratio),
+  };
+};
+
 interface NutritionSleepTrackerProps {
   user: UserProfile;
   dailyRecords: DailyNutritionRecord[];
@@ -73,6 +118,11 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
   const [quickTextInput, setQuickTextInput] = useState('');
   const [isAddingFoodModal, setIsAddingFoodModal] = useState(false);
   const [isCreatingNewProduct, setIsCreatingNewProduct] = useState(false);
+  /** Сборка одного приёма пищи из нескольких ингредиентов. */
+  const [isComposingMeal, setIsComposingMeal] = useState(false);
+  const [compositeName, setCompositeName] = useState('');
+  const [compositeItems, setCompositeItems] = useState<CompositeIngredient[]>([]);
+  const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
 
   // New product custom creation
   const [newProdName, setNewProdName] = useState('');
@@ -209,6 +259,126 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
     });
   }, [allFoods, searchQuery, selectedCategory]);
 
+  // Итоги составного приёма пищи: считаем по каждому ингредиенту.
+  const compositeTotals = useMemo(() => {
+    const sums = compositeItems.reduce(
+      (acc, item) => {
+        const macros = macrosForGrams(item, item.grams);
+        acc.grams += Math.max(0, item.grams);
+        acc.calories += macros.calories;
+        acc.protein += macros.protein;
+        acc.fat += macros.fat;
+        acc.carbs += macros.carbs;
+        acc.fiber += macros.fiber;
+        return acc;
+      },
+      { grams: 0, calories: 0, protein: 0, fat: 0, carbs: 0, fiber: 0 },
+    );
+    return {
+      grams: Math.round(sums.grams),
+      calories: sums.calories,
+      protein: round1(sums.protein),
+      fat: round1(sums.fat),
+      carbs: round1(sums.carbs),
+      fiber: round1(sums.fiber),
+    };
+  }, [compositeItems]);
+
+  const openAddFoodModal = (mode: 'single' | 'composite' = 'single') => {
+    setIsAddingFoodModal(true);
+    setIsCreatingNewProduct(false);
+    setIsComposingMeal(mode === 'composite');
+    if (mode === 'composite') {
+      setCompositeName(prev => prev.trim() || MEAL_TYPE_LABELS[selectedMealType]);
+    }
+  };
+
+  const closeAddFoodModal = () => {
+    setIsAddingFoodModal(false);
+    setIsCreatingNewProduct(false);
+    setIsComposingMeal(false);
+    setCompositeName('');
+    setCompositeItems([]);
+    setSelectedFood(null);
+  };
+
+  const handleCompositeMealTypeChange = (value: LoggedMealItem['mealType']) => {
+    setSelectedMealType(value);
+    setCompositeName(prev => {
+      const trimmed = prev.trim();
+      const labels = Object.values(MEAL_TYPE_LABELS);
+      return !trimmed || labels.includes(trimmed) ? MEAL_TYPE_LABELS[value] : prev;
+    });
+  };
+
+  const handleAddCompositeIngredient = (food: FoodItem) => {
+    const portion = Math.max(1, Math.round(food.defaultGrams || 100));
+    setCompositeItems(prev => {
+      const existing = prev.find(item => item.foodId === food.id);
+      if (existing) {
+        // Повторный выбор того же продукта увеличивает его граммовку,
+        // а не создаёт вторую одинаковую строку.
+        return prev.map(item =>
+          item.rowId === existing.rowId ? { ...item, grams: item.grams + portion } : item,
+        );
+      }
+      return [
+        ...prev,
+        {
+          rowId: `ing_${food.id}_${Date.now()}`,
+          foodId: food.id,
+          name: food.name,
+          grams: portion,
+          caloriesPer100g: food.caloriesPer100g,
+          proteinPer100g: food.proteinPer100g,
+          fatPer100g: food.fatPer100g,
+          carbsPer100g: food.carbsPer100g,
+          fiberPer100g: food.fiberPer100g,
+        },
+      ];
+    });
+    setCompositeName(prev => prev.trim() || MEAL_TYPE_LABELS[selectedMealType]);
+  };
+
+  const handleCompositeGramsChange = (rowId: string, grams: number) => {
+    setCompositeItems(prev =>
+      prev.map(item =>
+        item.rowId === rowId ? { ...item, grams: Math.max(0, grams) } : item,
+      ),
+    );
+  };
+
+  const handleRemoveCompositeIngredient = (rowId: string) => {
+    setCompositeItems(prev => prev.filter(item => item.rowId !== rowId));
+  };
+
+  const handleAddCompositeMeal = () => {
+    if (compositeItems.length === 0) return;
+
+    const newMeal: LoggedMealItem = {
+      id: `meal_${Date.now()}`,
+      name: compositeName.trim() || MEAL_TYPE_LABELS[selectedMealType],
+      grams: compositeTotals.grams,
+      calories: compositeTotals.calories,
+      protein: compositeTotals.protein,
+      fat: compositeTotals.fat,
+      carbs: compositeTotals.carbs,
+      fiber: compositeTotals.fiber,
+      mealType: selectedMealType,
+      timestamp: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+      components: compositeItems.map(item => ({
+        foodId: item.foodId,
+        name: item.name,
+        grams: Math.round(item.grams),
+        ...macrosForGrams(item, item.grams),
+      })),
+    };
+
+    updateDayRecord([...currentDayRecord.meals, newMeal]);
+    setExpandedMealId(newMeal.id);
+    closeAddFoodModal();
+  };
+
   // Handle adding meal
   const handleAddMealItem = () => {
     if (!selectedFood || inputGrams <= 0) return;
@@ -312,6 +482,8 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
       onSaveCustomFood(averaged);
       setSelectedFood(averaged);
       setInputGrams(averaged.defaultGrams || 100);
+      // В режиме сборки новый продукт сразу становится ингредиентом приёма.
+      if (isComposingMeal) handleAddCompositeIngredient(averaged);
     } else {
       const newFood: FoodItem = {
         id: `custom_${Date.now()}`,
@@ -325,6 +497,8 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
       onSaveCustomFood(newFood);
       setSelectedFood(newFood);
       setInputGrams(newFood.defaultGrams || 100);
+      // В режиме сборки новый продукт сразу становится ингредиентом приёма.
+      if (isComposingMeal) handleAddCompositeIngredient(newFood);
     }
 
     setIsCreatingNewProduct(false);
@@ -477,6 +651,57 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
   const fatPercent = Math.min(100, Math.round((currentDayRecord.totalFat / calculatedTargets.fat) * 100));
   const carbsPercent = Math.min(100, Math.round((currentDayRecord.totalCarbs / calculatedTargets.carbs) * 100));
   const fiberPercent = Math.min(100, Math.round((currentDayRecord.totalFiber / calculatedTargets.fiber) * 100));
+
+  const renderCategoryPills = () => (
+    <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1 text-xs">
+      {FOOD_CATEGORY_TABS.map(cat => (
+        <button
+          key={cat.id}
+          type="button"
+          onClick={() => setSelectedCategory(cat.id)}
+          className={`py-1 px-2.5 rounded-lg whitespace-nowrap font-semibold ${
+            selectedCategory === cat.id
+              ? 'bg-emerald-500 text-slate-950'
+              : 'bg-[#18232f] text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          {cat.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const renderFoodPicker = (
+    onPick: (food: FoodItem) => void,
+    options: { selectedId?: string; compact?: boolean } = {},
+  ) => (
+    <div className={`${options.compact ? 'max-h-40' : 'max-h-48'} overflow-y-auto space-y-1.5 pr-1`}>
+      {filteredFoods.map(food => {
+        const isSelected = options.selectedId === food.id;
+        return (
+          <div
+            key={food.id}
+            onClick={() => onPick(food)}
+            className={`p-2.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between text-xs ${
+              isSelected
+                ? 'bg-emerald-950/60 border-emerald-500 text-emerald-300'
+                : 'bg-[#151f2b] border-[#223142] text-slate-300 hover:bg-[#18232f]'
+            }`}
+          >
+            <div>
+              <div className="font-bold">{food.name}</div>
+              <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                {food.caloriesPer100g} ккал • Б: {food.proteinPer100g} • Ж: {food.fatPer100g} • У: {food.carbsPer100g} • Клетчатка: {food.fiberPer100g}г
+              </div>
+            </div>
+            <span className={`font-bold ${options.compact ? 'text-teal-300' : 'text-emerald-400'}`}>
+              {isSelected ? '✓' : options.compact ? '+' : ''}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="space-y-4 pb-24">
@@ -752,11 +977,18 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
 
           {/* Quick Button to Add Meals */}
           <button
-            onClick={() => setIsAddingFoodModal(true)}
+            onClick={() => openAddFoodModal('single')}
             className="w-full py-3 bg-[#18232f] hover:bg-[#223142] border border-[#2b3a4e] text-emerald-400 font-bold text-xs rounded-2xl transition-colors flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4" />
             <span>Внести блюдо или продукт в дневник</span>
+          </button>
+          <button
+            onClick={() => openAddFoodModal('composite')}
+            className="w-full py-3 bg-[#18232f] hover:bg-[#223142] border border-[#2b3a4e] text-teal-300 font-bold text-xs rounded-2xl transition-colors flex items-center justify-center gap-2"
+          >
+            <Layers className="w-4 h-4" />
+            <span>Собрать приём пищи из продуктов</span>
           </button>
         </div>
       )}
@@ -764,65 +996,123 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
       {/* SUB-TAB 2: Meals Logger & Product Database */}
       {activeSubTab === 'meals' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="space-y-2">
             <h3 className="text-xs font-bold text-slate-200">
               Приемы пищи за {selectedDate === todayStr ? 'сегодня' : selectedDate}
             </h3>
-            <button
-              onClick={() => setIsAddingFoodModal(true)}
-              className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Добавить блюдо</span>
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => openAddFoodModal('composite')}
+                className="px-3 py-2 bg-[#18232f] hover:bg-[#223142] text-teal-300 border border-teal-500/30 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Собрать приём</span>
+              </button>
+              <button
+                onClick={() => openAddFoodModal('single')}
+                className="px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Добавить блюдо</span>
+              </button>
+            </div>
           </div>
 
           {currentDayRecord.meals.length === 0 ? (
             <div className="bg-[#12181f] border border-[#1e293b] rounded-2xl p-8 text-center text-xs text-slate-400 space-y-3">
               <Utensils className="w-8 h-8 text-slate-600 mx-auto" />
               <p>На эту дату пока нет записей о еде.</p>
-              <button
-                onClick={() => setIsAddingFoodModal(true)}
-                className="px-4 py-2 bg-[#18232f] text-emerald-400 hover:bg-[#223142] rounded-xl font-bold border border-[#29394b] transition-colors inline-flex items-center gap-2"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Внести первое блюдо</span>
-              </button>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  onClick={() => openAddFoodModal('single')}
+                  className="px-4 py-2 bg-[#18232f] text-emerald-400 hover:bg-[#223142] rounded-xl font-bold border border-[#29394b] transition-colors inline-flex items-center gap-2"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Внести продукт</span>
+                </button>
+                <button
+                  onClick={() => openAddFoodModal('composite')}
+                  className="px-4 py-2 bg-[#18232f] text-teal-300 hover:bg-[#223142] rounded-xl font-bold border border-teal-500/30 transition-colors inline-flex items-center gap-2"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Собрать приём</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-2">
-              {currentDayRecord.meals.map(meal => (
-                <div
-                  key={meal.id}
-                  className="bg-[#12181f] border border-[#1e293b] rounded-xl p-3 flex items-center justify-between text-xs hover:border-[#27374a] transition-colors"
-                >
-                  <div className="min-w-0 flex-1 pr-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-100 truncate">{meal.name}</span>
-                      <span className="text-[10px] text-slate-400 font-mono">({meal.grams} г)</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400 font-mono">
-                      <span className="text-emerald-400 font-bold">{meal.calories} ккал</span>
-                      <span>•</span>
-                      <span>Б: {meal.protein}г</span>
-                      <span>•</span>
-                      <span>Ж: {meal.fat}г</span>
-                      <span>•</span>
-                      <span>У: {meal.carbs}г</span>
-                      <span>•</span>
-                      <span className="text-teal-400">Клетчатка: {meal.fiber}г</span>
+              {currentDayRecord.meals.map(meal => {
+                const components = Array.isArray(meal.components) ? meal.components : [];
+                const hasComponents = components.length > 0;
+                const isExpanded = expandedMealId === meal.id;
+                return (
+                  <div
+                    key={meal.id}
+                    className="bg-[#12181f] border border-[#1e293b] rounded-xl p-3 text-xs hover:border-[#27374a] transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-slate-100 truncate">{meal.name}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">({meal.grams} г)</span>
+                          <span className="text-[9px] uppercase font-bold text-slate-500 bg-[#18232f] px-1.5 py-0.5 rounded">
+                            {MEAL_TYPE_LABELS[meal.mealType] || meal.mealType}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400 font-mono flex-wrap">
+                          <span className="text-emerald-400 font-bold">{meal.calories} ккал</span>
+                          <span>•</span>
+                          <span>Б: {meal.protein}г</span>
+                          <span>•</span>
+                          <span>Ж: {meal.fat}г</span>
+                          <span>•</span>
+                          <span>У: {meal.carbs}г</span>
+                          <span>•</span>
+                          <span className="text-teal-400">Клетчатка: {meal.fiber}г</span>
+                        </div>
+
+                        {hasComponents && (
+                          <button
+                            onClick={() => setExpandedMealId(isExpanded ? null : meal.id)}
+                            className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-bold text-teal-300 hover:text-teal-200 transition-colors"
+                            aria-expanded={isExpanded}
+                          >
+                            {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                            <span>Состав ({components.length})</span>
+                          </button>
+                        )}
+
+                        {hasComponents && isExpanded && (
+                          <div className="mt-2 space-y-1.5 border-t border-[#233345] pt-2">
+                            {components.map((component, index) => (
+                              <div
+                                key={`${meal.id}_component_${index}`}
+                                className="flex items-start justify-between gap-2 text-[10px]"
+                              >
+                                <span className="text-slate-300 min-w-0">
+                                  {component.name}
+                                  <span className="text-slate-500 font-mono"> — {component.grams} г</span>
+                                </span>
+                                <span className="text-right font-mono text-slate-400 whitespace-nowrap">
+                                  {component.calories} ккал • Б {component.protein} / Ж {component.fat} / У {component.carbs}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => handleRemoveMealItem(meal.id)}
+                        className="p-1.5 text-slate-500 hover:text-rose-400 transition-colors"
+                        title="Удалить"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
-
-                  <button
-                    onClick={() => handleRemoveMealItem(meal.id)}
-                    className="p-1.5 text-slate-500 hover:text-rose-400 transition-colors"
-                    title="Удалить"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1011,19 +1301,52 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
               <div className="flex items-center gap-2">
                 <Utensils className="w-4 h-4 text-emerald-400" />
                 <h3 className="text-xs font-bold text-slate-100">
-                  {isCreatingNewProduct ? 'Создать свой продукт в базу' : 'Добавить блюдо в дневник'}
+                  {isCreatingNewProduct
+                    ? 'Создать свой продукт в базу'
+                    : isComposingMeal
+                      ? 'Собрать приём пищи'
+                      : 'Добавить блюдо в дневник'}
                 </h3>
               </div>
               <button
-                onClick={() => {
-                  setIsAddingFoodModal(false);
-                  setIsCreatingNewProduct(false);
-                }}
+                onClick={closeAddFoodModal}
                 className="text-slate-400 hover:text-slate-200 text-xs font-bold"
+                title="Закрыть"
               >
                 ✕
               </button>
             </div>
+
+            {/* Переключатель: один продукт или составной приём пищи */}
+            {!isCreatingNewProduct && (
+              <div className="grid grid-cols-2 gap-1.5 bg-[#0e151c] p-1 rounded-xl border border-[#1f2d3d]">
+                <button
+                  type="button"
+                  onClick={() => setIsComposingMeal(false)}
+                  className={`py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
+                    !isComposingMeal
+                      ? 'bg-emerald-500 text-slate-950'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Один продукт
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsComposingMeal(true);
+                    setCompositeName(prev => prev.trim() || MEAL_TYPE_LABELS[selectedMealType]);
+                  }}
+                  className={`py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
+                    isComposingMeal
+                      ? 'bg-teal-400 text-slate-950'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Собрать приём пищи
+                </button>
+              </div>
+            )}
 
             {/* If creating a brand new product */}
             {isCreatingNewProduct ? (
@@ -1168,6 +1491,122 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                   </button>
                 </div>
               </form>
+            ) : isComposingMeal ? (
+              <div className="space-y-3">
+                {/* Название и тип приёма пищи */}
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-1">Название приёма</label>
+                    <input
+                      type="text"
+                      placeholder="Например: Завтрак"
+                      value={compositeName}
+                      onChange={e => setCompositeName(e.target.value)}
+                      className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 text-xs focus:outline-none focus:border-teal-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-1">Приём пищи</label>
+                    <select
+                      value={selectedMealType}
+                      onChange={e =>
+                        handleCompositeMealTypeChange(e.target.value as LoggedMealItem['mealType'])
+                      }
+                      className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-2.5 py-2 text-slate-100 text-xs"
+                    >
+                      <option value="breakfast">Завтрак</option>
+                      <option value="lunch">Обед</option>
+                      <option value="dinner">Ужин</option>
+                      <option value="snack">Перекус</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Поиск ингредиента */}
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Найти ингредиент (овсянка, молоко, яйцо...)"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="w-full bg-[#18232f] border border-[#263546] rounded-xl pl-9 pr-3 py-2 text-slate-100 text-xs focus:outline-none focus:border-teal-400"
+                  />
+                </div>
+
+                {renderCategoryPills()}
+
+                {renderFoodPicker(handleAddCompositeIngredient, { compact: true })}
+
+                {/* Состав приёма */}
+                {compositeItems.length > 0 ? (
+                  <div className="bg-[#0e151c] rounded-xl border border-[#1f2d3d] p-2.5 space-y-2">
+                    <div className="text-[10px] uppercase font-bold text-slate-400">
+                      Состав ({compositeItems.length})
+                    </div>
+                    {compositeItems.map(item => {
+                      const macros = macrosForGrams(item, item.grams);
+                      return (
+                        <div key={item.rowId} className="space-y-1 border-b border-[#1c2836] pb-2 last:border-0 last:pb-0">
+                          <div className="flex items-center gap-2">
+                            <span className="flex-1 min-w-0 truncate text-xs font-semibold text-slate-200">
+                              {item.name}
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.grams}
+                              onChange={e =>
+                                handleCompositeGramsChange(item.rowId, parseFloat(e.target.value) || 0)
+                              }
+                              className="w-20 bg-[#18232f] border border-[#263546] rounded-lg px-2 py-1 font-mono text-xs text-slate-100 text-right"
+                              aria-label={`Граммы: ${item.name}`}
+                            />
+                            <span className="text-[10px] text-slate-500">г</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveCompositeIngredient(item.rowId)}
+                              className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                              title="Убрать ингредиент"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          <div className="font-mono text-[10px] text-slate-400 pl-0.5">
+                            {macros.calories} ккал • Б {macros.protein} / Ж {macros.fat} / У {macros.carbs} • клетчатка {macros.fiber} г
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    <div className="font-mono text-[11px] text-teal-300 font-bold pt-1">
+                      Итого: {compositeTotals.grams} г • {compositeTotals.calories} ккал • Б {compositeTotals.protein} / Ж {compositeTotals.fat} / У {compositeTotals.carbs} • клетчатка {compositeTotals.fiber} г
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-500 text-center py-2">
+                    Добавьте продукты из списка — итоговое КБЖУ посчитается автоматически.
+                  </p>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleAddCompositeMeal}
+                  disabled={compositeItems.length === 0}
+                  className="w-full py-2.5 bg-teal-400 hover:bg-teal-300 text-slate-950 font-bold text-xs rounded-xl transition-colors shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Добавить приём в дневник
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsCreatingNewProduct(true)}
+                  className="w-full py-2 bg-[#18232f] hover:bg-[#202e3d] text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Нет продукта? Добавить новый в базу</span>
+                </button>
+              </div>
             ) : (
               <div className="space-y-3">
                 {/* Search Bar */}
@@ -1182,60 +1621,15 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                   />
                 </div>
 
-                {/* Category Pills */}
-                <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1 text-xs">
-                  {[
-                    { id: 'all', label: 'Все' },
-                    { id: 'meat', label: 'Мясо/Птица/Яйца' },
-                    { id: 'dairy', label: 'Молочка/Творог' },
-                    { id: 'grains', label: 'Крупы/Хлеб' },
-                    { id: 'fruits', label: 'Фрукты/Ягоды' },
-                    { id: 'vegetables', label: 'Овощи' },
-                    { id: 'oils_nuts', label: 'Масла/Орехи' },
-                    { id: 'custom', label: 'Мои продукты' },
-                  ].map(cat => (
-                    <button
-                      key={cat.id}
-                      onClick={() => setSelectedCategory(cat.id)}
-                      className={`py-1 px-2.5 rounded-lg whitespace-nowrap font-semibold ${
-                        selectedCategory === cat.id
-                          ? 'bg-emerald-500 text-slate-950'
-                          : 'bg-[#18232f] text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      {cat.label}
-                    </button>
-                  ))}
-                </div>
+                {renderCategoryPills()}
 
-                {/* Products List */}
-                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                  {filteredFoods.map(food => {
-                    const isSelected = selectedFood?.id === food.id;
-                    return (
-                      <div
-                        key={food.id}
-                        onClick={() => {
-                          setSelectedFood(food);
-                          setInputGrams(food.defaultGrams || 100);
-                        }}
-                        className={`p-2.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between text-xs ${
-                          isSelected
-                            ? 'bg-emerald-950/60 border-emerald-500 text-emerald-300'
-                            : 'bg-[#151f2b] border-[#223142] text-slate-300 hover:bg-[#18232f]'
-                        }`}
-                      >
-                        <div>
-                          <div className="font-bold">{food.name}</div>
-                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                            {food.caloriesPer100g} ккал • Б: {food.proteinPer100g} • Ж: {food.fatPer100g} • У: {food.carbsPer100g} • Клетчатка: {food.fiberPer100g}г
-                          </div>
-                        </div>
-                        {isSelected && <span className="text-emerald-400 font-bold">✓</span>}
-                      </div>
-                    );
-                  })}
-                </div>
+                {renderFoodPicker(
+                  food => {
+                    setSelectedFood(food);
+                    setInputGrams(food.defaultGrams || 100);
+                  },
+                  { selectedId: selectedFood?.id },
+                )}
 
                 {/* Button to create custom if not in list */}
                 <button

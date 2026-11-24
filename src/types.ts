@@ -384,6 +384,18 @@ export interface FoodItem {
   defaultGrams?: number;
 }
 
+/** Один ингредиент составного приёма пищи. */
+export interface MealComponent {
+  name: string;
+  grams: number;
+  calories: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+  fiber: number;
+  foodId?: string;
+}
+
 export interface LoggedMealItem {
   id: string;
   foodId?: string;
@@ -396,6 +408,11 @@ export interface LoggedMealItem {
   fiber: number;
   mealType: 'breakfast' | 'lunch' | 'dinner' | 'snack';
   timestamp: string;
+  /**
+   * Состав приёма пищи, если он собран из нескольких продуктов.
+   * В дневнике это одна строка с общим КБЖУ, а здесь — расшифровка.
+   */
+  components?: MealComponent[];
 }
 
 export interface DailyNutritionRecord {

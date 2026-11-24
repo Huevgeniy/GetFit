@@ -90,46 +90,51 @@ const user = {
 const container = window.document.getElementById('root');
 let renderError = null;
 let root;
+let dailyRecords = [];
+
+const renderApp = () =>
+  React.createElement(NutritionComponent, {
+    user,
+    dailyRecords,
+    onUpdateDailyRecords: (records) => {
+      dailyRecords = records;
+    },
+    sleepRecords: [],
+    onUpdateSleepRecords: noop,
+    pastWorkouts: [],
+    onUpdateUser: noop,
+    customFoods: [
+      // Старые облачные данные могли содержать базовый продукт внутри customFoods.
+      // Компонент обязан схлопнуть его по id/названию, иначе React-ключи ломают список.
+      {
+        id: 'food_chicken_breast',
+        name: 'Куриное филе (грудка сырая)',
+        category: 'meat',
+        caloriesPer100g: 113,
+        proteinPer100g: 23.6,
+        fatPer100g: 1.9,
+        carbsPer100g: 0.4,
+        fiberPer100g: 0,
+      },
+      {
+        id: 'custom_test_dish',
+        name: 'Завтрак стандартный',
+        category: 'custom',
+        caloriesPer100g: 120,
+        proteinPer100g: 7,
+        fatPer100g: 4,
+        carbsPer100g: 12,
+        fiberPer100g: 1.6,
+        defaultGrams: 500,
+      },
+    ],
+    onSaveCustomFood: noop,
+  });
+
 try {
   await act(async () => {
     root = createRoot(container);
-    root.render(
-      React.createElement(NutritionComponent, {
-        user,
-        dailyRecords: [],
-        onUpdateDailyRecords: noop,
-        sleepRecords: [],
-        onUpdateSleepRecords: noop,
-        pastWorkouts: [],
-        onUpdateUser: noop,
-        customFoods: [
-          // Старые облачные данные могли содержать базовый продукт внутри customFoods.
-          // Компонент обязан схлопнуть его по id/названию, иначе React-ключи ломают список.
-          {
-            id: 'food_chicken_breast',
-            name: 'Куриное филе (грудка сырая)',
-            category: 'meat',
-            caloriesPer100g: 113,
-            proteinPer100g: 23.6,
-            fatPer100g: 1.9,
-            carbsPer100g: 0.4,
-            fiberPer100g: 0,
-          },
-          {
-            id: 'custom_test_dish',
-            name: 'Завтрак стандартный',
-            category: 'custom',
-            caloriesPer100g: 120,
-            proteinPer100g: 7,
-            fatPer100g: 4,
-            carbsPer100g: 12,
-            fiberPer100g: 1.6,
-            defaultGrams: 500,
-          },
-        ],
-        onSaveCustomFood: noop,
-      }),
-    );
+    root.render(renderApp());
   });
 } catch (error) {
   renderError = error;
@@ -150,6 +155,34 @@ const clickByText = async (text) => {
 
 const opened = await clickByText('Внести блюдо или продукт в дневник');
 check('окно добавления блюда открывается', opened && container.textContent.includes('Добавить блюдо в дневник'));
+
+const setInputValue = async (input, value) => {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+  await act(async () => {
+    setter.call(input, String(value));
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  });
+};
+
+const findInput = (placeholderPart) =>
+  [...container.querySelectorAll('input')].find((el) => (el.placeholder || '').includes(placeholderPart));
+
+const clickFoodRow = async (name) => {
+  const row = [...container.querySelectorAll('div.cursor-pointer')].find((el) =>
+    (el.textContent || '').includes(name),
+  );
+  if (!row) return false;
+  await act(async () => {
+    row.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  });
+  return true;
+};
 
 const productNames = () =>
   [...container.querySelectorAll('.font-bold')]
@@ -186,5 +219,78 @@ await clickByText('Мои продукты');
 const customOnly = productNames();
 check('категория «Мои продукты» показывает сохранённое блюдо', customOnly.some((name) => name.includes('Завтрак стандартный')) && customOnly.every((name) => !name.includes('Куриное филе') && !name.includes('Творог')), JSON.stringify(customOnly));
 
-console.log(failures === 0 ? '\nФИЛЬТР ПРОДУКТОВ РАБОТАЕТ' : `\nПРОВАЛОВ: ${failures}`);
+// --- Составной приём пищи: 100 г овсянки + 300 г молока + 150 г яиц ---
+await clickByText('Собрать приём пищи');
+check('режим сборки приёма пищи включается', container.textContent.includes('Состав (0)') || container.textContent.includes('итоговое КБЖУ посчитается автоматически'));
+
+// После проверки категорий активна «Мои продукты» — для ингредиентов нужен общий список.
+await clickByText('Все');
+
+const nameInput = findInput('Например: Завтрак');
+check('поле названия приёма пищи есть', Boolean(nameInput));
+if (nameInput) await setInputValue(nameInput, 'Завтрак');
+
+const ingredient = async (search, rowName) => {
+  const searchInput = findInput('Найти ингредиент');
+  if (!searchInput) return false;
+  await setInputValue(searchInput, search);
+  return clickFoodRow(rowName);
+};
+
+check('овсянка добавляется в состав', await ingredient('Овсяная', 'Овсяная каша'));
+check('молоко добавляется в состав', await ingredient('Молоко коровье 2.5', 'Молоко коровье 2.5%'));
+check('яйца добавляются в состав', await ingredient('Яйцо куриное', 'Яйцо куриное'));
+
+const gramsInput = (name) =>
+  [...container.querySelectorAll('input[aria-label]')].find(
+    (el) => (el.getAttribute('aria-label') || '') === `Граммы: ${name}`,
+  );
+
+const milkGrams = gramsInput('Молоко коровье 2.5%');
+const eggGrams = gramsInput('Яйцо куриное (C1 цельное)');
+if (milkGrams) await setInputValue(milkGrams, 300);
+if (eggGrams) await setInputValue(eggGrams, 150);
+
+const totalsText = container.textContent;
+check('состав показывает три ингредиента', container.textContent.includes('Состав (3)'));
+check(
+  'итоговое КБЖУ составного приёма считается верно',
+  totalsText.includes('744 ккал') && totalsText.includes('Б 39.8 / Ж 31 / У 77') && totalsText.includes('клетчатка 10.6 г'),
+);
+
+await clickByText('Добавить приём в дневник');
+const day = dailyRecords[0];
+const meal = day?.meals?.[0];
+check('составной приём добавлен одной записью', Boolean(day) && day.meals.length === 1, JSON.stringify(day?.meals?.map((m) => m.name)));
+check('у записи три компонента', meal?.components?.length === 3, JSON.stringify(meal?.components?.map((c) => c.name)));
+check(
+  'КБЖУ приёма просуммировано в дневной итог',
+  day?.totalCalories === 744 && day?.totalProtein === 39.8 && day?.totalFat === 31 && day?.totalCarbs === 77 && day?.totalFiber === 10.6,
+  day ? `ккал=${day.totalCalories}, Б=${day.totalProtein}, Ж=${day.totalFat}, У=${day.totalCarbs}, клетчатка=${day.totalFiber}` : 'нет дня',
+);
+
+await act(async () => {
+  root.render(renderApp());
+});
+await clickByText('Приемы пищи');
+check('в дневнике появилась одна строка «Завтрак»', container.textContent.includes('Завтрак') && container.textContent.includes('744 ккал'));
+
+const breakdownButton = [...container.querySelectorAll('button')].find((el) =>
+  (el.textContent || '').includes('Состав (3)'),
+);
+check('у записи есть раскрываемый состав', Boolean(breakdownButton));
+if (breakdownButton && breakdownButton.getAttribute('aria-expanded') !== 'true') {
+  await act(async () => {
+    breakdownButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+}
+const diaryText = container.textContent;
+check(
+  'состав раскрывается с граммовками и БЖУ ингредиентов',
+  diaryText.includes('Овсяная каша') && diaryText.includes('— 100 г') &&
+    diaryText.includes('Молоко коровье 2.5%') && diaryText.includes('— 300 г') &&
+    diaryText.includes('Яйцо куриное (C1 цельное)') && diaryText.includes('— 150 г'),
+);
+
+console.log(failures === 0 ? '\nФИЛЬТР ПРОДУКТОВ И СОСТАВНОЙ ПРИЁМ РАБОТАЮТ' : `\nПРОВАЛОВ: ${failures}`);
 process.exit(failures === 0 ? 0 : 1);

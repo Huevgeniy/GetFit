@@ -269,5 +269,53 @@ check('контекст содержит питание', context.nutritionToday
 check('контекст содержит шаги', context.steps?.today === 12400, String(context.steps?.today));
 check('контекст содержит сохранённые блюда', context.savedDishes?.some((food) => /завтрак/i.test(food.name)), JSON.stringify(context.savedDishes));
 
+/* ---------- 8. Составной приём пищи ---------- */
+const compositeState = {
+  ...state,
+  dailyNutritionRecords: state.dailyNutritionRecords.map((record) =>
+    record.date === today
+      ? {
+          ...record,
+          meals: [
+            ...record.meals,
+            {
+              id: 'm3',
+              name: 'Завтрак',
+              grams: 550,
+              calories: 744,
+              protein: 39.8,
+              fat: 31,
+              carbs: 77,
+              fiber: 10.6,
+              mealType: 'breakfast',
+              timestamp: '',
+              components: [
+                { name: 'Овсяная каша', grams: 100, calories: 352, protein: 12.3, fat: 6.2, carbs: 61.8, fiber: 10.6 },
+                { name: 'Молоко 2.5%', grams: 300, calories: 156, protein: 8.4, fat: 7.5, carbs: 14.1, fiber: 0 },
+                { name: 'Яйцо куриное', grams: 150, calories: 236, protein: 19.1, fat: 17.3, carbs: 1.1, fiber: 0 },
+              ],
+            },
+          ],
+        }
+      : record,
+  ),
+};
+const compositeAnswer = qa.answerDataQuestion('что я ел сегодня?', compositeState) || '';
+check(
+  'бот показывает состав составного приёма',
+  compositeAnswer.includes('состав:') &&
+    compositeAnswer.includes('Овсяная каша 100 г') &&
+    compositeAnswer.includes('Молоко 2.5% 300 г') &&
+    compositeAnswer.includes('Яйцо куриное 150 г'),
+  compositeAnswer,
+);
+const compositeContext = qa.buildStateContext(compositeState);
+const compositeContextMeal = compositeContext.nutritionToday?.meals?.find((meal) => meal.name === 'Завтрак');
+check(
+  'в контексте ИИ есть состав приёма',
+  compositeContextMeal?.components?.length === 3,
+  JSON.stringify(compositeContextMeal),
+);
+
 console.log(failures === 0 ? '\nОТВЕТЫ И БЛЮДА РАБОТАЮТ' : `\nПРОВАЛОВ: ${failures}`);
 process.exit(failures === 0 ? 0 : 1);
