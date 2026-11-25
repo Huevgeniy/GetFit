@@ -7,7 +7,7 @@ import { UserProfile } from '../types';
  * прогресс и профиль. Всё, что ниже, включает сам пользователь в настройках —
  * так приложение не выглядит перегруженным для тех, кому нужен простой дневник.
  */
-export type FeatureKey = 'marathons' | 'battles' | 'discipline' | 'ranks' | 'lab' | 'periodization';
+export type FeatureKey = 'marathons' | 'battles' | 'discipline' | 'ranks' | 'lab' | 'periodization' | 'body';
 
 export type FeatureFlags = Record<FeatureKey, boolean>;
 
@@ -59,6 +59,15 @@ export const FEATURES: FeatureInfo[] = [
     where: 'Нижнее меню → Разряды',
   },
   {
+    key: 'body',
+    label: 'Тело и биомеханика',
+    tabLabel: 'Тело',
+    description: 'Замеры, пропорции и проверка техники по углам суставов.',
+    details:
+      'Появится вкладка «Тело»: история замеров, 2D-модель с вашими пропорциями и подвижными суставами, безопасные углы для приседа, тяги, брусьев и жима, а также анализ роста объёмов по группам мышц.',
+    where: 'Нижнее меню → Тело',
+  },
+  {
     key: 'lab',
     label: 'Лаборатория привычек',
     tabLabel: 'Лаборатория',
@@ -85,6 +94,7 @@ export const DEFAULT_FEATURES: FeatureFlags = {
   ranks: false,
   lab: false,
   periodization: false,
+  body: false,
 };
 
 export const ALL_FEATURES_ON: FeatureFlags = {
@@ -94,6 +104,7 @@ export const ALL_FEATURES_ON: FeatureFlags = {
   ranks: true,
   lab: true,
   periodization: true,
+  body: true,
 };
 
 export function isAdvancedMode(user?: UserProfile | null): boolean {

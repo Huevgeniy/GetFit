@@ -9,6 +9,7 @@
  * Модуль намеренно не зависит от Express и от хранилища: его легко тестировать.
  */
 import type {
+  BodyMeasurementEntry,
   CompletedSet,
   DailyNutritionRecord,
   ExerciseLog,
@@ -20,6 +21,17 @@ import type {
 } from '../src/types.ts';
 import { sanitizeCustomFoods } from '../src/lib/customFoods.ts';
 import { BASE_FOODS_DATABASE } from '../src/data/foodsData.ts';
+import {
+  BODY_METRIC_FIELDS,
+  BODY_METRIC_BY_KEY,
+  buildProportionInsights,
+  latestMeasurement,
+  measurementValue,
+  muscleVolumesFromWorkouts,
+  normalizeBodyProfile,
+  previousMeasurement,
+} from '../src/lib/bodyModel.ts';
+import type { BodyMetricKey } from '../src/lib/bodyModel.ts';
 
 const TZ_OFFSET_HOURS = Number(process.env.NOTIFY_TZ_OFFSET_HOURS || 3);
 const HOUR_MS = 60 * 60 * 1000;
@@ -317,6 +329,37 @@ export function buildStateContext(state: StoredState): Record<string, any> {
       carbsPer100g: round1(num(food.carbsPer100g)),
     }));
 
+  const bodyProfile = normalizeBodyProfile(user.bodyProfile);
+  const bodyLatest = latestMeasurement(bodyProfile);
+  const bodyPrevious = previousMeasurement(bodyProfile);
+  const bodyMetrics: Record<string, any> = {};
+  if (bodyLatest) {
+    for (const field of BODY_METRIC_FIELDS) {
+      const value = measurementValue(bodyLatest, field.key);
+      if (value === undefined) continue;
+      const before = measurementValue(bodyPrevious, field.key);
+      bodyMetrics[field.key] = {
+        label: field.label,
+        cm: value,
+        deltaCm: before !== undefined ? round1(value - before) : null,
+      };
+    }
+  }
+  const bodyInsights = buildProportionInsights(bodyProfile).map((insight) => ({
+    title: insight.title,
+    value: insight.value,
+    status: insight.status,
+  }));
+  const bodyWeight = bodyLatest?.weightKg || num(user.currentWeight);
+  const bodyVolumes = muscleVolumesFromWorkouts(workouts, 30, bodyWeight)
+    .filter((volume) => volume.volumeKg > 0)
+    .slice(0, 6)
+    .map((volume) => ({
+      group: volume.label,
+      kg: volume.volumeKg,
+      sessions: volume.sessions,
+    }));
+
   return {
     today,
     profile: {
@@ -402,6 +445,16 @@ export function buildStateContext(state: StoredState): Record<string, any> {
       best: record.currentBest,
       updatedAt: record.updatedAt || null,
     })),
+    body: {
+      heightCm: bodyProfile.heightCm || num(user.heightCm) || null,
+      sex: bodyProfile.sex || user.gender || null,
+      measurements: bodyProfile.measurements.length,
+      latestDate: bodyLatest?.date || null,
+      latestWeightKg: bodyLatest?.weightKg || null,
+      metrics: bodyMetrics,
+      insights: bodyInsights,
+      volume30d: bodyVolumes,
+    },
     savedDishes,
   };
 }
@@ -563,6 +616,118 @@ function answerWeight(text: string, state: StoredState): string {
   }
   if (parts.length === 0) return 'Вес пока не записан. Напишите, например: «вес 80.5 кг».';
   return `${parts.join(', ')}.`;
+}
+
+const BODY_QUERY_METRICS: Array<{ re: RegExp; keys: BodyMetricKey[] }> = [
+  { re: /тали/, keys: ['waistCm'] },
+  { re: /груд/, keys: ['chestCm'] },
+  { re: /плеч/, keys: ['shouldersCm'] },
+  { re: /ше[яи]/, keys: ['neckCm'] },
+  { re: /обхват\s+бед|таз|ягодиц/, keys: ['hipsCm'] },
+  { re: /бедр|бедро/, keys: ['thighLCm', 'thighRCm'] },
+  { re: /бицепс/, keys: ['bicepLCm', 'bicepRCm'] },
+  { re: /предплеч/, keys: ['forearmLCm', 'forearmRCm'] },
+  { re: /голен|икр/, keys: ['calfLCm', 'calfRCm'] },
+  { re: /лодыжк/, keys: ['ankleLCm', 'ankleRCm'] },
+  { re: /запяст/, keys: ['wristLCm', 'wristRCm'] },
+];
+
+function bodyMetricLine(
+  key: BodyMetricKey,
+  latest: BodyMeasurementEntry,
+  previous: BodyMeasurementEntry | null,
+): string | null {
+  const value = measurementValue(latest, key);
+  if (value === undefined) return null;
+  const current = BODY_METRIC_BY_KEY[key];
+  const before = measurementValue(previous, key);
+  const delta = before !== undefined ? round1(value - before) : undefined;
+  const deltaText =
+    delta !== undefined && Math.abs(delta) >= 0.05
+      ? `, ${delta > 0 ? '+' : ''}${delta} см к прошлому`
+      : '';
+  return `${current.label}: ${value} см${deltaText}`;
+}
+
+/**
+ * Ответы по замерам тела. Это не медицинская оценка: только сохранённые
+ * обхваты, их динамика и пропорции, которые посчитаны по тем же формулам,
+ * что и в разделе «Тело».
+ */
+function answerBody(text: string, state: StoredState): string | null {
+  const user = (state.user || {}) as UserProfile;
+  const profile = normalizeBodyProfile(user.bodyProfile);
+  const latest = latestMeasurement(profile);
+  const previous = previousMeasurement(profile);
+  const normalized = normalize(text);
+
+  if (!latest) {
+    return 'Замеров тела пока нет. Откройте «Ещё» → «Тело» → «Замеры»: вес, талия, грудь и плечи уже дадут базовую картину.';
+  }
+
+  if (/сколько/.test(normalized) && /замер/.test(normalized)) {
+    return `Замеров тела: ${profile.measurements.length}. Последний — ${humanDate(latest.date)}${latest.weightKg !== undefined ? `, вес ${latest.weightKg} кг` : ''}.`;
+  }
+
+  if (/симметр|асимметр/.test(normalized)) {
+    const pairs = [
+      { label: 'Бицепс', left: latest.bicepLCm, right: latest.bicepRCm },
+      { label: 'Предплечье', left: latest.forearmLCm, right: latest.forearmRCm },
+      { label: 'Бедро', left: latest.thighLCm, right: latest.thighRCm },
+      { label: 'Голень', left: latest.calfLCm, right: latest.calfRCm },
+    ].filter(
+      (pair): pair is { label: string; left: number; right: number } =>
+        pair.left !== undefined && pair.right !== undefined,
+    );
+    if (pairs.length === 0) {
+      return 'Для оценки симметрии нужны обхваты левой и правой стороны: бицепс, предплечье, бедро или голень.';
+    }
+    const lines = pairs.map((pair) => {
+      const diff = (Math.abs(pair.left - pair.right) / Math.max(pair.left, pair.right)) * 100;
+      return `• ${pair.label}: Л ${pair.left} / П ${pair.right} см — разница ${round1(diff)}%`;
+    });
+    return `Симметрия по замеру от ${humanDate(latest.date)}:\n${lines.join('\n')}\nНебольшая разница допустима; для крупной добавьте одностороннюю работу.`;
+  }
+
+  const selected: BodyMetricKey[] = [];
+  for (const rule of BODY_QUERY_METRICS) {
+    if (rule.re.test(normalized)) selected.push(...rule.keys);
+  }
+  let keys = [...new Set(selected)];
+  const wantsLeft = /лев/.test(normalized);
+  const wantsRight = /прав/.test(normalized);
+  if (wantsLeft !== wantsRight) {
+    keys = keys.filter((key) => {
+      if (key.endsWith('LCm')) return wantsLeft;
+      if (key.endsWith('RCm')) return wantsRight;
+      return true;
+    });
+  }
+
+  if (keys.length > 0) {
+    const lines = keys
+      .map((key) => bodyMetricLine(key, latest, previous))
+      .filter((line): line is string => Boolean(line));
+    if (lines.length > 0) {
+      return `Последний замер тела — ${humanDate(latest.date)}${latest.weightKg !== undefined ? `, вес ${latest.weightKg} кг` : ''}:\n${lines.join('\n')}`;
+    }
+    return `В последнем замере от ${humanDate(latest.date)} этих обхватов нет. Добавьте их во вкладке «Тело» → «Замеры».`;
+  }
+
+  if (/пропорц|телосложен|v[- ]?образ|фигур|форм/.test(normalized)) {
+    const insights = buildProportionInsights(profile);
+    if (insights.length === 0) {
+      return 'Для пропорций добавьте плечи, грудь, талию и бёдра. Тогда появятся соотношения вроде «плечи к талии» и зоны роста.';
+    }
+    return `Пропорции по замеру от ${humanDate(latest.date)}:\n${insights
+      .map((insight) => `• ${insight.title}: ${insight.value}. ${insight.hint}`)
+      .join('\n')}`;
+  }
+
+  const lines = BODY_METRIC_FIELDS.map((field) =>
+    bodyMetricLine(field.key, latest, previous),
+  ).filter((line): line is string => Boolean(line));
+  return `Последний замер тела — ${humanDate(latest.date)}${latest.weightKg !== undefined ? `, вес ${latest.weightKg} кг` : ''}${lines.length > 0 ? `:\n${lines.slice(0, 10).join('\n')}` : '.'}`;
 }
 
 function answerLastWorkout(state: StoredState): string {
@@ -751,6 +916,20 @@ export function answerDataQuestion(text: string, state: StoredState): string | n
     const recordAnswer = answerPersonalRecords(lower, state);
     if (recordAnswer) return recordAnswer;
   }
+
+  // Замеры тела и пропорции: только когда вопрос действительно про них,
+  // а не про калории в грудке или упражнения на грудь.
+  const bodyIntent =
+    !/(калор|ккал|белк|жир|углевод|клетчат|съел|поел|рацион|продукт|блюд|упражнен|трениров|подход|повтор|программ)/i.test(
+      lower,
+    ) &&
+    (/(замер|пропорц|симметр|антропометр|телосложен|v[- ]?образ|обхват|тали|бицепс|предплеч|голен|лодыжк|запяст)/i.test(
+      lower,
+    ) ||
+      /(какие|какой|какая|покажи|сколько).{0,24}(плеч|груд|бедр|тали)/i.test(lower) ||
+      /что\s+по\s+телу|мо[йи]\s+замер/i.test(lower));
+  const bodyAnswer = bodyIntent ? answerBody(lower, state) : null;
+  if (bodyAnswer) return bodyAnswer;
 
   if (/трениров/i.test(lower) && /(последн|когда|прошл|была|был|было)/i.test(lower)) {
     return answerLastWorkout(state);

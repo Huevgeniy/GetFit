@@ -196,7 +196,7 @@ if (process.env.DOM_DEBUG === '1') {
 }
 
 const BASIC_TABS = ['Тренировки', 'Питание', 'Прогресс', 'Профиль'];
-const ADVANCED_TABS = ['Лаборатория', 'Циклы', 'Разряды', 'Дисциплина', 'Зарубы'];
+const ADVANCED_TABS = ['Лаборатория', 'Циклы', 'Разряды', 'Дисциплина', 'Тело', 'Зарубы'];
 check(
   'базовый режим: внизу ровно четыре вкладки',
   BASIC_TABS.every((label) => navLabels().some((l) => l.includes(label))) &&
@@ -251,7 +251,7 @@ if (advancedToggle) {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 80));
   });
-  const featureToggles = ['marathons', 'battles', 'discipline', 'ranks', 'lab', 'periodization'];
+  const featureToggles = ['marathons', 'battles', 'discipline', 'ranks', 'body', 'lab', 'periodization'];
   check(
     'расширенный режим показывает все тумблеры разделов',
     featureToggles.every((key) => Boolean(container.querySelector(`#feature-toggle-${key}`))),
@@ -261,6 +261,7 @@ if (advancedToggle) {
     text().includes('Серии дней с шагами') &&
       text().includes('Дуэли 1 на 1') &&
       text().includes('Нормативы по пауэрлифтингу') &&
+      text().includes('Замеры, пропорции') &&
       text().includes('Личные эксперименты') &&
       text().includes('Блоки роста мышц'),
     text().slice(-400),
@@ -318,7 +319,7 @@ if (enableAll) {
   );
   check(
     'дополнительные разделы убраны в «Ещё»',
-    !['Зарубы', 'Дисциплина', 'Разряды', 'Лаборатория', 'Циклы'].some((label) =>
+    !['Зарубы', 'Дисциплина', 'Разряды', 'Тело', 'Лаборатория', 'Циклы'].some((label) =>
       navLabels().some((item) => item.includes(label)),
     ),
     JSON.stringify(navLabels()),
@@ -333,7 +334,7 @@ if (enableAll) {
     });
     check(
       'меню «Ещё» показывает все включённые разделы',
-      ['Зарубы', 'Дисциплина', 'Разряды', 'Лаборатория', 'Циклы'].every((label) => text().includes(label)),
+      ['Зарубы', 'Дисциплина', 'Разряды', 'Тело', 'Лаборатория', 'Циклы'].every((label) => text().includes(label)),
       text().slice(-260),
     );
     const closeMore = container.querySelector('[role="dialog"] [aria-label="Закрыть"]');
@@ -345,6 +346,149 @@ if (enableAll) {
         await new Promise((resolve) => setTimeout(resolve, 80));
       });
       check('меню «Ещё» закрывается', !text().includes('Ещё разделы'));
+    }
+  }
+}
+
+// 4a-3. Раздел «Тело»: открывается из «Ещё», замеры, модель и упражнения
+const moreForBody = navButton('Ещё');
+if (moreForBody) {
+  await act(async () => {
+    moreForBody.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+  const bodyEntry = [...container.querySelectorAll('[role="dialog"] button')].find((el) =>
+    (el.textContent || '').trim().startsWith('Тело'),
+  );
+  check('в меню «Ещё» есть раздел «Тело»', Boolean(bodyEntry), text().slice(-200));
+  if (bodyEntry) {
+    await act(async () => {
+      bodyEntry.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+    check(
+      'вкладка «Тело» открывается',
+      !renderError && text().includes('Тело и биомеханика'),
+      text().slice(0, 160),
+    );
+    check('без замеров показан стартовый экран', text().includes('Начните с первого замера'));
+
+    const measurementTab = container.querySelector('#body-tab-measurements');
+    check('у раздела есть вкладка «Замеры»', Boolean(measurementTab));
+    if (measurementTab) {
+      await act(async () => {
+        measurementTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      });
+      const addMeasurement = container.querySelector('#body-add-measurement-empty');
+      check('можно начать с добавления замера', Boolean(addMeasurement));
+      if (addMeasurement) {
+        await act(async () => {
+          addMeasurement.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        });
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+        });
+        check('форма замера открывается', Boolean(container.querySelector('#body-measurement-form')));
+        const weightInput = container.querySelector('#body-measurement-weight');
+        const waistInput = container.querySelector('#body-measurement-waistCm');
+        check('в форме есть вес и обхваты', Boolean(weightInput) && Boolean(waistInput));
+        if (weightInput && waistInput) {
+          const setValue = (input, value) => {
+            const setter = Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype,
+              'value',
+            ).set;
+            setter.call(input, value);
+            input.dispatchEvent(new window.Event('input', { bubbles: true }));
+          };
+          await act(async () => {
+            setValue(waistInput, '82');
+          });
+          const saveMeasurement = container.querySelector('#body-measurement-save');
+          check('замер можно сохранить', Boolean(saveMeasurement));
+          if (saveMeasurement) {
+            await act(async () => {
+              saveMeasurement.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            });
+            await act(async () => {
+              await new Promise((resolve) => setTimeout(resolve, 1700));
+            });
+            check('замер появился в истории', text().includes('Все обхваты') && text().includes('82'), text().slice(0, 160));
+            check(
+              'замер уходит в облако вместе с профилем',
+              requests.some(
+                (r) => r.url === '/api/db/sync' && String(r.body || '').includes('bodyProfile'),
+              ),
+            );
+          }
+        }
+      }
+    }
+
+    const modelTab = container.querySelector('#body-tab-model');
+    if (modelTab) {
+      await act(async () => {
+        modelTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      });
+      check(
+        '2D-модель отрисована',
+        Boolean(container.querySelector('svg[role="img"][aria-label*="2D-модель"]')),
+      );
+      check(
+        'у модели есть маркеры суставов',
+        container.querySelectorAll('[aria-label^="Двигать:"]').length >= 4,
+        String(container.querySelectorAll('[aria-label^="Двигать:"]').length),
+      );
+    }
+
+    const exerciseTab = container.querySelector('#body-tab-exercises');
+    if (exerciseTab) {
+      await act(async () => {
+        exerciseTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      });
+      check(
+        'вкладка упражнений включает присед и проверку техники',
+        text().includes('Присед со штангой') && text().includes('Проверка техники'),
+      );
+      check(
+        'проверка показывает безопасные коридоры',
+        text().includes('безопасно') && text().includes('Глубина по колену'),
+      );
+    }
+
+    // Возвращаемся в профиль для проверок напоминаний и резервной копии.
+    const moreForProfile = navButton('Ещё');
+    if (moreForProfile) {
+      await act(async () => {
+        moreForProfile.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      });
+      const profileShortcut = buttons().find((el) =>
+        (el.textContent || '').includes('Настроить разделы в профиле'),
+      );
+      if (profileShortcut) {
+        await act(async () => {
+          profileShortcut.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        });
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        });
+      }
     }
   }
 }

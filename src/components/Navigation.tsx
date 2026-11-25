@@ -9,6 +9,7 @@ import {
   User,
   Layers,
   Swords,
+  PersonStanding,
   MoreHorizontal,
   X,
 } from 'lucide-react';
@@ -24,6 +25,7 @@ export type NavTab =
   | 'periodization'
   | 'ranks'
   | 'discipline'
+  | 'body'
   | 'profile'
   | 'battles';
 
@@ -90,6 +92,16 @@ export const Navigation: React.FC<NavigationProps> = ({
       : []),
     ...(features?.ranks
       ? [{ id: 'ranks' as NavTab, label: 'Разряды', icon: Award, description: featureDescription('ranks') }]
+      : []),
+    ...(features?.body
+      ? [
+          {
+            id: 'body' as NavTab,
+            label: 'Тело',
+            icon: PersonStanding,
+            description: featureDescription('body'),
+          },
+        ]
       : []),
     ...(features?.lab
       ? [{ id: 'lab' as NavTab, label: 'Лаборатория', icon: FlaskConical, description: featureDescription('lab') }]

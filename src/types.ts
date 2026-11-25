@@ -73,6 +73,45 @@ export interface InBodyRecord {
   coachNotes?: string;
 }
 
+/** Один замер тела. Все обхваты — в сантиметрах, вес — в килограммах. */
+export interface BodyMeasurementEntry {
+  id: string;
+  /** Локальная дата YYYY-MM-DD. */
+  date: string;
+  weightKg?: number;
+  neckCm?: number;
+  shouldersCm?: number;
+  chestCm?: number;
+  waistCm?: number;
+  hipsCm?: number;
+  bicepLCm?: number;
+  bicepRCm?: number;
+  forearmLCm?: number;
+  forearmRCm?: number;
+  wristLCm?: number;
+  wristRCm?: number;
+  thighLCm?: number;
+  thighRCm?: number;
+  calfLCm?: number;
+  calfRCm?: number;
+  ankleLCm?: number;
+  ankleRCm?: number;
+  notes?: string;
+  createdAt: string;
+}
+
+/**
+ * Тело и биомеханика хранятся внутри профиля: так замеры и аватар
+ * синхронизируются вместе с остальными данными пользователя.
+ */
+export interface BodyProfile {
+  heightCm?: number;
+  sex?: 'male' | 'female';
+  /** Фото лица: data URL после кадрирования или ссылка из Telegram. */
+  avatarUrl?: string;
+  measurements: BodyMeasurementEntry[];
+}
+
 export interface UserProfile {
   id: string;
   name: string;
@@ -97,6 +136,8 @@ export interface UserProfile {
   targetRankMovement?: string;
   targetRankGoalValue?: number;
   avatarUrl?: string;
+  /** Замеры, пропорции и фото для 2D-модели тела. */
+  bodyProfile?: BodyProfile;
   heightCm?: number;
   age?: number;
   gender?: 'male' | 'female';
@@ -119,7 +160,7 @@ export interface UserProfile {
   /** 'basic' — только четыре базовые вкладки, 'advanced' — плюс включённые разделы. */
   uiMode?: 'basic' | 'advanced';
   /** Какие дополнительные разделы включены в расширенном режиме. */
-  enabledFeatures?: Partial<Record<'marathons' | 'battles' | 'discipline' | 'ranks' | 'lab' | 'periodization', boolean>>;
+  enabledFeatures?: Partial<Record<'marathons' | 'battles' | 'discipline' | 'ranks' | 'lab' | 'periodization' | 'body', boolean>>;
 }
 
 /** Какие провайдеры ИИ реально настроены на сервере. */

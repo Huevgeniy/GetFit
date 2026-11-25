@@ -140,7 +140,7 @@ const enabledSections = (features?: FeatureFlags): SectionTourId[] =>
 
 /** Есть ли в нижнем меню «Ещё»: один дополнительный раздел показывается напрямую. */
 const hasMoreMenu = (features?: FeatureFlags): boolean => {
-  const bottomTabs = (['discipline', 'ranks', 'lab', 'periodization'] as SectionTourId[]).filter(
+  const bottomTabs = (['discipline', 'ranks', 'lab', 'periodization', 'body'] as const).filter(
     (key) => Boolean(features?.[key]),
   );
   // Зарубы тоже занимают место в нижнем меню, поэтому учитываем их в переполнении.
@@ -150,16 +150,19 @@ const hasMoreMenu = (features?: FeatureFlags): boolean => {
 export function buildMainTourSteps(features?: FeatureFlags): TourStep[] {
   const sections = enabledSections(features);
   const battlesEnabled = Boolean(features?.battles);
+  const bodyEnabled = Boolean(features?.body);
   const moreMenu = hasMoreMenu(features);
-  const optionalNavCount = sections.length + (battlesEnabled ? 1 : 0);
+  const optionalNavCount = sections.length + (battlesEnabled ? 1 : 0) + (bodyEnabled ? 1 : 0);
 
   // Марафоны не занимают место в нижнем меню: это под-вкладка «Тренировок».
   const bottomSections = sections.filter((key) => key !== 'marathons');
-  const bottomNavCount = bottomSections.length + (battlesEnabled ? 1 : 0);
+  const bottomNavCount = bottomSections.length + (battlesEnabled ? 1 : 0) + (bodyEnabled ? 1 : 0);
   const onlyMarathons = bottomNavCount === 0 && sections.includes('marathons');
-  const singleNavItem =
+  const singleNavItem: NavTab | null =
     bottomNavCount === 1
-      ? bottomSections[0] || (battlesEnabled ? 'battles' : null)
+      ? bodyEnabled && bottomSections.length === 0 && !battlesEnabled
+        ? 'body'
+        : (bottomSections[0] as NavTab | undefined) || (battlesEnabled ? 'battles' : null)
       : null;
 
   const placementStep: TourStep[] =
@@ -187,6 +190,9 @@ export function buildMainTourSteps(features?: FeatureFlags): TourStep[] {
                   : 'Включённый раздел появился в нижнем меню. При первом открытии приложение само покажет короткую подсказку.',
             bullets: [
               ...sections.map((key) => `${FEATURE_LABEL[key]} — ${FEATURE_PLACEMENT[key]}`),
+              ...(bodyEnabled
+                ? ['Тело и биомеханика — вкладка «Тело» в нижнем меню']
+                : []),
               ...(battlesEnabled
                 ? ['Зарубы с друзьями — отдельная вкладка в нижнем меню']
                 : []),
@@ -203,7 +209,7 @@ export function buildMainTourSteps(features?: FeatureFlags): TourStep[] {
             target: '#feature-settings',
             title: 'Дополнительные разделы по желанию',
             description:
-              'Приложение не перегружает первый экран: в базовом режиме остаются четыре вкладки. Когда понадобятся марафоны, дисциплина, разряды, циклы или лаборатория — включите их здесь.',
+              'Приложение не перегружает первый экран: в базовом режиме остаются четыре вкладки. Когда понадобятся марафоны, дисциплина, разряды, циклы, тело или лаборатория — включите их здесь.',
             bullets: [
               'Выключите «Базовый режим» и включите нужный раздел',
               'Один раздел появится сразу в нижнем меню',

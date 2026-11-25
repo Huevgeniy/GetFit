@@ -28,6 +28,7 @@ await storage.initStorage();
 const userId = 'tg:5555';
 const today = ingest.localDayKey();
 const yesterday = ingest.localDayKey(new Date(Date.now() - 86400000));
+const monthAgo = ingest.localDayKey(new Date(Date.now() - 30 * 86400000));
 const yesterdayHuman = yesterday.split('-').reverse().join('.');
 
 /* ---------- 1. Чистка старых customFoods ---------- */
@@ -86,6 +87,46 @@ await storage.saveUserState(userId, {
     longestStreak: 0,
     selectedDisciplines: ['powerlifting'],
     inBodyRecords: [],
+    bodyProfile: {
+      heightCm: 180,
+      sex: 'male',
+      measurements: [
+        {
+          id: 'bm_old',
+          date: monthAgo,
+          createdAt: `${monthAgo}T08:00:00.000Z`,
+          weightKg: 81,
+          waistCm: 84,
+          chestCm: 100,
+          shouldersCm: 120,
+          bicepLCm: 38,
+          bicepRCm: 38,
+          forearmLCm: 29,
+          forearmRCm: 29,
+          thighLCm: 58,
+          thighRCm: 58,
+          calfLCm: 37,
+          calfRCm: 37,
+        },
+        {
+          id: 'bm_new',
+          date: today,
+          createdAt: `${today}T08:00:00.000Z`,
+          weightKg: 80.5,
+          waistCm: 82,
+          chestCm: 103,
+          shouldersCm: 125,
+          bicepLCm: 39,
+          bicepRCm: 39,
+          forearmLCm: 30,
+          forearmRCm: 30,
+          thighLCm: 60,
+          thighRCm: 60,
+          calfLCm: 38,
+          calfRCm: 38,
+        },
+      ],
+    },
   },
   pastWorkouts: [
     {
@@ -172,6 +213,33 @@ check('повторы с 100 кг', /5, 4 повт/.test(answered('скольк�
 check('дата подхода со 100 кг', answered('когда я жал 100 кг?').includes(yesterdayHuman), answered('когда я жал 100 кг?'));
 check('личный рекорд', /100 кг × 5/.test(answered('какой рекорд в жиме?')), answered('какой рекорд в жиме?'));
 check('что ел сегодня', /Овсянка/.test(answered('что я ел сегодня?')), answered('что я ел сегодня?'));
+check(
+  'обхват талии из замеров тела',
+  /Талия: 82 см, -2 см/.test(answered('какой у меня обхват талии?')),
+  answered('какой у меня обхват талии?'),
+);
+check(
+  'обхват груди и динамика',
+  /Грудь: 103 см, \+3 см/.test(answered('какая у меня грудь?')),
+  answered('какая у меня грудь?'),
+);
+check(
+  'пропорции тела',
+  /V-образный силуэт/.test(answered('какие у меня пропорции?')) &&
+    /1\.52 : 1/.test(answered('какие у меня пропорции?')),
+  answered('какие у меня пропорции?'),
+);
+check(
+  'симметрия сторон',
+  /Бицепс: Л 39 \/ П 39/.test(answered('какая у меня симметрия рук?')),
+  answered('какая у меня симметрия рук?'),
+);
+check('количество замеров тела', /Замеров тела: 2/.test(answered('сколько у меня замеров тела?')), answered('сколько у меня замеров тела?'));
+check(
+  'сводка по телу',
+  /Последний замер тела/.test(answered('что по телу?')) && /Талия: 82/.test(answered('что по телу?')),
+  answered('что по телу?'),
+);
 
 check(
   'обычная запись еды не перехватывается как вопрос',
@@ -181,6 +249,14 @@ check(
   'вопрос о калориях в продукте уходит ИИ, а не в личный дневник',
   qa.answerDataQuestion('сколько калорий в банане?', state) === null &&
     qa.answerDataQuestion('сколько калорий в 100 г банана?', state) === null,
+);
+check(
+  'вопрос о грудке не перехватывается замерами тела',
+  qa.answerDataQuestion('сколько калорий в куриной грудке?', state) === null,
+);
+check(
+  'вопрос об упражнениях на грудь не перехватывается замерами',
+  qa.answerDataQuestion('какие упражнения на грудь?', state) === null,
 );
 check(
   'вопрос «сколько калорий у меня» остаётся личным',
@@ -268,6 +344,18 @@ const context = qa.buildStateContext(state);
 check('контекст содержит питание', context.nutritionToday?.calories === 1480, JSON.stringify(context.nutritionToday));
 check('контекст содержит шаги', context.steps?.today === 12400, String(context.steps?.today));
 check('контекст содержит сохранённые блюда', context.savedDishes?.some((food) => /завтрак/i.test(food.name)), JSON.stringify(context.savedDishes));
+check('контекст содержит замеры тела', context.body?.measurements === 2, JSON.stringify(context.body));
+check('контекст содержит последний обхват талии', context.body?.metrics?.waistCm?.cm === 82, JSON.stringify(context.body?.metrics));
+check(
+  'контекст содержит пропорции',
+  context.body?.insights?.some((insight) => /V-образный/.test(insight.title)),
+  JSON.stringify(context.body?.insights),
+);
+check(
+  'контекст содержит объём по группам мышц',
+  context.body?.volume30d?.[0]?.group === 'Грудь' && context.body.volume30d[0].kg === 900,
+  JSON.stringify(context.body?.volume30d),
+);
 
 /* ---------- 8. Составной приём пищи ---------- */
 const compositeState = {

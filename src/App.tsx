@@ -33,6 +33,9 @@ const ResearchLabView = lazy(() =>
 const PeriodizationView = lazy(() =>
   import('./components/PeriodizationView').then(m => ({ default: m.PeriodizationView })),
 );
+const BodyBiomechanicsView = lazy(() =>
+  import('./components/BodyBiomechanicsView').then(m => ({ default: m.BodyBiomechanicsView })),
+);
 const AiSettingsModal = lazy(() =>
   import('./components/AiSettingsModal').then(m => ({ default: m.AiSettingsModal })),
 );
@@ -300,6 +303,7 @@ export default function App() {
     if (features.ranks) base.push('ranks');
     if (features.lab) base.push('lab');
     if (features.periodization) base.push('periodization');
+    if (features.body) base.push('body');
     if (!base.includes(currentTab)) {
       setCurrentTab('charts');
     }
@@ -1270,6 +1274,14 @@ export default function App() {
 
               {currentTab === 'periodization' && features.periodization && (
                 <PeriodizationView
+                  user={user}
+                  pastWorkouts={pastWorkouts}
+                  onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
+                />
+              )}
+
+              {currentTab === 'body' && features.body && (
+                <BodyBiomechanicsView
                   user={user}
                   pastWorkouts={pastWorkouts}
                   onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}

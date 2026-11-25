@@ -153,6 +153,34 @@ const userStub = {
   longestStreak: 10,
   selectedDisciplines: ['powerlifting'],
   inBodyRecords: [],
+  bodyProfile: {
+    heightCm: 178,
+    sex: 'male',
+    measurements: [
+      {
+        id: 'bm_render_1',
+        date: '2026-01-10',
+        createdAt: '2026-01-10T08:00:00.000Z',
+        weightKg: 81,
+        waistCm: 84,
+        chestCm: 104,
+        shouldersCm: 122,
+        bicepLCm: 38,
+        bicepRCm: 37.5,
+      },
+      {
+        id: 'bm_render_2',
+        date: '2026-02-10',
+        createdAt: '2026-02-10T08:00:00.000Z',
+        weightKg: 80,
+        waistCm: 82,
+        chestCm: 105,
+        shouldersCm: 123,
+        bicepLCm: 38.5,
+        bicepRCm: 38,
+      },
+    ],
+  },
 };
 
 const nowDate = new Date();
@@ -206,6 +234,7 @@ const screens = [
   'StatsView',
   'ResearchLabView',
   'PeriodizationView',
+  'BodyBiomechanicsView',
   'SportsRanks',
   'DisciplineTracker',
   'ProfileView',
@@ -284,6 +313,7 @@ const advancedUser = {
     ranks: true,
     lab: true,
     periodization: true,
+    body: true,
   },
 };
 const advancedProfileHtml = renderToString(
@@ -291,9 +321,15 @@ const advancedProfileHtml = renderToString(
 );
 check(
   'расширенный профиль показывает все тумблеры',
-  ['Марафоны целей', 'Зарубы с друзьями', 'Дисциплина и штрафы', 'Спортивные разряды', 'Лаборатория привычек', 'Циклы тренировок'].every(
-    (label) => advancedProfileHtml.includes(label),
-  ),
+  [
+    'Марафоны целей',
+    'Зарубы с друзьями',
+    'Дисциплина и штрафы',
+    'Спортивные разряды',
+    'Тело и биомеханика',
+    'Лаборатория привычек',
+    'Циклы тренировок',
+  ].every((label) => advancedProfileHtml.includes(label)),
 );
 check(
   'расширенный профиль объясняет тумблеры',
@@ -304,6 +340,28 @@ check(
 check(
   'расширенный профиль возвращает вкладки «Друзья и зарубы» и «Награды»',
   advancedProfileHtml.includes('Друзья и зарубы') && advancedProfileHtml.includes('Награды'),
+);
+
+// --- Экран «Тело и биомеханика» ---
+const BodyViewMod = require_(path.join(outDir, 'components', 'BodyBiomechanicsView.js'));
+const bodyHtml = renderToString(
+  React.createElement(BodyViewMod.BodyBiomechanicsView, propsFor()),
+);
+check(
+  'экран «Тело» показывает замеры и модель',
+  ['Тело и биомеханика', 'Замеры', 'Модель', 'Упражнения', 'Анализ'].every((label) =>
+    bodyHtml.includes(label),
+  ),
+  bodyHtml.slice(0, 200),
+);
+check(
+  'экран «Тело» подставляет последний замер',
+  bodyHtml.includes('10.02.2026') && bodyHtml.includes('Все обхваты'),
+  bodyHtml.slice(0, 240),
+);
+check(
+  'экран «Тело» показывает динамику и историю',
+  bodyHtml.includes('Динамика') && bodyHtml.includes('История замеров'),
 );
 
 const WorkoutsHubMod = require_(path.join(outDir, 'components', 'WorkoutsHub.js'));
@@ -320,6 +378,7 @@ const advancedWorkoutsHtml = renderToString(
       ranks: false,
       lab: false,
       periodization: false,
+      body: false,
     },
   })),
 );

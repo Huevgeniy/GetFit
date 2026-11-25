@@ -74,6 +74,16 @@ export function getTelegramUser(): { id?: number; first_name?: string; username?
   }
 }
 
+/** Аватар из Telegram, если пользователь разрешил его показывать. */
+export function getTelegramPhotoUrl(): string {
+  try {
+    const user = getTelegramUser() as { photo_url?: unknown } | null;
+    return typeof user?.photo_url === 'string' ? user.photo_url : '';
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Настраивает внешний вид Mini App и подгоняет высоту под вьюпорт Telegram.
  * Высота выносится в CSS-переменную --app-height: 100vh внутри Telegram врёт.
