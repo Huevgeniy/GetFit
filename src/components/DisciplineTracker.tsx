@@ -22,7 +22,8 @@ import {
   Activity,
   FileText,
   Copy,
-  Download
+  Download,
+  Trash2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -36,8 +37,11 @@ import {
   DisciplineHabitId,
   DisciplineSettings,
   DisciplineEvent,
+  DisciplineCustomPenalty,
+  DisciplinePenaltyCategory,
 } from '../types';
 import {
+  CATEGORY_LABEL,
   DISCIPLINE_HABITS,
   DisciplineLevelMeta,
   disciplineIsActive,
@@ -82,6 +86,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
 }) => {
   const disciplineSettings = normalizeDisciplineSettings(user.disciplineSettings);
   const habits = enabledHabits(disciplineSettings);
+  const customPenalties = user.disciplineCustomPenalties || [];
   const active = disciplineIsActive(disciplineSettings, workoutPlans) || Boolean(user.disciplineStartedAt);
   const started = Boolean(user.disciplineStartedAt);
   const displayScore = active && started ? user.disciplineScore : 0;
@@ -171,13 +176,51 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
     setShowCustomPenaltyModal(false);
   };
 
+  const customPenaltyCategory = (): DisciplinePenaltyCategory =>
+    penaltyCategoryTab === 'habits'
+      ? 'sleep'
+      : penaltyCategoryTab === 'custom'
+        ? 'skill'
+        : penaltyCategoryTab;
+
+  const handleSaveCustomPenalty = () => {
+    if (!customTask.trim() || !onUpdateUser) return;
+    const item: DisciplineCustomPenalty = {
+      id: `cp_${Date.now()}`,
+      label: customReason.trim() || 'Мой штраф',
+      task: customTask.trim(),
+      category: customPenaltyCategory(),
+      points: Math.max(1, Math.min(50, customPoints)),
+    };
+    onUpdateUser({
+      disciplineCustomPenalties: [item, ...(user.disciplineCustomPenalties || [])].slice(0, 30),
+    });
+    setShowCustomPenaltyModal(false);
+    confetti({ particleCount: 35, spread: 55, origin: { y: 0.7 } });
+  };
+
+  const removeCustomPenalty = (id: string) => {
+    if (!onUpdateUser) return;
+    onUpdateUser({
+      disciplineCustomPenalties: (user.disciplineCustomPenalties || []).filter(item => item.id !== id),
+    });
+  };
+
   const handleAiArbitratorRequest = () => {
-    const options = suggestPenalties(
+    const baseOptions = suggestPenalties(
       disciplineSettings,
       arbitratorLostPoints,
       Boolean(user.stepGoalEnabled),
       user.dailyStepGoal,
     );
+    const ownOptions: PenaltySuggestion[] = customPenalties.map(item => ({
+      category: item.category,
+      label: `Мой: ${item.label}`,
+      task: item.task,
+      severity: 0.5,
+      points: Math.max(1, arbitratorLostPoints),
+    }));
+    const options = [...ownOptions, ...baseOptions];
     setArbitratorOptions(options);
     setArbitratorIndex(0);
     const first = options[0];
@@ -1063,6 +1106,14 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
                 </div>
               </div>
 
+              <button
+                type="button"
+                onClick={handleSaveCustomPenalty}
+                className="w-full rounded-xl border border-cyan-500/30 bg-cyan-500/10 py-2 text-[10px] font-bold text-cyan-200"
+              >
+                Сохранить в мои штрафы
+              </button>
+
               <div className="pt-2 flex gap-2">
                 <button
                   type="button"
@@ -1418,6 +1469,60 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                  Примеры штрафов при потере 15 очков
+                </div>
+                <div className="mt-1 space-y-1">
+                  {suggestPenalties(settingsDraft, 15, stepGoalEnabledDraft, stepNormInput)
+                    .slice(0, 4)
+                    .map(item => (
+                      <div key={`${item.category}-${item.task}`} className="rounded-lg border border-[#223442] bg-[#091117] px-2 py-1 text-[8px] leading-snug text-slate-400">
+                        <b className="text-slate-300">{item.label}:</b> {item.task}
+                      </div>
+                    ))}
+                  {suggestPenalties(settingsDraft, 15, stepGoalEnabledDraft, stepNormInput).length === 0 && (
+                    <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-2 py-1 text-[8px] text-amber-200">
+                      Все категории выключены. Включи хотя бы одну или создай свой штраф.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Мои штрафы</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSettingsModal(false);
+                      setShowCustomPenaltyModal(true);
+                    }}
+                    className="text-[8px] font-bold text-emerald-300"
+                  >
+                    + Создать свой
+                  </button>
+                </div>
+                {customPenalties.length === 0 ? (
+                  <p className="mt-1 rounded-lg border border-dashed border-[#263546] bg-[#091117] px-2 py-1.5 text-[8px] text-slate-500">
+                    Например: «500 ₽ другу», «3 дня без сладкого», «30 минут кардио». Свои штрафы появятся в арбитре.
+                  </p>
+                ) : (
+                  <div className="mt-1 space-y-1">
+                    {customPenalties.map(item => (
+                      <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg border border-[#223442] bg-[#091117] px-2 py-1 text-[8px] text-slate-400">
+                        <span className="min-w-0 truncate">
+                          <b className="text-slate-300">{item.label}</b> · {CATEGORY_LABEL[item.category]} · {item.points} очк.
+                        </span>
+                        <button type="button" onClick={() => removeCustomPenalty(item.id)} className="shrink-0 text-rose-300" aria-label="Удалить штраф">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <label className="flex items-center gap-2 text-[9px] text-slate-400">

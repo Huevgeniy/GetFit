@@ -1289,6 +1289,34 @@ export default function App() {
     }
   };
 
+  /** Добавляет завершённую тренировку цикла в историю и двигает дисциплину. */
+  const handleLogCycleWorkout = (record: WorkoutRecord) => {
+    const nowIso = record.completedAt || new Date().toISOString();
+    setPastWorkouts(prev => [record, ...prev]);
+    setUser(prev => {
+      const first = !prev.disciplineStartedAt;
+      const nextStreak = prev.streakDays + 1;
+      return {
+        ...prev,
+        disciplineStartedAt: prev.disciplineStartedAt || nowIso,
+        disciplineScore: first ? 100 : Math.min(100, prev.disciplineScore + 2),
+        streakDays: nextStreak,
+        longestStreak: Math.max(prev.longestStreak, nextStreak),
+        disciplineEvents: [
+          {
+            id: `dev_${Date.now()}`,
+            date: nowIso.slice(0, 10),
+            habit: 'cycle' as const,
+            type: first ? ('start' as const) : ('complete' as const),
+            points: first ? 0 : 2,
+            note: record.title,
+          },
+          ...(prev.disciplineEvents || []),
+        ].slice(0, 300),
+      };
+    });
+  };
+
   /** Чат-фиксация тренировки по активному циклу: отмечает следующий невыполненный день. */
   const handleFixCycleWorkoutFromChat = (note: string) => {
     const active = loadActiveCycle();
@@ -1313,7 +1341,7 @@ export default function App() {
 
     let tonnage = 0;
     const exercises = day.exercises.map((exercise, index) => {
-      const weight = calculateCycleWeight(exercise.percent, exercise.lift, active.maxes);
+      const weight = calculateCycleWeight(exercise.percent, exercise.lift, active.maxes, active.mainLift);
       const reps = Number.parseInt(exercise.reps, 10) || 1;
       tonnage += weight * reps * exercise.sets;
       const oneRM = weight > 0 ? Math.round(weight * (1 + reps / 30) * 10) / 10 : 0;
@@ -1347,29 +1375,7 @@ export default function App() {
       totalTonnageKg: Math.round(tonnage),
       status: 'completed',
     };
-    setPastWorkouts(prev => [record, ...prev]);
-    setUser(prev => {
-      const first = !prev.disciplineStartedAt;
-      const nextStreak = prev.streakDays + 1;
-      return {
-        ...prev,
-        disciplineStartedAt: prev.disciplineStartedAt || nowIso,
-        disciplineScore: first ? 100 : Math.min(100, prev.disciplineScore + 2),
-        streakDays: nextStreak,
-        longestStreak: Math.max(prev.longestStreak, nextStreak),
-        disciplineEvents: [
-          {
-            id: `dev_${Date.now()}`,
-            date: nowIso.slice(0, 10),
-            habit: 'cycle' as const,
-            type: first ? ('start' as const) : ('complete' as const),
-            points: first ? 0 : 2,
-            note: `Цикл: ${template.name}, неделя ${active.weekIndex + 1}, ${day.label}`,
-          },
-          ...(prev.disciplineEvents || []),
-        ].slice(0, 300),
-      };
-    });
+    handleLogCycleWorkout(record);
 
     return {
       label: `${template.name}: ${day.label}`,
@@ -1676,7 +1682,7 @@ export default function App() {
                   user={user}
                   pastWorkouts={pastWorkouts}
                   onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
-                  onStartPlan={handleStartPlan}
+                  onLogWorkout={handleLogCycleWorkout}
                 />
               )}
 

@@ -152,6 +152,14 @@ export interface DisciplineContract {
   status: 'draft' | 'active';
 }
 
+export interface DisciplineCustomPenalty {
+  id: string;
+  label: string;
+  task: string;
+  category: DisciplinePenaltyCategory;
+  points: number;
+}
+
 export interface DisciplineEvent {  id: string;
   date: string;
   habit?: DisciplineHabitId;
@@ -186,6 +194,8 @@ export interface UserProfile {
   disciplineHoldUntil?: string;
   /** Двусторонний договор дисциплины: текст и подписи обеих сторон. */
   disciplineContract?: DisciplineContract;
+  /** Личная библиотека штрафов пользователя. */
+  disciplineCustomPenalties?: DisciplineCustomPenalty[];
   /** Дата последнего внесения данных через бота — защита от накрутки серии. */
   lastBotLogDate?: string;
   selectedDisciplines: string[];
@@ -205,6 +215,7 @@ export interface UserProfile {
   customFatTarget?: number;
   customCarbsTarget?: number;
   customFiberTarget?: number;
+  customWaterTarget?: number;
   stepBank?: number;
   ratingScore?: number;
   respectPoints?: number;
@@ -531,11 +542,15 @@ export interface DailyNutritionRecord {
   totalFat: number;
   totalCarbs: number;
   totalFiber: number;
+  /** Выпито напитков за день, мл. Считаются все безалкогольные напитки. */
+  waterMl?: number;
   targetCalories: number;
   targetProtein: number;
   targetFat: number;
   targetCarbs: number;
   targetFiber: number;
+  /** Цель по напиткам на день, мл. */
+  targetWaterMl?: number;
   status: 'open' | 'closed';
   coachVerdict?: string;
   closedAt?: string;

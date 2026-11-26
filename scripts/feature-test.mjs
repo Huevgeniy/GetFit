@@ -170,6 +170,74 @@ check(
   'у каждого шаблона указаны упражнения/фокус и предупреждения',
   cycles.CYCLE_TEMPLATES.every(template => template.focus.length > 10 && template.warnings.length > 0),
 );
+check(
+  'у каждого шаблона есть цель, результат, восстановление, прогрессия и советы',
+  cycles.CYCLE_TEMPLATES.every(template =>
+    template.description.length > 40 &&
+    template.expectedResult.length > 20 &&
+    template.recovery.length > 20 &&
+    template.whatElse.length > 0 &&
+    template.avoid.length > 0 &&
+    template.restGuidance.length > 0 &&
+    template.progression.length > 20 &&
+    template.weekNotes.length > 0,
+  ),
+);
+check(
+  'у каждого шаблона указано, какие 1ПМ нужны',
+  cycles.CYCLE_TEMPLATES.every(template => template.mainLifts.length > 0 || (template.mainLiftOptions?.length || 0) > 0),
+);
+const smolov = cycles.CYCLE_TEMPLATES.find(item => item.id === 'smolov_jr');
+check('Смолов-младший — специализация на одном движении', smolov?.kind === 'specialization');
+check('Смолов-младший предлагает жим или присед', smolov?.mainLiftOptions?.join(',') === 'bench,squat');
+check(
+  'Смолов-младший не требует 1ПМ для подсобки',
+  cycles.requiredMaxes(smolov, { mainLift: 'bench' }).join(',') === 'bench',
+);
+check(
+  'в Смолове-младшем только основное движение, без жёсткой подсобки',
+  smolov?.weeks.every(week => week.days.every(day => day.exercises.every(exercise => exercise.lift === 'main'))),
+);
+const verkh = cycles.CYCLE_TEMPLATES.find(item => item.id === 'verkhoshansky');
+check('Верхошанский — гибкий выбор движений', verkh?.allowMultipleMainLifts === true && verkh?.mainLiftOptions?.length === 3);
+check(
+  'в Верхошанском нет прыжков',
+  verkh?.weeks.every(week => week.days.every(day => day.exercises.every(exercise => !/прыж/i.test(exercise.name)))),
+  verkh?.weeks.flatMap(week => week.days.flatMap(day => day.exercises.map(exercise => exercise.name))).join(' | '),
+);
+check(
+  'в Верхошанском описано, что это базовые движения с непредельными весами',
+  /без прыжков/i.test(verkh?.description || '') && /непредельн/i.test(verkh?.description || ''),
+);
+check(
+  'Верхошанский можно сузить до одного движения',
+  verkh
+    ? cycles.applyCycleSelection(verkh, { mainLifts: ['bench'] }).weeks.every(week =>
+        week.days.every(day => !day.mainLift || day.mainLift === 'bench'),
+      )
+    : false,
+);
+check(
+  'Верхошанский можно оставить полной версией',
+  verkh
+    ? cycles.applyCycleSelection(verkh, { mainLifts: ['squat', 'bench', 'deadlift'] }).weeks[0].days.length ===
+        verkh.weeks[0].days.length
+    : false,
+);
+const requiredCounts = {
+  wendler_531: 4,
+  sheiko: 3,
+  gzclp: 3,
+  phul: 4,
+};
+for (const [id, count] of Object.entries(requiredCounts)) {
+  const template = cycles.CYCLE_TEMPLATES.find(item => item.id === id);
+  check(`у ${id} нужных 1ПМ: ${count}`, cycles.requiredMaxes(template).length === count, String(cycles.requiredMaxes(template).length));
+}
+check(
+  'у Верхошанского при выборе одного движения нужен один 1ПМ',
+  cycles.requiredMaxes(verkh, { mainLifts: ['bench'] }).join(',') === 'bench',
+);
 
 check('вес от 1ПМ: 75% от 100 кг = 75', cycles.calculateCycleWeight(75, 'bench', { bench: 100 }) === 75);
 check('вес округляется до 2,5 кг', cycles.calculateCycleWeight(73, 'squat', { squat: 101 }) === 72.5, String(cycles.calculateCycleWeight(73, 'squat', { squat: 101 })));
@@ -192,6 +260,21 @@ check(
   JSON.stringify(parsedExercise),
 );
 check('свой цикл помечен как пользовательский', parsed.custom === true);
+
+const legacyCustom = cycles.normalizeCycleTemplate({
+  id: 'legacy',
+  name: 'Старый цикл',
+  weeks: [{
+    id: 'w1',
+    days: [{ id: 'd1', label: 'День 1', exercises: [{ name: 'Присед', sets: 5, reps: '5', percent: 70, lift: 'squat' }] }],
+  }],
+});
+check('старый пользовательский цикл дозаполняется', Boolean(legacyCustom));
+check(
+  'у старого цикла появляются новые разделы',
+  Boolean(legacyCustom && legacyCustom.expectedResult && legacyCustom.whatElse.length && legacyCustom.restGuidance.length),
+);
+check('старый цикл получает основные движения', legacyCustom?.mainLifts.join(',') === 'squat', legacyCustom?.mainLifts.join(','));
 
 /* ------------------------------------------------------------------ */
 /* 4. Питание: авто-цель и объяснение                                 */
@@ -229,6 +312,20 @@ check(
 const manual = nutrition.calculateNutritionTargets({ ...baseUser, customCalorieTarget: 2500 });
 check('ручная цель калорий важнее авто', manual.calories === 2500, String(manual.calories));
 check('ручная цель помечена в разборе', manual.customCalories === true);
+
+check('цель по воде рассчитывается от веса и активности', targets.waterMl >= 1500 && targets.waterMl <= 4000, String(targets.waterMl));
+check('вода учитывает активность', targets.waterMl > 92 * 30, String(targets.waterMl));
+const manualWater = nutrition.calculateNutritionTargets({ ...baseUser, customWaterTarget: 3000 });
+check('ручная цель воды важнее авто', manualWater.waterMl === 3000 && manualWater.customWater === true, String(manualWater.waterMl));
+check('в расчёте воды указано, что часть приходит с едой', targets.waterFromFoodPercent === 20);
+check(
+  'у всех уровней активности есть объяснение и пример',
+  (Object.keys(nutrition.ACTIVITY_LEVELS)).every(key => {
+    const level = nutrition.ACTIVITY_LEVELS[key];
+    return level.description.length > 20 && level.examples.length > 5 && level.factor > 1;
+  }),
+);
+check('уровни активности имеют разные коэффициенты', new Set(Object.values(nutrition.ACTIVITY_LEVELS).map(level => level.factor)).size === 4);
 
 const female = nutrition.calculateNutritionTargets({ ...baseUser, gender: 'female' });
 check('женская формула вычитает 161', female.bmr === 1963 - 166, String(female.bmr));

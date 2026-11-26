@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle,
-  Calendar,
   CheckCircle2,
   ChevronDown,
-  Clock,
+  ChevronLeft,
+  ChevronRight,
   Dumbbell,
   Flag,
   Play,
@@ -12,9 +11,8 @@ import {
   Search,
   Target,
   Trash2,
-  X,
 } from 'lucide-react';
-import type { UserProfile, WorkoutPlan } from '../types';
+import type { UserProfile, WorkoutRecord } from '../types';
 import {
   ActiveCycle,
   CYCLE_TEMPLATES,
@@ -22,18 +20,21 @@ import {
   CycleLevel,
   CycleLift,
   CycleTemplate,
+  applyCycleSelection,
   calculateCycleWeight,
   cycleTemplateById,
   loadActiveCycle,
   loadCustomCycles,
-  parseCustomCycle,
   saveActiveCycle,
   saveCustomCycles,
 } from '../lib/cycleTemplates';
+import { CycleBuilderModal } from './CycleBuilderModal';
+import { CycleWorkoutModal } from './CycleWorkoutModal';
 
 interface CycleLibraryProps {
   user: UserProfile;
-  onStartPlan: (plan: WorkoutPlan) => void;
+  onLogWorkout: (record: WorkoutRecord) => void;
+  openBuilderSignal?: number;
 }
 
 const GOAL_LABELS: Record<CycleGoal, string> = {
@@ -55,6 +56,7 @@ const LIFT_LABELS: Record<CycleLift, string> = {
   bench: 'Жим',
   deadlift: 'Становая',
   ohp: 'Жим стоя',
+  main: 'Основное движение',
   accessory: 'Подсобка',
 };
 
@@ -75,22 +77,25 @@ const CycleBadge: React.FC<{ children: React.ReactNode; tone?: string }> = ({ ch
   </span>
 );
 
-export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan }) => {
+export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onLogWorkout, openBuilderSignal = 0 }) => {
   const [customCycles, setCustomCycles] = useState<CycleTemplate[]>(() => loadCustomCycles());
   const [active, setActive] = useState<ActiveCycle | null>(() => loadActiveCycle());
   const [query, setQuery] = useState('');
   const [goal, setGoal] = useState<CycleGoal | 'all'>('all');
   const [selected, setSelected] = useState<CycleTemplate | null>(null);
   const [startTemplate, setStartTemplate] = useState<CycleTemplate | null>(null);
-  const [showCustom, setShowCustom] = useState(false);
-  const [customTitle, setCustomTitle] = useState('');
-  const [customGoal, setCustomGoal] = useState<CycleGoal>('strength');
-  const [customLevel, setCustomLevel] = useState<CycleLevel>('intermediate');
-  const [customDescription, setCustomDescription] = useState('');
-  const [customText, setCustomText] = useState('');
+  const [builderOpen, setBuilderOpen] = useState(false);
   const [maxes, setMaxes] = useState<Partial<Record<CycleLift, number>>>(() => defaultMaxes(user));
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [startWeekIndex, setStartWeekIndex] = useState(0);
+  const [selectedMainLift, setSelectedMainLift] = useState<CycleLift>('bench');
+  const [selectedMainLifts, setSelectedMainLifts] = useState<CycleLift[]>(['squat', 'bench', 'deadlift']);
+  const [viewWeekIndex, setViewWeekIndex] = useState(0);
+  const [cycleWorkout, setCycleWorkout] = useState<{
+    template: CycleTemplate;
+    weekIndex: number;
+    dayIndex: number;
+  } | null>(null);
 
   useEffect(() => {
     const reload = () => {
@@ -100,6 +105,14 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
     window.addEventListener('getfit-cycle-updated', reload);
     return () => window.removeEventListener('getfit-cycle-updated', reload);
   }, []);
+
+  useEffect(() => {
+    if (openBuilderSignal > 0) setBuilderOpen(true);
+  }, [openBuilderSignal]);
+
+  useEffect(() => {
+    if (active) setViewWeekIndex(active.weekIndex);
+  }, [active?.templateId, active?.weekIndex]);
 
   const allTemplates = useMemo(() => [...CYCLE_TEMPLATES, ...customCycles], [customCycles]);
   const filtered = useMemo(() => {
@@ -111,8 +124,30 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
     });
   }, [allTemplates, query, goal]);
 
-  const activeTemplate = active ? cycleTemplateById(active.templateId, customCycles) : null;
-  const activeWeek = activeTemplate && active ? activeTemplate.weeks[active.weekIndex] : null;
+  const rawActiveTemplate = active ? cycleTemplateById(active.templateId, customCycles) : null;
+  const activeTemplate = rawActiveTemplate ? applyCycleSelection(rawActiveTemplate, active) : null;
+  const activeWeek = activeTemplate && active
+    ? activeTemplate.weeks[Math.min(viewWeekIndex, activeTemplate.weeks.length - 1)]
+    : null;
+
+  const startRequiredLifts = useMemo(() => {
+    if (!startTemplate) return [];
+    if (startTemplate.kind === 'specialization') return [selectedMainLift];
+    if (startTemplate.allowMultipleMainLifts) return selectedMainLifts;
+    return startTemplate.mainLifts.filter(lift => lift !== 'main' && lift !== 'accessory');
+  }, [startTemplate, selectedMainLift, selectedMainLifts]);
+
+  const openStart = (template: CycleTemplate, weekIndex = 0) => {
+    setStartTemplate(template);
+    setStartWeekIndex(weekIndex);
+    setMaxes(prev => ({ ...defaultMaxes(user), ...prev }));
+    if (template.kind === 'specialization' && template.mainLiftOptions?.length) {
+      setSelectedMainLift(template.mainLiftOptions[0]);
+    }
+    if (template.allowMultipleMainLifts && template.mainLiftOptions?.length) {
+      setSelectedMainLifts(template.mainLiftOptions);
+    }
+  };
 
   const startCycle = () => {
     if (!startTemplate) return;
@@ -122,15 +157,18 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
       weekIndex: startWeekIndex,
       maxes,
       completed: {},
+      mainLift: startTemplate.kind === 'specialization' ? selectedMainLift : undefined,
+      mainLifts: startTemplate.allowMultipleMainLifts ? selectedMainLifts : undefined,
     };
     setActive(next);
     saveActiveCycle(next);
+    setViewWeekIndex(startWeekIndex);
     setStartTemplate(null);
   };
 
   const toggleDay = (dayId: string) => {
     if (!active) return;
-    const key = `${active.weekIndex}-${dayId}`;
+    const key = `${viewWeekIndex}-${dayId}`;
     const nextDone = !active.completed[key];
     const completedAt = { ...(active.completedAt || {}) };
     if (nextDone) completedAt[key] = new Date().toISOString();
@@ -146,7 +184,7 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
 
   const updateActualWeight = (dayId: string, value: string) => {
     if (!active) return;
-    const key = `${active.weekIndex}-${dayId}`;
+    const key = `${viewWeekIndex}-${dayId}`;
     const next = {
       ...active,
       actualWeights: { ...(active.actualWeights || {}), [key]: Math.max(0, Number(value) || 0) },
@@ -157,7 +195,7 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
 
   const updateDayNote = (dayId: string, value: string) => {
     if (!active) return;
-    const key = `${active.weekIndex}-${dayId}`;
+    const key = `${viewWeekIndex}-${dayId}`;
     const next = {
       ...active,
       notes: { ...(active.notes || {}), [key]: value.slice(0, 160) },
@@ -172,6 +210,16 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
     const next = { ...active, weekIndex: active.weekIndex + 1 };
     setActive(next);
     saveActiveCycle(next);
+    setViewWeekIndex(next.weekIndex);
+  };
+
+  const prevWeek = () => {
+    if (!active || !activeTemplate) return;
+    if (active.weekIndex <= 0) return;
+    const next = { ...active, weekIndex: active.weekIndex - 1 };
+    setActive(next);
+    saveActiveCycle(next);
+    setViewWeekIndex(next.weekIndex);
   };
 
   const finishCycle = () => {
@@ -180,64 +228,47 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
   };
 
   const startDay = (template: CycleTemplate, weekIndex: number, dayIndex: number) => {
-    const week = template.weeks[weekIndex];
-    const day = week?.days[dayIndex];
+    setCycleWorkout({ template, weekIndex, dayIndex });
+  };
+
+  const completeCycleDay = (payload: {
+    record: WorkoutRecord;
+    actualWeights: Record<string, number>;
+    note: string;
+  }) => {
+    if (!active || !cycleWorkout) return;
+    const template = cycleWorkout.template;
+    const week = template.weeks[cycleWorkout.weekIndex];
+    const day = week?.days[cycleWorkout.dayIndex];
     if (!day) return;
-    try {
-      localStorage.setItem(
-        'getfit_pending_cycle_day',
-        JSON.stringify({
-          templateId: template.id,
-          weekIndex,
-          dayId: day.id,
-          startedAt: new Date().toISOString(),
-        }),
-      );
-    } catch {
-      // ignore
-    }
-    const plan: WorkoutPlan = {
-      id: `cycle_${template.id}_${weekIndex}_${dayIndex}_${Date.now()}`,
-      title: `${template.name} · Неделя ${weekIndex + 1} · ${day.label}`,
-      scheduledDay: 'Сегодня',
-      estimatedDurationMinutes: Math.max(30, day.exercises.length * 12),
-      exercises: day.exercises.map((exercise, index) => ({
-        id: `cycle_ex_${Date.now()}_${index}`,
-        name: exercise.name,
-        targetSets: exercise.sets,
-        targetReps: Number.parseInt(exercise.reps, 10) || 1,
-        targetWeight: calculateCycleWeight(exercise.percent, exercise.lift, active?.maxes || maxes),
-        restMinutes: exercise.percent && exercise.percent >= 80 ? 3 : 2,
-        restBetweenExercisesMinutes: 3,
-        notes: exercise.note,
-      })),
+    const key = `${cycleWorkout.weekIndex}-${day.id}`;
+    const weights = Object.values(payload.actualWeights).filter(value => value > 0);
+    const topWeight = weights.length > 0 ? Math.max(...weights) : 0;
+    const next: ActiveCycle = {
+      ...active,
+      completed: { ...active.completed, [key]: true },
+      completedAt: { ...(active.completedAt || {}), [key]: new Date().toISOString() },
+      actualWeights: { ...(active.actualWeights || {}), [key]: topWeight },
+      notes: { ...(active.notes || {}), [key]: payload.note },
     };
-    onStartPlan(plan);
-  };
-
-  const createCustom = () => {
-    if (!customTitle.trim()) return;
-    const template = parseCustomCycle(customTitle, customGoal, customLevel, customDescription, customText);
-    const next = [...customCycles, template];
-    setCustomCycles(next);
-    saveCustomCycles(next);
-    setShowCustom(false);
-    setCustomTitle('');
-    setCustomDescription('');
-    setCustomText('');
-    setSelected(template);
-  };
-
-  const deleteCustom = (id: string) => {
-    const next = customCycles.filter(item => item.id !== id);
-    setCustomCycles(next);
-    saveCustomCycles(next);
-    if (active?.templateId === id) finishCycle();
+    setActive(next);
+    saveActiveCycle(next);
+    window.dispatchEvent(new Event('getfit-cycle-updated'));
+    onLogWorkout(payload.record);
+    setCycleWorkout(null);
   };
 
   const totalDays = activeTemplate ? activeTemplate.weeks.reduce((sum, week) => sum + week.days.length, 0) : 0;
   const doneDays = active ? Object.values(active.completed).filter(Boolean).length : 0;
   const progress = totalDays > 0 ? Math.round((doneDays / totalDays) * 100) : 0;
+  const activeWorkoutDay = cycleWorkout
+    ? cycleWorkout.template.weeks[cycleWorkout.weekIndex]?.days[cycleWorkout.dayIndex]
+    : null;
+
+  const weekDone = (weekIndex: number) => {
+    if (!activeTemplate) return 0;
+    return activeTemplate.weeks[weekIndex].days.filter(day => active?.completed[`${weekIndex}-${day.id}`]).length;
+  };
 
   return (
     <div id="tour-cycle-library" className="space-y-3">
@@ -249,15 +280,15 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
           </div>
           <button
             type="button"
-            onClick={() => setShowCustom(true)}
+            onClick={() => setBuilderOpen(true)}
             className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[8px] font-bold text-emerald-300"
           >
             <Plus className="h-3 w-3" />
-            Свой цикл
+            Создать цикл
           </button>
         </div>
         <p className="mt-1 text-[9px] leading-relaxed text-slate-500">
-          Готовые популярные схемы с неделями, днями и процентами. Можно начать сразу или запланировать дату.
+          Готовые программы с неделями, днями и процентами. Можно изучить, начать сразу или запланировать дату.
         </p>
         <div className="relative mt-2">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
@@ -297,83 +328,156 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
               <div className="flex items-center gap-1.5">
                 <Flag className="h-4 w-4 text-emerald-400" />
                 <span className="truncate text-xs font-bold text-emerald-200">{activeTemplate.name}</span>
+                <CycleBadge tone="border-emerald-500/25 bg-emerald-500/10 text-emerald-300">
+                  {activeTemplate.kind === 'specialization' ? 'одно движение' : 'программа'}
+                </CycleBadge>
               </div>
               <div className="mt-0.5 text-[9px] text-slate-400">
-                Неделя {active.weekIndex + 1} из {activeTemplate.weeks.length} · {active.weekIndex < activeTemplate.weeks.length - 1 ? 'в работе' : 'последняя неделя'} · {progress}% дней
+                Неделя {active.weekIndex + 1} из {activeTemplate.weeks.length} · {progress}% дней · старт {active.startDate}
               </div>
+              {active.mainLift && (
+                <div className="mt-0.5 text-[8px] text-cyan-300">
+                  Основное движение: {LIFT_LABELS[active.mainLift]}
+                </div>
+              )}
+              {active.mainLifts && active.mainLifts.length > 0 && (
+                <div className="mt-0.5 text-[8px] text-cyan-300">
+                  Выбранные движения: {active.mainLifts.map(lift => LIFT_LABELS[lift]).join(', ')}
+                </div>
+              )}
             </div>
             <div className="flex shrink-0 gap-1">
-              {active.weekIndex < activeTemplate.weeks.length - 1 && (
-                <button type="button" onClick={nextWeek} className="rounded-lg border border-[#2b4050] px-2 py-1 text-[8px] font-bold text-slate-300">
-                  След. неделя
-                </button>
-              )}
+              <button type="button" onClick={prevWeek} disabled={active.weekIndex <= 0} className="rounded-lg border border-[#2b4050] px-2 py-1 text-[8px] font-bold text-slate-300 disabled:opacity-30">
+                <ChevronLeft className="h-3 w-3" />
+              </button>
+              <button type="button" onClick={nextWeek} disabled={active.weekIndex >= activeTemplate.weeks.length - 1} className="rounded-lg border border-[#2b4050] px-2 py-1 text-[8px] font-bold text-slate-300 disabled:opacity-30">
+                <ChevronRight className="h-3 w-3" />
+              </button>
               <button type="button" onClick={finishCycle} className="rounded-lg border border-rose-500/30 px-2 py-1 text-[8px] font-bold text-rose-300">
                 Завершить
               </button>
             </div>
           </div>
+
+          <div className="mt-2 grid grid-cols-2 gap-1.5">
+            <div className="rounded-xl border border-[#223442] bg-[#091117] p-2 text-[8px] leading-relaxed text-slate-400">
+              <b className="text-slate-300">Зачем:</b> {activeTemplate.description}
+            </div>
+            <div className="rounded-xl border border-[#223442] bg-[#091117] p-2 text-[8px] leading-relaxed text-slate-400">
+              <b className="text-slate-300">Ожидаемый результат:</b> {activeTemplate.expectedResult}
+            </div>
+            <div className="rounded-xl border border-[#223442] bg-[#091117] p-2 text-[8px] leading-relaxed text-slate-400">
+              <b className="text-slate-300">Восстановление:</b> {activeTemplate.recovery}
+            </div>
+            <div className="rounded-xl border border-[#223442] bg-[#091117] p-2 text-[8px] leading-relaxed text-slate-400">
+              <b className="text-slate-300">Прогрессия:</b> {activeTemplate.progression}
+            </div>
+          </div>
+
+          <div className="mt-2 flex gap-1 overflow-x-auto pb-1">
+            {activeTemplate.weeks.map((week, index) => (
+              <button
+                key={week.id}
+                type="button"
+                onClick={() => setViewWeekIndex(index)}
+                className={`shrink-0 rounded-lg border px-2 py-1 text-[8px] font-bold ${
+                  viewWeekIndex === index
+                    ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
+                    : 'border-[#263546] bg-[#091117] text-slate-400'
+                }`}
+              >
+                Нед. {index + 1}
+                <span className="ml-1 text-[7px] text-slate-500">{weekDone(index)}/{week.days.length}</span>
+              </button>
+            ))}
+          </div>
+
+          {activeWeek && (
+            <>
+              <div className="mt-1 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-2 py-1.5 text-[8px] leading-relaxed text-cyan-100/80">
+                {activeTemplate.weekNotes[viewWeekIndex] || activeWeek.label}
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {activeWeek.days.map((day, dayIndex) => {
+                  const key = `${viewWeekIndex}-${day.id}`;
+                  const done = Boolean(active.completed[key]);
+                  return (
+                    <div key={day.id} className={`rounded-xl border px-2.5 py-2 ${done ? 'border-emerald-500/30 bg-emerald-500/8' : 'border-[#223442] bg-[#091117]'}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <button type="button" onClick={() => toggleDay(day.id)} className="flex min-w-0 items-center gap-1.5 text-left">
+                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${done ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-[#3b4a5a]'}`}>
+                            {done && <CheckCircle2 className="h-3 w-3" />}
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block text-[10px] font-bold text-slate-200">{day.label}</span>
+                            <span className="block text-[8px] text-slate-500">
+                              {day.exercises.length} упражнений{day.focus ? ` · ${day.focus}` : ''}
+                            </span>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => startDay(activeTemplate, viewWeekIndex, dayIndex)}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-emerald-500 px-2 py-1.5 text-[8px] font-bold text-slate-950"
+                        >
+                          <Play className="h-2.5 w-2.5" />
+                          {done ? 'Повторить' : 'Начать'}
+                        </button>
+                      </div>
+                      <div className="mt-1 text-[8px] leading-snug text-slate-500">
+                        {day.exercises.map(exercise => {
+                          const weight = calculateCycleWeight(exercise.percent, exercise.lift, active.maxes, active.mainLift);
+                          return `${exercise.name} ${exercise.sets}×${exercise.reps}${weight > 0 ? ` (${weight} кг)` : ''}`;
+                        }).join(' · ')}
+                      </div>
+                      <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                        <label className="text-[7px] text-slate-500">
+                          Внёс вес, кг
+                          <input
+                            type="number"
+                            min={0}
+                            step={2.5}
+                            value={active.actualWeights?.[key] ?? ''}
+                            onChange={event => updateActualWeight(day.id, event.target.value)}
+                            placeholder="например 102,5"
+                            className="mt-0.5 w-full rounded-lg border border-[#263546] bg-[#081016] px-2 py-1 text-[9px] font-bold text-slate-200"
+                          />
+                        </label>
+                        <label className="text-[7px] text-slate-500">
+                          Заметка
+                          <input
+                            value={active.notes?.[key] || ''}
+                            onChange={event => updateDayNote(day.id, event.target.value)}
+                            placeholder="самочувствие, техника"
+                            className="mt-0.5 w-full rounded-lg border border-[#263546] bg-[#081016] px-2 py-1 text-[9px] text-slate-200"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <div className="mt-2 grid gap-1.5">
+            <div className="rounded-xl border border-[#223442] bg-[#091117] p-2 text-[8px] leading-relaxed text-slate-400">
+              <b className="text-slate-300">Что ещё делать:</b> {activeTemplate.whatElse.join(' ')}
+            </div>
+            <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-2 text-[8px] leading-relaxed text-amber-200/80">
+              <b>Не делать:</b> {activeTemplate.avoid.join(' ')}
+            </div>
+            <div className="rounded-xl border border-[#223442] bg-[#091117] p-2 text-[8px] leading-relaxed text-slate-400">
+              <b className="text-slate-300">Отдых:</b> {activeTemplate.restGuidance.join(' ')}
+            </div>
+            <div className="rounded-xl border border-[#223442] bg-[#091117] p-2 text-[8px] leading-relaxed text-slate-400">
+              <b className="text-slate-300">Подсобка:</b> {activeTemplate.accessoryPolicy}
+            </div>
+          </div>
+
           <div className="mt-2 flex items-center gap-1.5 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-2 py-1.5 text-[8px] text-cyan-200/80">
             <Dumbbell className="h-3 w-3 shrink-0" />
             В чате можно написать: «сделал тренировку по циклу, зафиксируй» — день отметится сам.
-          </div>
-          <div className="mt-2 space-y-1.5">
-            {activeWeek?.days.map((day, dayIndex) => {
-              const key = `${active.weekIndex}-${day.id}`;
-              const done = Boolean(active.completed[key]);
-              return (
-                <div key={day.id} className={`rounded-xl border px-2.5 py-2 ${done ? 'border-emerald-500/30 bg-emerald-500/8' : 'border-[#223442] bg-[#091117]'}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <button type="button" onClick={() => toggleDay(day.id)} className="flex min-w-0 items-center gap-1.5 text-left">
-                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${done ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-[#3b4a5a]'}`}>
-                        {done && <CheckCircle2 className="h-3 w-3" />}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-[10px] font-bold text-slate-200">{day.label}</span>
-                        <span className="block text-[8px] text-slate-500">{day.exercises.length} упражнений</span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => startDay(activeTemplate, active.weekIndex, dayIndex)}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-emerald-500 px-2 py-1.5 text-[8px] font-bold text-slate-950"
-                    >
-                      <Play className="h-2.5 w-2.5" />
-                      Начать
-                    </button>
-                  </div>
-                  <div className="mt-1 text-[8px] leading-snug text-slate-500">
-                    {day.exercises.map(exercise => {
-                      const weight = calculateCycleWeight(exercise.percent, exercise.lift, active.maxes);
-                      return `${exercise.name} ${exercise.sets}×${exercise.reps}${weight > 0 ? ` (${weight} кг)` : ''}`;
-                    }).join(' · ')}
-                  </div>
-                  <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-                    <label className="text-[7px] text-slate-500">
-                      Внёс вес, кг
-                      <input
-                        type="number"
-                        min={0}
-                        step={2.5}
-                        value={active.actualWeights?.[key] ?? ''}
-                        onChange={event => updateActualWeight(day.id, event.target.value)}
-                        placeholder="например 102,5"
-                        className="mt-0.5 w-full rounded-lg border border-[#263546] bg-[#081016] px-2 py-1 text-[9px] font-bold text-slate-200"
-                      />
-                    </label>
-                    <label className="text-[7px] text-slate-500">
-                      Заметка
-                      <input
-                        value={active.notes?.[key] || ''}
-                        onChange={event => updateDayNote(day.id, event.target.value)}
-                        placeholder="самочувствие, техника"
-                        className="mt-0.5 w-full rounded-lg border border-[#263546] bg-[#081016] px-2 py-1 text-[9px] text-slate-200"
-                      />
-                    </label>
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </div>
       )}
@@ -391,13 +495,17 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
                 <div className="text-[11px] font-black text-slate-100">{template.name}</div>
                 <div className="text-[8px] text-slate-500">{template.author}</div>
               </div>
-              <CycleBadge tone="border-cyan-500/25 bg-cyan-500/10 text-cyan-300">{GOAL_LABELS[template.goal]}</CycleBadge>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <CycleBadge tone="border-cyan-500/25 bg-cyan-500/10 text-cyan-300">{GOAL_LABELS[template.goal]}</CycleBadge>
+                <CycleBadge>{template.kind === 'specialization' ? 'одно движение' : 'программа'}</CycleBadge>
+              </div>
             </div>
             <p className="mt-1 line-clamp-2 text-[8px] leading-snug text-slate-500">{template.description}</p>
             <div className="mt-1.5 flex flex-wrap gap-1">
               <CycleBadge>{template.weeksCount} нед.</CycleBadge>
               <CycleBadge>{template.daysPerWeek} дн/нед</CycleBadge>
               <CycleBadge>{LEVEL_LABELS[template.level]}</CycleBadge>
+              <CycleBadge>{template.mainLifts.map(lift => LIFT_LABELS[lift]).join(' / ')}</CycleBadge>
               {template.custom && <CycleBadge tone="border-emerald-500/25 bg-emerald-500/10 text-emerald-300">свой</CycleBadge>}
             </div>
           </button>
@@ -416,14 +524,39 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
             <div className="flex items-start justify-between gap-2">
               <div>
                 <div className="text-sm font-black text-slate-100">{selected.name}</div>
-                <div className="text-[9px] text-slate-500">{selected.author} · {GOAL_LABELS[selected.goal]} · {LEVEL_LABELS[selected.level]}</div>
+                <div className="text-[9px] text-slate-500">
+                  {selected.author} · {GOAL_LABELS[selected.goal]} · {LEVEL_LABELS[selected.level]} ·{' '}
+                  {selected.kind === 'specialization' ? 'одно движение' : 'программа'}
+                </div>
               </div>
               <button type="button" onClick={() => setSelected(null)} className="text-slate-400">✕</button>
             </div>
             <p className="mt-2 text-[9px] leading-relaxed text-slate-400">{selected.description}</p>
-            <div className="mt-2 rounded-xl border border-[#223442] bg-[#091117] p-2.5 text-[8px] leading-relaxed text-slate-500">
-              <b className="text-slate-400">Фокус:</b> {selected.focus}<br />
-              <b className="text-slate-400">Инвентарь:</b> {selected.equipment}
+            <div className="mt-2 grid gap-1.5 text-[8px] leading-relaxed text-slate-500">
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-2">
+                <b className="text-slate-300">Фокус:</b> {selected.focus}
+              </div>
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-2">
+                <b className="text-slate-300">Ожидаемый результат:</b> {selected.expectedResult}
+              </div>
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-2">
+                <b className="text-slate-300">Восстановление:</b> {selected.recovery}
+              </div>
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-2">
+                <b className="text-slate-300">Что ещё делать:</b> {selected.whatElse.join(' ')}
+              </div>
+              <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-2 text-amber-200/80">
+                <b>Не делать:</b> {selected.avoid.join(' ')}
+              </div>
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-2">
+                <b className="text-slate-300">Отдых:</b> {selected.restGuidance.join(' ')}
+              </div>
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-2">
+                <b className="text-slate-300">Прогрессия:</b> {selected.progression}
+              </div>
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-2">
+                <b className="text-slate-300">Подсобка:</b> {selected.accessoryPolicy}
+              </div>
             </div>
             {selected.warnings.length > 0 && (
               <div className="mt-2 rounded-xl border border-amber-500/25 bg-amber-500/8 p-2.5 text-[8px] leading-relaxed text-amber-200/80">
@@ -438,11 +571,11 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
                     <ChevronDown className="h-3 w-3 text-slate-500 transition-transform group-open:rotate-180" />
                   </summary>
                   <div className="mt-1 space-y-1.5">
-                    {week.days.map((day, dayIndex) => (
+                    {week.days.map(day => (
                       <div key={day.id} className="rounded-lg border border-[#1f303d] bg-[#091117] p-2">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-[8px] font-bold text-slate-300">{day.label}</span>
-                          <button type="button" onClick={() => { setStartTemplate(selected); setSelected(null); setMaxes(defaultMaxes(user)); setStartWeekIndex(weekIndex); }} className="text-[8px] font-bold text-emerald-300">С этой недели</button>
+                          <button type="button" onClick={() => { openStart(selected, weekIndex); setSelected(null); }} className="text-[8px] font-bold text-emerald-300">С этой недели</button>
                         </div>
                         <div className="mt-1 space-y-0.5">
                           {day.exercises.map((exercise, exerciseIndex) => (
@@ -461,11 +594,17 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
               ))}
             </div>
             <div className="mt-2 flex gap-2">
-              <button type="button" onClick={() => { setStartTemplate(selected); setSelected(null); setMaxes(defaultMaxes(user)); setStartWeekIndex(0); }} className="flex-1 rounded-xl bg-emerald-500 py-2 text-[10px] font-bold text-slate-950">
+              <button type="button" onClick={() => { openStart(selected); setSelected(null); }} className="flex-1 rounded-xl bg-emerald-500 py-2 text-[10px] font-bold text-slate-950">
                 Начать / запланировать
               </button>
               {selected.custom && (
-                <button type="button" onClick={() => { deleteCustom(selected.id); setSelected(null); }} className="rounded-xl border border-rose-500/30 px-2.5 py-2 text-[9px] font-bold text-rose-300">
+                <button type="button" onClick={() => {
+                  const next = customCycles.filter(item => item.id !== selected.id);
+                  setCustomCycles(next);
+                  saveCustomCycles(next);
+                  if (active?.templateId === selected.id) finishCycle();
+                  setSelected(null);
+                }} className="rounded-xl border border-rose-500/30 px-2.5 py-2 text-[9px] font-bold text-rose-300">
                   <Trash2 className="h-3 w-3" />
                 </button>
               )}
@@ -485,12 +624,61 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
               </div>
               <button type="button" onClick={() => setStartTemplate(null)} className="text-slate-400">✕</button>
             </div>
+
+            <div className="mt-2 rounded-xl border border-[#223442] bg-[#091117] p-2 text-[8px] leading-relaxed text-slate-400">
+              <b className="text-slate-300">Суть:</b> {startTemplate.description}
+              <br />
+              <b className="text-slate-300">Ожидаемый результат:</b> {startTemplate.expectedResult}
+              <br />
+              <b className="text-slate-300">Восстановление:</b> {startTemplate.recovery}
+            </div>
+
+            {startTemplate.kind === 'specialization' && startTemplate.mainLiftOptions && (
+              <label className="mt-2 block text-[9px] text-slate-500">
+                Основное движение (1ПМ нужен только для него)
+                <select
+                  value={selectedMainLift}
+                  onChange={event => setSelectedMainLift(event.target.value as CycleLift)}
+                  className="mt-1 w-full rounded-xl border border-[#263a4a] bg-[#081016] px-2.5 py-2 text-[10px] text-slate-200"
+                >
+                  {startTemplate.mainLiftOptions.map(lift => (
+                    <option key={lift} value={lift}>{LIFT_LABELS[lift]}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {startTemplate.allowMultipleMainLifts && startTemplate.mainLiftOptions && (
+              <div className="mt-2 rounded-xl border border-[#223442] bg-[#091117] p-2">
+                <div className="text-[9px] font-bold text-slate-300">Выберите движения</div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {startTemplate.mainLiftOptions.map(lift => {
+                    const checked = selectedMainLifts.includes(lift);
+                    return (
+                      <button
+                        key={lift}
+                        type="button"
+                        onClick={() => setSelectedMainLifts(prev => checked ? prev.filter(item => item !== lift) : [...prev, lift])}
+                        className={`rounded-lg border px-2 py-1 text-[8px] font-bold ${checked ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200' : 'border-[#263546] text-slate-400'}`}
+                      >
+                        {LIFT_LABELS[lift]}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1 text-[8px] leading-snug text-slate-500">
+                  Можно выбрать одно движение, два или все три. Приложение оставит только нужные дни.
+                </p>
+              </div>
+            )}
+
             <label className="mt-2 block text-[9px] text-slate-500">
               Дата старта
               <input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} className="mt-1 w-full rounded-xl border border-[#263a4a] bg-[#081016] px-2.5 py-2 text-[10px] text-slate-200" />
             </label>
+
             <div className="mt-2 grid grid-cols-2 gap-2">
-              {(Object.keys(LIFT_LABELS) as CycleLift[]).filter(lift => lift !== 'accessory').map(lift => (
+              {startRequiredLifts.map(lift => (
                 <label key={lift} className="block text-[9px] text-slate-500">
                   {LIFT_LABELS[lift]}, 1ПМ
                   <input
@@ -504,62 +692,68 @@ export const CycleLibrary: React.FC<CycleLibraryProps> = ({ user, onStartPlan })
                 </label>
               ))}
             </div>
+
+            <label className="mt-2 block text-[9px] text-slate-500">
+              Начать с недели
+              <select
+                value={startWeekIndex}
+                onChange={event => setStartWeekIndex(Number(event.target.value))}
+                className="mt-1 w-full rounded-xl border border-[#263a4a] bg-[#081016] px-2 py-2 text-[10px] text-slate-200"
+              >
+                {startTemplate.weeks.map((week, index) => (
+                  <option key={week.id} value={index}>Неделя {index + 1}</option>
+                ))}
+              </select>
+            </label>
+
             <p className="mt-2 text-[8px] leading-relaxed text-slate-500">
-              Веса рассчитываются от 1ПМ и процентов. Если не знаете 1ПМ, начните с комфортных весов и правьте вручную.
+              Веса рассчитываются от 1ПМ и процентов. Если не знаете 1ПМ, начните с комфортных весов — в тренировке
+              можно вписать фактический вес. Подсобка не требует 1ПМ.
             </p>
-            <button type="button" onClick={startCycle} className="mt-2 w-full rounded-xl bg-emerald-500 py-2.5 text-[10px] font-bold text-slate-950">
+            <button
+              type="button"
+              onClick={startCycle}
+              disabled={startRequiredLifts.length === 0}
+              className="mt-2 w-full rounded-xl bg-emerald-500 py-2.5 text-[10px] font-bold text-slate-950 disabled:opacity-40"
+            >
               Запустить цикл
             </button>
           </div>
         </div>
       )}
 
-      {showCustom && (
-        <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/80 p-3 backdrop-blur-sm">
-          <div className="my-3 w-full max-w-md rounded-2xl border border-[#263a4a] bg-[#0d151c] p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-100">
-                <Plus className="h-3.5 w-3.5 text-emerald-400" />
-                Свой цикл
-              </div>
-              <button type="button" onClick={() => setShowCustom(false)} className="text-slate-400">✕</button>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <label className="col-span-2 text-[9px] text-slate-500">
-                Название
-                <input value={customTitle} onChange={event => setCustomTitle(event.target.value)} placeholder="Например: Мой жим 6 недель" className="mt-1 w-full rounded-xl border border-[#263a4a] bg-[#081016] px-2.5 py-2 text-[10px] text-slate-200" />
-              </label>
-              <label className="text-[9px] text-slate-500">
-                Цель
-                <select value={customGoal} onChange={event => setCustomGoal(event.target.value as CycleGoal)} className="mt-1 w-full rounded-xl border border-[#263a4a] bg-[#081016] px-2 py-2 text-[10px] text-slate-200">
-                  {(Object.keys(GOAL_LABELS) as CycleGoal[]).map(item => <option key={item} value={item}>{GOAL_LABELS[item]}</option>)}
-                </select>
-              </label>
-              <label className="text-[9px] text-slate-500">
-                Уровень
-                <select value={customLevel} onChange={event => setCustomLevel(event.target.value as CycleLevel)} className="mt-1 w-full rounded-xl border border-[#263a4a] bg-[#081016] px-2 py-2 text-[10px] text-slate-200">
-                  {(Object.keys(LEVEL_LABELS) as CycleLevel[]).map(item => <option key={item} value={item}>{LEVEL_LABELS[item]}</option>)}
-                </select>
-              </label>
-              <label className="col-span-2 text-[9px] text-slate-500">
-                Программа по дням
-                <textarea
-                  rows={6}
-                  value={customText}
-                  onChange={event => setCustomText(event.target.value)}
-                  placeholder={'Формат: Неделя 1 | День 1 | Присед 5x5 70%\nНеделя 1 | День 2 | Жим 4x8 65%\nНеделя 2 | День 1 | Присед 5x4 75%'}
-                  className="mt-1 w-full resize-none rounded-xl border border-[#263a4a] bg-[#081016] px-2.5 py-2 text-[9px] leading-relaxed text-slate-200 placeholder:text-slate-600"
-                />
-              </label>
-              <p className="col-span-2 text-[8px] leading-relaxed text-slate-500">
-                Каждая строка — одно упражнение. Проценты считаются от 1ПМ, вес можно поправить при запуске.
-              </p>
-            </div>
-            <button type="button" onClick={createCustom} disabled={!customTitle.trim()} className="mt-2 w-full rounded-xl bg-emerald-500 py-2.5 text-[10px] font-bold text-slate-950 disabled:opacity-40">
-              Сохранить цикл
-            </button>
-          </div>
-        </div>
+      {builderOpen && (
+        <CycleBuilderModal
+          onClose={() => setBuilderOpen(false)}
+          onSave={template => {
+            const next = [...customCycles, template];
+            setCustomCycles(next);
+            saveCustomCycles(next);
+            setBuilderOpen(false);
+            setSelected(template);
+          }}
+        />
+      )}
+
+      {cycleWorkout && activeWorkoutDay && (
+        <CycleWorkoutModal
+          template={cycleWorkout.template}
+          weekIndex={cycleWorkout.weekIndex}
+          day={activeWorkoutDay}
+          maxes={active?.maxes || maxes}
+          mainLift={active?.mainLift}
+          initialActualWeights={
+            activeWorkoutDay.exercises.length === 1
+              ? {
+                  [activeWorkoutDay.id]:
+                    active?.actualWeights?.[`${cycleWorkout.weekIndex}-${activeWorkoutDay.id}`] || 0,
+                }
+              : undefined
+          }
+          initialNote={active?.notes?.[`${cycleWorkout.weekIndex}-${activeWorkoutDay.id}`]}
+          onClose={() => setCycleWorkout(null)}
+          onComplete={completeCycleDay}
+        />
       )}
     </div>
   );

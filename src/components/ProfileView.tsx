@@ -38,6 +38,7 @@ import {
 import { UserProfile, Achievement, InBodyRecord, PersonalRecord, RecordHistoryItem, FriendBattle, AiProvidersInfo } from '../types';
 import { InBodyTracker } from './InBodyTracker';
 import { FriendsAndBattlesView } from './FriendsAndBattlesView';
+import { ACTIVITY_LEVELS } from '../lib/nutritionTargets';
 import { hapticImpact, hapticNotify } from '../lib/telegram';
 import { exportDiaryCsv, testNotification } from '../lib/api';
 import { FEATURES, FeatureKey, getFeatureFlags, isAdvancedMode } from '../lib/features';
@@ -307,6 +308,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [editFat, setEditFat] = useState(user?.customFatTarget || 0);
   const [editCarbs, setEditCarbs] = useState(user?.customCarbsTarget || 0);
   const [editFiber, setEditFiber] = useState(user?.customFiberTarget || 0);
+  const [editWater, setEditWater] = useState(user?.customWaterTarget || 0);
   const backupFileRef = useRef<HTMLInputElement | null>(null);
 
   // Шаги за сегодня берём из профиля: они синхронизируются между устройствами.
@@ -364,6 +366,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setEditFat(user?.customFatTarget || 0);
     setEditCarbs(user?.customCarbsTarget || 0);
     setEditFiber(user?.customFiberTarget || 0);
+    setEditWater(user?.customWaterTarget || 0);
     setShowEditProfileModal(true);
   };
 
@@ -385,6 +388,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       customFatTarget: editFat > 0 ? editFat : undefined,
       customCarbsTarget: editCarbs > 0 ? editCarbs : undefined,
       customFiberTarget: editFiber > 0 ? editFiber : undefined,
+      customWaterTarget: editWater > 0 ? editWater : undefined,
     });
     setShowEditProfileModal(false);
   };
@@ -1716,11 +1720,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       onChange={e => setEditActivity(e.target.value as NonNullable<UserProfile['activityLevel']>)}
                       className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-emerald-500"
                     >
-                      <option value="sedentary">Малоподвижная</option>
-                      <option value="moderate">Умеренная</option>
-                      <option value="active">Активная</option>
-                      <option value="very_active">Очень активная</option>
+                      {(Object.keys(ACTIVITY_LEVELS) as Array<keyof typeof ACTIVITY_LEVELS>).map(level => (
+                        <option key={level} value={level}>
+                          {ACTIVITY_LEVELS[level].label} · {ACTIVITY_LEVELS[level].short}
+                        </option>
+                      ))}
                     </select>
+                    <div className="mt-1 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-2 py-1.5 text-[9px] leading-relaxed text-cyan-200/80">
+                      <b>{ACTIVITY_LEVELS[editActivity].label}:</b> {ACTIVITY_LEVELS[editActivity].description}
+                      <div className="mt-0.5 text-slate-400">Пример: {ACTIVITY_LEVELS[editActivity].examples}</div>
+                    </div>
                   </div>
                 </div>
 
@@ -1779,18 +1788,36 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
-                    Клетчатка, г:
-                  </label>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={editFiber || ''}
-                    onChange={e => setEditFiber(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                    placeholder="авто"
-                    className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
-                  />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                      Клетчатка, г:
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={editFiber || ''}
+                      onChange={e => setEditFiber(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      placeholder="авто"
+                      className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                      Вода, мл:
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={editWater || ''}
+                      onChange={e => setEditWater(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      placeholder="авто"
+                      className="w-full bg-[#18232f] border border-[#263546] rounded-xl px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
+                    />
+                    <div className="mt-0.5 text-[8px] leading-snug text-slate-500">
+                      Цель по напиткам. Пусто — рассчитаем от веса и активности.
+                    </div>
+                  </div>
                 </div>
               </div>
 

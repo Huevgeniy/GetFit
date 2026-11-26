@@ -8,7 +8,6 @@ import {
   Pill, 
   Dumbbell, 
   Check, 
-  Cpu, 
   Zap,
   Info
 } from 'lucide-react';
@@ -104,25 +103,6 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({
           >
             <X className="w-5 h-5" />
           </button>
-        </div>
-
-        {/* AI provider status */}
-        <div className="my-4 p-3 rounded-xl bg-gradient-to-r from-cyan-950/40 via-emerald-950/30 to-slate-900 border border-cyan-500/30 flex items-start gap-3">
-          <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0 mt-0.5">
-            <Cpu className="w-4 h-4" />
-          </div>
-          <div className="text-xs">
-            <div className="flex items-center gap-2 font-bold text-white">
-              <span>ИИ подключён</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                Синхронизировано
-              </span>
-            </div>
-            <p className="text-slate-300 mt-1 leading-relaxed">
-              ИИ-тренер работает автоматически. Если внешний сервис недоступен, приложение использует
-              встроенные правила и разбор без ИИ. Ключи и настройки хранятся на сервере и не попадают в браузер.
-            </p>
-          </div>
         </div>
 
         {/* Section: Style of training */}

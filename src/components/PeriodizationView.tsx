@@ -21,14 +21,14 @@ import {
   Zap,
   AlertCircle
 } from 'lucide-react';
-import { TrainingBlock, WorkoutRecord, UserProfile, WorkoutPlan } from '../types';
+import { TrainingBlock, WorkoutRecord, UserProfile } from '../types';
 import { CycleLibrary } from './CycleLibrary';
 
 interface PeriodizationViewProps {
   user: UserProfile;
   pastWorkouts: WorkoutRecord[];
   onUpdateUser?: (updated: Partial<UserProfile>) => void;
-  onStartPlan: (plan: WorkoutPlan) => void;
+  onLogWorkout: (record: WorkoutRecord) => void;
 }
 
 const BLOCK_TYPES = [
@@ -44,7 +44,7 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
   user,
   pastWorkouts,
   onUpdateUser,
-  onStartPlan,
+  onLogWorkout,
 }) => {
   const [blocks, setBlocks] = useState<TrainingBlock[]>(() => {
     try {
@@ -57,6 +57,7 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<TrainingBlock | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [openCycleBuilder, setOpenCycleBuilder] = useState(0);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -214,22 +215,34 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
               Циклы тренировок
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              {blocks.length} циклов • {currentBlock ? 'Сейчас идёт: ' + currentBlock.title : 'Нет активного цикла'}
+              {blocks.length} периодов • {currentBlock ? 'Сейчас идёт: ' + currentBlock.title : 'Нет активного периода'}
             </p>
           </div>
-          <button
-            id="tour-periodization-create"
-            onClick={() => { resetForm(); setShowCreateModal(true); }}
-            className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-black px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Новый цикл
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => { resetForm(); setShowCreateModal(true); }}
+              className="rounded-lg border border-[#2b4050] bg-[#121c25] px-2 py-1.5 text-[10px] font-semibold text-slate-300"
+              title="Добавить период для аналитики"
+            >
+              Период
+            </button>
+            <button
+              id="tour-periodization-create"
+              onClick={() => {
+                setOpenCycleBuilder(value => value + 1);
+                document.getElementById('tour-cycle-library')?.scrollIntoView({ block: 'start' });
+              }}
+              className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-black px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Создать цикл
+            </button>
+          </div>
         </div>
       </div>
 
       <div id="tour-periodization-list" className="px-4 py-4 space-y-6">
-        <CycleLibrary user={user} onStartPlan={onStartPlan} />
+        <CycleLibrary user={user} onLogWorkout={onLogWorkout} openBuilderSignal={openCycleBuilder} />
 
         {/* Current Block */}
         {currentBlock && (

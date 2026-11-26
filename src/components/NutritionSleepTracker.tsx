@@ -21,7 +21,9 @@ import {
   Brain,
   Trash2,
   Edit2,
-  Info
+  Info,
+  Droplets,
+  Minus
 } from 'lucide-react';
 import { 
   UserProfile, 
@@ -34,7 +36,7 @@ import {
 } from '../types';
 import { BASE_FOODS_DATABASE } from '../data/foodsData';
 import { apiFetch } from '../lib/api';
-import { calculateNutritionTargets } from '../lib/nutritionTargets';
+import { ACTIVITY_LEVELS, calculateNutritionTargets } from '../lib/nutritionTargets';
 
 const MEAL_TYPE_LABELS: Record<LoggedMealItem['mealType'], string> = {
   breakfast: 'Завтрак',
@@ -180,11 +182,13 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
         totalFat: 0,
         totalCarbs: 0,
         totalFiber: 0,
+        waterMl: 0,
         targetCalories: 2400,
         targetProtein: 160,
         targetFat: 75,
         targetCarbs: 260,
         targetFiber: 30,
+        targetWaterMl: 2000,
         status: 'open' as const,
       }
     );
@@ -375,6 +379,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
       targetFat: calculatedTargets.fat,
       targetCarbs: calculatedTargets.carbs,
       targetFiber: calculatedTargets.fiber,
+      targetWaterMl: calculatedTargets.waterMl,
       ...additionalUpdates,
     };
 
@@ -454,6 +459,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
     const pDiff = currentDayRecord.totalProtein - calculatedTargets.protein;
     const fDiff = currentDayRecord.totalFat - calculatedTargets.fat;
     const fiberDiff = currentDayRecord.totalFiber - calculatedTargets.fiber;
+    const waterDiff = (currentDayRecord.waterMl || 0) - calculatedTargets.waterMl;
 
     let verdict = '';
     if (pDiff >= -5 && fiberDiff >= -3 && Math.abs(fDiff) <= 15) {
@@ -464,6 +470,8 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
       verdict = `Перебор по жирам (+${Math.round(fDiff)}г). Снизьте количество жареного и соусов, сделайте акцент на сложные углеводы.`;
     } else if (fiberDiff < -8) {
       verdict = `Мало клетчатки (${currentDayRecord.totalFiber}г из ${calculatedTargets.fiber}г). Добавьте в рацион брокколи, зелень, овсянку или яблоки для сытости.`;
+    } else if (waterDiff < -500) {
+      verdict = `Воды выпито ${currentDayRecord.waterMl || 0} мл из ${calculatedTargets.waterMl} мл. Добавьте 1–2 стакана воды или чая, особенно если была тренировка.`;
     } else {
       verdict = 'День закрыт с хорошим балансом. Продолжайте придерживаться плана!';
     }
@@ -595,6 +603,13 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
   const fatPercent = Math.min(100, Math.round((currentDayRecord.totalFat / calculatedTargets.fat) * 100));
   const carbsPercent = Math.min(100, Math.round((currentDayRecord.totalCarbs / calculatedTargets.carbs) * 100));
   const fiberPercent = Math.min(100, Math.round((currentDayRecord.totalFiber / calculatedTargets.fiber) * 100));
+  const waterMl = currentDayRecord.waterMl || 0;
+  const waterPercent = Math.min(100, Math.round((waterMl / calculatedTargets.waterMl) * 100));
+
+  const updateWater = (next: number) => {
+    const value = Math.max(0, Math.min(10000, Math.round(next)));
+    updateDayRecord(currentDayRecord.meals, { waterMl: value });
+  };
 
   const renderCategoryPills = () => (
     <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1 text-xs">
@@ -884,6 +899,70 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                 <div className="w-full bg-[#1e2a38] h-1.5 rounded-full overflow-hidden">
                   <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${fiberPercent}%` }} />
                 </div>
+              </div>
+            </div>
+
+            {/* Water tracking */}
+            <div className="rounded-2xl border border-cyan-500/25 bg-gradient-to-br from-cyan-950/30 via-[#0f1a22] to-[#0d151c] p-3 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-cyan-500/30 bg-cyan-500/10">
+                    <Droplets className="h-4 w-4 text-cyan-300" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-100">Вода и напитки</div>
+                    <div className="text-[9px] text-slate-500">
+                      Цель по напиткам · {calculatedTargets.waterMl} мл
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="font-mono text-lg font-black text-cyan-300">{waterMl} мл</div>
+                  <div className="text-[9px] font-mono text-slate-500">{waterPercent}%</div>
+                </div>
+              </div>
+
+              <div className="h-2 w-full overflow-hidden rounded-full bg-[#18232f]">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all"
+                  style={{ width: `${waterPercent}%` }}
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[200, 300, 500].map(amount => (
+                  <button
+                    key={amount}
+                    type="button"
+                    onClick={() => updateWater(waterMl + amount)}
+                    className="rounded-lg border border-cyan-500/25 bg-cyan-500/10 px-2 py-1.5 text-[9px] font-bold text-cyan-200"
+                  >
+                    +{amount} мл
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => updateWater(waterMl - 200)}
+                  className="rounded-lg border border-[#263546] bg-[#111b24] px-2 py-1.5 text-[9px] font-bold text-slate-400"
+                >
+                  <Minus className="inline h-2.5 w-2.5" /> 200
+                </button>
+                <input
+                  type="number"
+                  min={0}
+                  max={10000}
+                  step={50}
+                  value={waterMl || ''}
+                  onChange={event => updateWater(Number(event.target.value) || 0)}
+                  placeholder="ввести мл"
+                  className="w-20 rounded-lg border border-[#263546] bg-[#081016] px-2 py-1.5 text-[9px] font-mono text-slate-200"
+                />
+              </div>
+
+              <div className="rounded-lg border border-[#223442] bg-[#091117] px-2 py-1.5 text-[8px] leading-relaxed text-slate-500">
+                <b className="text-slate-400">Что считается:</b> вода, чай, кофе, молоко, соки, спортивные напитки,
+                супы и другие безалкогольные жидкости. Примерно 20% воды человек получает с едой, поэтому цель
+                в трекере — именно напитки. Алкоголь как гидратацию не засчитываем.
               </div>
             </div>
           </div>
@@ -1678,11 +1757,14 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                   <span className="font-mono text-emerald-300">{calculatedTargets.maintenanceCalories} ккал</span>
                 </div>
                 <div className="mt-1 text-[9px] leading-relaxed text-slate-500">
-                  BMR × коэффициент активности {calculatedTargets.activityFactor.toFixed(3)}. Уровень: {
-                    user.activityLevel === 'sedentary' ? 'низкий' :
-                    user.activityLevel === 'active' ? 'высокий' :
-                    user.activityLevel === 'very_active' ? 'очень высокий' : 'умеренный'
-                  }.
+                  BMR × коэффициент активности {calculatedTargets.activityFactor.toFixed(3)}. Уровень: {calculatedTargets.activityLabel}.
+                </div>
+                <div className="mt-1 grid gap-1 text-[8px] leading-snug text-slate-500">
+                  {(Object.keys(ACTIVITY_LEVELS) as Array<keyof typeof ACTIVITY_LEVELS>).map(level => (
+                    <div key={level} className={`rounded-lg px-2 py-1 ${user.activityLevel === level ? 'bg-cyan-500/10 text-cyan-200' : 'bg-[#18232f]'}`}>
+                      <b>{ACTIVITY_LEVELS[level].label}</b> × {ACTIVITY_LEVELS[level].factor} — {ACTIVITY_LEVELS[level].short}. {ACTIVITY_LEVELS[level].description}
+                    </div>
+                  ))}
                 </div>
               </div>
               <div className="rounded-xl border border-[#223442] bg-[#091117] p-3">
@@ -1719,6 +1801,22 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                   Белок — {calculatedTargets.proteinPerKg} г/кг. Углеводы — остаток калорий после белка и жира, минимум 80 г.
                   Сумма БЖУ может отличаться от цели на 1–5 ккал из-за округления.
                 </div>
+              </div>
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-200">5. Вода и напитки</span>
+                  <span className="font-mono text-cyan-300">{calculatedTargets.waterMl} мл</span>
+                </div>
+                <div className="mt-1 text-[9px] leading-relaxed text-slate-500">
+                  Ориентир по напиткам: ≈30 мл/кг + поправка на активность. Примерно {calculatedTargets.waterFromFoodPercent}% воды
+                  приходит с едой, поэтому это цель именно по жидкостям. Считаются вода, чай, кофе, молоко, соки,
+                  спортивные напитки и супы; алкоголь как гидратацию не учитываем.
+                </div>
+                {calculatedTargets.customWater && (
+                  <div className="mt-1 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2 py-1 text-[8px] text-amber-200">
+                    Стоит ручная цель по воде — она важнее расчёта.
+                  </div>
+                )}
               </div>
               <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-2.5 py-2 text-[8px] leading-relaxed text-amber-200/80">
                 Это ориентир по формуле, а не медицинская рекомендация. Для точной настройки нужны динамика веса, самочувствие и консультация специалиста.
