@@ -35,6 +35,7 @@ execFileSync(
     '--rootDir', 'src',
     'src/lib/bodyModel.ts',
     'src/lib/exerciseSimulation.ts',
+    'src/lib/exerciseTechnique.ts',
     'src/components/BodyBiomechanicsView.tsx',
     'src/components/BodyModel2D.tsx',
     'src/components/BodyMeasurementForm.tsx',
@@ -49,6 +50,7 @@ const React = require_('react');
 const { renderToString } = require_(path.join(projectRoot, 'node_modules', 'react-dom', 'server.js'));
 const model = require_(path.join(outDir, 'lib', 'bodyModel.js'));
 const sim = require_(path.join(outDir, 'lib', 'exerciseSimulation.js'));
+const technique = require_(path.join(outDir, 'lib', 'exerciseTechnique.js'));
 
 /* ------------------------------------------------------------------ */
 /* 1. Нормализация замеров                                             */
@@ -478,7 +480,7 @@ const simDims = model.computeBodyDimensions({
   sex: 'male',
   measurements: [{ date: '2026-01-01', weightKg: 82 }],
 });
-check('в практике восемь упражнений', sim.EXERCISES.length === 8);
+check('в симуляции одиннадцать базовых упражнений', sim.EXERCISES.length === 11);
 check(
   'у каждого упражнения есть снаряд и суставы',
   sim.EXERCISES.every(
@@ -601,6 +603,79 @@ const simPeakHeavy = Math.max(
 check('дополнительный вес меняет расчёт нагрузки', simPeakHeavy > 0 && simPeakLight > 0);
 
 /* ------------------------------------------------------------------ */
+/* 10. Библиотека техники и схемы                                      */
+/* ------------------------------------------------------------------ */
+const catalog = technique.EXERCISE_CATALOG;
+check('в библиотеке не меньше 24 упражнений', catalog.length >= 24, String(catalog.length));
+check('румынская тяга есть в библиотеке', catalog.some((item) => item.id === 'rdl'));
+check(
+  'поиск находит румынскую тягу',
+  technique.searchTechniqueExercises('румын').some((item) => item.id === 'rdl'),
+);
+check(
+  'у каждого упражнения есть риски, FAQ и источники',
+  catalog.every((item) => item.risks.length > 0 && item.faq.length > 0 && item.sources.length > 0),
+);
+check(
+  'у каждого упражнения есть основная мышца',
+  catalog.every((item) => item.primary.length > 0),
+);
+let poseError = null;
+try {
+  for (const item of catalog) {
+    technique.buildTechniquePose(item, technique.defaultControlValues(item), simDims);
+  }
+} catch (error) {
+  poseError = error;
+}
+check('все схемы упражнений строятся', !poseError, poseError ? poseError.message : '');
+const techniqueSquat = technique.techniqueExerciseById('squat');
+const squatDefaults = technique.defaultControlValues(techniqueSquat);
+const deepPose = technique.buildTechniquePose(techniqueSquat, { ...squatDefaults, depth: 1 }, simDims);
+const shallowPose = technique.buildTechniquePose(techniqueSquat, { ...squatDefaults, depth: 0.6 }, simDims);
+check(
+  'глубина меняет угол колена',
+  model.computePoseMetrics(deepPose)['side.kneeFlex'] > model.computePoseMetrics(shallowPose)['side.kneeFlex'],
+  `${model.computePoseMetrics(deepPose)['side.kneeFlex']} / ${model.computePoseMetrics(shallowPose)['side.kneeFlex']}`,
+);
+const deepMuscles = technique.muscleIntensity(techniqueSquat, { ...squatDefaults, depth: 1 });
+const shallowMuscles = technique.muscleIntensity(techniqueSquat, { ...squatDefaults, depth: 0.6 });
+check(
+  'глубина смещает нагрузку на квадрицепс',
+  deepMuscles.quads > shallowMuscles.quads,
+  `${deepMuscles.quads} / ${shallowMuscles.quads}`,
+);
+check(
+  'активные сдвиги появляются при изменении ползунка',
+  technique.activeShifts(techniqueSquat, { ...squatDefaults, lean: 0.6 }).length > 0,
+);
+const longLimbDims = model.computeBodyDimensions({
+  heightCm: 180,
+  measurements: [
+    {
+      id: 'long',
+      date: '2026-01-01',
+      createdAt: '2026-01-01T09:00:00Z',
+      torsoLengthCm: 58,
+      armLengthLCm: 78,
+      armLengthRCm: 78,
+      legLengthLCm: 104,
+      legLengthRCm: 104,
+    },
+  ],
+});
+check(
+  'персональные пропорции дают текст',
+  technique.proportionNotes(techniqueSquat, longLimbDims).length > 0,
+);
+const techniqueRm = technique.estimateTechniqueOneRepMax(techniqueSquat, growthWorkouts, 80, 'male', 150);
+check(
+  'ручная поправка 1ПМ работает в технике',
+  techniqueRm.source === 'manual' && techniqueRm.valueKg === 150,
+  `${techniqueRm.source} ${techniqueRm.valueKg}`,
+);
+
+/* ------------------------------------------------------------------ */
 /* 10. Компоненты                                                      */
 /* ------------------------------------------------------------------ */
 const BodyView = require_(path.join(outDir, 'components', 'BodyBiomechanicsView.js')).BodyBiomechanicsView;
@@ -663,7 +738,7 @@ if (!viewError) {
   check('экран показывает заголовок', viewHtml.includes('Тело и биомеханика'));
   check(
     'экран показывает четыре вкладки',
-    ['Замеры', 'Модель', 'Практика', 'Анализ'].every((label) => viewHtml.includes(label)),
+    ['Замеры', 'Упражнения', 'Техника', 'Анализ'].every((label) => viewHtml.includes(label)),
   );
   check('экран показывает последний замер', viewHtml.includes('01.02.2026') && viewHtml.includes('Все замеры'));
   check('экран предупреждает, что это не диагностика', viewHtml.includes('не медицинская диагностика'));

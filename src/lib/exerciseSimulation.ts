@@ -25,7 +25,10 @@ export type ExerciseId =
   | 'row'
   | 'pullup'
   | 'dips'
-  | 'lunge';
+  | 'lunge'
+  | 'rdl'
+  | 'frontSquat'
+  | 'bulgarian';
 
 export type LoadJoint = 'hip' | 'knee' | 'spine' | 'shoulder' | 'elbow' | 'ankle';
 export type IntensityZone = 'light' | 'moderate' | 'hard' | 'max';
@@ -406,6 +409,88 @@ const lungeRig: ExerciseDefinition['rig'] = (t, dims, options) => {
   };
 };
 
+const rdlRig: ExerciseDefinition['rig'] = (t, dims, options) => {
+  const stand = hipHeightCm(dims);
+  const hip = mixPoint(
+    { x: 0, y: stand },
+    { x: -dims.thighLengthCm * 0.55, y: stand - dims.thighLengthCm * 0.18 },
+    t,
+  );
+  const torsoAngle = lerp(-90, -42, t) - options.lean * 6 * t;
+  const shoulder = shoulderFromHip(hip, torsoAngle, dims);
+  const foot = footHeightCm(dims);
+  return {
+    hip,
+    torsoAngle,
+    headAngle: lerp(-90, -58, t),
+    hand: { x: shoulder.x, y: shoulder.y - armLengthCm(dims) },
+    nearAnkle: { x: 2, y: foot },
+    farAnkle: { x: -6, y: foot },
+    nearFootAngle: 0,
+    farFootAngle: 0,
+    nearKneeBend: 1,
+    farKneeBend: 1,
+    elbowBend: -1,
+  };
+};
+
+const frontSquatRig: ExerciseDefinition['rig'] = (t, dims, options) => {
+  const stand = hipHeightCm(dims);
+  const bottom = Math.max(stand * 0.56, stand - dims.thighLengthCm * 0.9);
+  const hip = mixPoint(
+    { x: 0, y: stand },
+    { x: -dims.torsoLengthCm * 0.04, y: bottom },
+    t,
+  );
+  const torsoAngle = lerp(-90, -80, t) - options.lean * 6 * t;
+  const shoulder = shoulderFromHip(hip, torsoAngle, dims);
+  const foot = footHeightCm(dims);
+  return {
+    hip,
+    torsoAngle,
+    headAngle: lerp(-90, -88, t),
+    hand: {
+      x: shoulder.x + dims.chestDepthCm * 0.34,
+      y: shoulder.y + dims.neckLengthCm * 0.06,
+    },
+    nearAnkle: { x: 2, y: foot },
+    farAnkle: { x: -5, y: foot },
+    nearFootAngle: 0,
+    farFootAngle: 0,
+    nearKneeBend: 1,
+    farKneeBend: 1,
+    elbowBend: -1,
+  };
+};
+
+const bulgarianRig: ExerciseDefinition['rig'] = (t, dims, options) => {
+  const stand = hipHeightCm(dims);
+  const hip = mixPoint(
+    { x: 0, y: stand },
+    { x: 0, y: stand - dims.thighLengthCm * 0.86 },
+    t,
+  );
+  const torsoAngle = -88 - options.lean * 5;
+  const shoulder = shoulderFromHip(hip, torsoAngle, dims);
+  const foot = footHeightCm(dims);
+  return {
+    hip,
+    torsoAngle,
+    headAngle: -90,
+    hand: { x: shoulder.x, y: shoulder.y - armLengthCm(dims) + 0.5 },
+    nearAnkle: { x: lerp(2, dims.thighLengthCm * 0.55, t), y: foot },
+    farAnkle: {
+      x: lerp(-5, -dims.thighLengthCm * 0.9, t),
+      y: foot + dims.heightCm * 0.12 * t,
+    },
+    nearFootAngle: 0,
+    farFootAngle: 15,
+    nearKneeBend: 1,
+    farKneeBend: -1,
+    elbowBend: 1,
+  };
+};
+
 export const EXERCISES: ExerciseDefinition[] = [
   {
     id: 'squat',
@@ -566,6 +651,66 @@ export const EXERCISES: ExerciseDefinition[] = [
     namePatterns: [/выпад/i, /lunge/i],
     fallbackMultiplier: (sex) => (sex === 'female' ? 0.22 : 0.35),
     rig: lungeRig,
+  },
+  {
+    id: 'rdl',
+    name: 'Румынская тяга',
+    focus: 'Задняя цепь, бицепс бедра, ягодицы',
+    equipment: 'barbell',
+    barAnchor: 'hand',
+    bodyweightFactor: 0,
+    joints: ['hip', 'knee', 'spine'],
+    cue: 'Таз назад, колени мягко согнуты. Гриф скользит по ногам, спина остаётся нейтральной.',
+    phaseLabels: ['Стоя', 'Растяжение задней цепи'],
+    keyPointLabel: 'нижняя точка',
+    technique: [
+      { metric: 'side.kneeFlex', label: 'Мягкие колени', min: 10, max: 55, ideal: '15–35°', joint: 'knee', advice: 'Колени слишком прямые или слишком согнуты — это уже не тазобедренный шарнир.' },
+      { metric: 'side.torsoLean', label: 'Наклон корпуса', min: 35, max: 65, ideal: '42–58°', joint: 'spine', advice: 'Слишком вертикально или слишком глубоко для контроля поясницы.' },
+      { metric: 'side.elbowFlex', label: 'Прямые руки', min: 0, max: 20, ideal: '0–12°', joint: 'elbow', advice: 'Не тяните руками — гриф должен висеть.' },
+    ],
+    namePatterns: [/румын/i, /rdl/i, /romanian/i],
+    fallbackMultiplier: (sex) => (sex === 'female' ? 0.8 : 1.1),
+    rig: rdlRig,
+  },
+  {
+    id: 'frontSquat',
+    name: 'Фронтальный присед',
+    focus: 'Квадрицепс, кор, верх спины',
+    equipment: 'barbell',
+    barAnchor: 'shoulder',
+    bodyweightFactor: 0,
+    joints: ['hip', 'knee', 'spine', 'ankle'],
+    cue: 'Локти высоко, гриф на передних дельтах. Корпус вертикальнее, колени едут вперёд.',
+    phaseLabels: ['Стоя', 'Нижняя точка'],
+    keyPointLabel: 'нижняя точка',
+    technique: [
+      { metric: 'side.kneeFlex', label: 'Глубина по колену', min: 70, max: 130, ideal: '85–115°', joint: 'knee', advice: 'Слишком мелко или чрезмерно глубоко для текущей подвижности.' },
+      { metric: 'side.torsoLean', label: 'Вертикальный корпус', min: 5, max: 30, ideal: '8–22°', joint: 'spine', advice: 'Сильный наклон разгружает квадрицепс и повышает нагрузку на спину.' },
+      { metric: 'side.hipFlex', label: 'Сгибание бедра', min: 70, max: 135, ideal: '90–120°', joint: 'hip', advice: 'Таз не доходит до нужной глубины или проваливается.' },
+    ],
+    namePatterns: [/фронтальн.*присед/i, /front squat/i],
+    fallbackMultiplier: (sex) => (sex === 'female' ? 0.6 : 0.9),
+    rig: frontSquatRig,
+  },
+  {
+    id: 'bulgarian',
+    name: 'Болгарский сплит-присед',
+    focus: 'Квадрицепс, ягодицы, баланс',
+    equipment: 'dumbbell',
+    barAnchor: 'hand',
+    bodyweightFactor: 0,
+    joints: ['hip', 'knee', 'spine', 'ankle'],
+    cue: 'Задняя стопа на скамье, передняя колено над стопой. Корпус почти вертикально.',
+    phaseLabels: ['Стоя', 'Нижняя точка'],
+    keyPointLabel: 'нижняя точка',
+    technique: [
+      { metric: 'side.kneeFlex', label: 'Сгибание переднего колена', min: 65, max: 115, ideal: '80–100°', joint: 'knee', advice: 'Переднее колено сгибается недостаточно или слишком сильно.' },
+      { metric: 'side.hipFlex', label: 'Глубина', min: 70, max: 135, ideal: '90–115°', joint: 'hip', advice: 'Таз не опускается или проваливается вниз.' },
+      { metric: 'side.torsoLean', label: 'Вертикальный корпус', min: 0, max: 20, ideal: '0–12°', joint: 'spine', advice: 'Наклон вперёд усложняет баланс и смещает нагрузку.' },
+    ],
+    namePatterns: [/болгар/i, /bulgarian/i, /сплит.?присед/i],
+    fallbackMultiplier: (sex) => (sex === 'female' ? 0.18 : 0.3),
+    rig: bulgarianRig,
   },
 ];
 

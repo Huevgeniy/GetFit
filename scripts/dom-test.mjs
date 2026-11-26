@@ -435,121 +435,129 @@ if (moreForBody) {
       }
     }
 
-    const modelTab = container.querySelector('#body-tab-model');
-    if (modelTab) {
+    const exercisesTab = container.querySelector('#body-tab-exercises');
+    if (exercisesTab) {
       await act(async () => {
-        modelTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        exercisesTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
       });
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 120));
+        await new Promise((resolve) => setTimeout(resolve, 160));
       });
       check(
-        '2D-модель отрисована',
-        Boolean(container.querySelector('svg[role="img"][aria-label*="2D-модель"]')),
+        'вкладка упражнений открывает библиотеку с поиском',
+        Boolean(container.querySelector('#body-exercise-search')) &&
+          text().includes('Библиотека упражнений'),
       );
       check(
-        'у модели нет drag-маркеров',
-        container.querySelectorAll('[aria-label^="Двигать:"]').length === 0,
-        String(container.querySelectorAll('[aria-label^="Двигать:"]').length),
+        'в библиотеке много упражнений',
+        container.querySelectorAll('[id^="body-library-"]').length >= 24,
+        String(container.querySelectorAll('[id^="body-library-"]').length),
       );
-      check('модель объясняет позу упражнения', text().includes('Сбоку модель повторяет выбранное упражнение'));
-    }
-
-    const practiceTab = container.querySelector('#body-tab-practice');
-    if (practiceTab) {
-      await act(async () => {
-        practiceTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-      });
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 140));
-      });
-      check(
-        'вкладка практики показывает упражнение, технику и нагрузку',
-        text().includes('Присед со штангой') &&
-          text().includes('Ваш ориентировочный 1ПМ') &&
-          text().includes('Техника в нижней точке') &&
-          text().includes('Нагрузка по суставам'),
-      );
-      check(
-        'в практике восемь упражнений',
-        container.querySelectorAll('[id^="body-practice-exercise-"]').length === 8,
-        String(container.querySelectorAll('[id^="body-practice-exercise-"]').length),
-      );
-      const practiceWeight = container.querySelector('#body-practice-weight');
-      const practiceAmplitude = container.querySelector('#body-practice-amplitude');
-      const practiceLean = container.querySelector('#body-practice-lean');
-      const practiceOneRm = container.querySelector('#body-practice-1rm');
-      check(
-        'в практике есть вес, амплитуда, наклон и 1ПМ',
-        Boolean(practiceWeight) &&
-          Boolean(practiceAmplitude) &&
-          Boolean(practiceLean) &&
-          Boolean(practiceOneRm),
-      );
-      check(
-        'график нагрузки отрисован',
-        Boolean(container.querySelector('svg[aria-label*="График нагрузки"]')),
-      );
-      check(
-        'нагрузка разложена по суставам',
-        text().includes('Тазобедренный') && text().includes('Коленный'),
-      );
-      if (practiceWeight) {
+      const search = container.querySelector('#body-exercise-search');
+      if (search) {
         const setter = Object.getOwnPropertyDescriptor(
           window.HTMLInputElement.prototype,
           'value',
         )?.set;
         await act(async () => {
-          setter?.call(practiceWeight, '140');
-          practiceWeight.dispatchEvent(new window.Event('input', { bubbles: true }));
+          setter?.call(search, 'румын');
+          search.dispatchEvent(new window.Event('input', { bubbles: true }));
         });
         await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 120));
+          await new Promise((resolve) => setTimeout(resolve, 160));
         });
         check(
-          'практика показывает очень высокую зону',
-          text().includes('очень высокая'),
-          text().slice(-260),
+          'поиск находит румынскую тягу',
+          Boolean(container.querySelector('#body-library-rdl')) && text().includes('Румынская тяга'),
         );
-      }
-      if (practiceOneRm) {
-        const setter = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype,
-          'value',
-        )?.set;
-        await act(async () => {
-          setter?.call(practiceOneRm, '150');
-          practiceOneRm.dispatchEvent(new window.Event('input', { bubbles: true }));
-        });
-        const saveOneRm = container.querySelector('#body-practice-1rm-save');
-        if (saveOneRm) {
+        const rdlCard = container.querySelector('#body-library-rdl');
+        if (rdlCard) {
           await act(async () => {
-            saveOneRm.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            rdlCard.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
           });
           await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 140));
+            await new Promise((resolve) => setTimeout(resolve, 180));
           });
-          check('1ПМ можно поправить вручную', text().includes('вручную') && text().includes('150'));
-        }
-      }
-      const playPractice = buttons().find((el) =>
-        (el.textContent || '').trim().startsWith('Запустить'),
-      );
-      if (playPractice) {
-        await act(async () => {
-          playPractice.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-        });
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        });
-        check('практика запускает анимацию', text().includes('Пауза'));
-        const pausePractice = buttons().find((el) =>
-          (el.textContent || '').trim().startsWith('Пауза'),
-        );
-        if (pausePractice) {
-          await act(async () => {
-            pausePractice.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-          });
+          check(
+            'карточка открывает разбор техники',
+            Boolean(container.querySelector('#tour-body-technique')) &&
+              text().includes('Румынская тяга') &&
+              text().includes('Карта мышц'),
+          );
+          check(
+            'схема скелета с углами отрисована',
+            Boolean(container.querySelector('svg[role="img"][aria-label*="Схема скелета"]')),
+          );
+          check(
+            'в технике есть риски, пропорции и нагрузка',
+            text().includes('Риски и что с ними делать') &&
+              text().includes('Под ваши пропорции') &&
+              text().includes('Плечо момента'),
+          );
+          const techniqueWeight = container.querySelector('#body-technique-weight');
+          const techniqueOneRm = container.querySelector('#body-technique-1rm');
+          check(
+            'в технике есть вес и 1ПМ',
+            Boolean(techniqueWeight) && Boolean(techniqueOneRm),
+          );
+          if (techniqueWeight) {
+            const setter = Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype,
+              'value',
+            )?.set;
+            await act(async () => {
+              setter?.call(techniqueWeight, '140');
+              techniqueWeight.dispatchEvent(new window.Event('input', { bubbles: true }));
+            });
+            await act(async () => {
+              await new Promise((resolve) => setTimeout(resolve, 140));
+            });
+            check(
+              'техника показывает очень высокую зону',
+              text().includes('очень высокая'),
+              text().slice(-260),
+            );
+          }
+          if (techniqueOneRm) {
+            const setter = Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype,
+              'value',
+            )?.set;
+            await act(async () => {
+              setter?.call(techniqueOneRm, '150');
+              techniqueOneRm.dispatchEvent(new window.Event('input', { bubbles: true }));
+            });
+            const saveOneRm = container.querySelector('#body-technique-1rm-save');
+            if (saveOneRm) {
+              await act(async () => {
+                saveOneRm.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+              });
+              await act(async () => {
+                await new Promise((resolve) => setTimeout(resolve, 160));
+              });
+              check('1ПМ в технике можно поправить вручную', text().includes('вручную') && text().includes('150'));
+            }
+          }
+          check(
+            'есть чат по схеме',
+            Boolean(container.querySelector('input[placeholder*="Свой вопрос"]')),
+          );
+          const lowBackQuestion = buttons().find((el) =>
+            (el.textContent || '').trim() === 'Почему может тянуть поясницу?',
+          );
+          if (lowBackQuestion) {
+            await act(async () => {
+              lowBackQuestion.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            });
+            await act(async () => {
+              await new Promise((resolve) => setTimeout(resolve, 80));
+            });
+            check(
+              'чат отвечает по схеме',
+              text().includes('Держите кор') || text().includes('поясницу'),
+              text().slice(-320),
+            );
+          }
         }
       }
     }

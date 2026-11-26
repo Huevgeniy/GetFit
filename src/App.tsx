@@ -313,6 +313,7 @@ export default function App() {
   const [activeWorkoutPlan, setActiveWorkoutPlan] = useState<WorkoutPlan | null>(null);
   const [isLiveWorkoutOpen, setIsLiveWorkoutOpen] = useState(false);
   const [isGlobalAiChatOpen, setIsGlobalAiChatOpen] = useState(false);
+  const [globalAiPrompt, setGlobalAiPrompt] = useState<string | null>(null);
   const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
 
   // Sync to local storage
@@ -1285,6 +1286,10 @@ export default function App() {
                   user={user}
                   pastWorkouts={pastWorkouts}
                   onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
+                  onAskAi={(prompt) => {
+                    setGlobalAiPrompt(prompt);
+                    setIsGlobalAiChatOpen(true);
+                  }}
                 />
               )}
 
@@ -1318,19 +1323,17 @@ export default function App() {
           )}
         </main>
 
-        {/* Global AI assistant button (when a live workout is not open) */}
+        {/* Global AI assistant button (compact, does not cover content) */}
         {!isLiveWorkoutOpen && (
           <button
             onClick={() => setIsGlobalAiChatOpen(true)}
-            className="fixed bottom-[72px] right-4 sm:right-[max(1rem,calc(50%-224px))] z-30 h-12 px-3.5 rounded-2xl bg-gradient-to-tr from-emerald-600 to-emerald-400 text-slate-950 flex items-center gap-2 shadow-xl shadow-emerald-500/25 hover:scale-105 active:scale-95 transition-all border border-emerald-300/40 group"
-            title="Голосовой и текстовый ввод тренировок, показателей и сна"
+            className="fixed bottom-[68px] right-2 z-30 flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-tr from-emerald-600 to-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/25 hover:scale-105 active:scale-95 transition-all border border-emerald-300/40"
+            title="ИИ-помощник"
+            aria-label="ИИ-помощник"
           >
-            <div className="relative">
-              <Bot className="w-5 h-5 group-hover:rotate-6 transition-transform text-slate-950" />
-              <Mic className="w-3 h-3 text-slate-950 absolute -bottom-1 -right-1" />
-            </div>
-            <span className="text-xs font-bold tracking-tight hidden sm:inline text-slate-950">ИИ-помощник</span>
-            <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse" />
+            <Bot className="h-4 w-4" />
+            <Mic className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 text-slate-950" />
+            <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-slate-950 animate-pulse" />
           </button>
         )}
 
@@ -1338,7 +1341,11 @@ export default function App() {
         {suspense(
         <GlobalAiChatModal
           isOpen={isGlobalAiChatOpen}
-          onClose={() => setIsGlobalAiChatOpen(false)}
+          seedPrompt={globalAiPrompt}
+          onClose={() => {
+            setIsGlobalAiChatOpen(false);
+            setGlobalAiPrompt(null);
+          }}
           user={user}
           onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
           onAddPenalty={handleApplyPenalty}

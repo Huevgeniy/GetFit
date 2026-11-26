@@ -41,6 +41,7 @@ interface ChatMessage {
 interface GlobalAiChatModalProps {
   isOpen: boolean;
   onClose: () => void;
+  seedPrompt?: string | null;
   user: UserProfile;
   onUpdateUser: (updated: Partial<UserProfile>) => void;
   onAddPenalty?: (reason: string, task: string, points: number) => void;
@@ -53,6 +54,7 @@ interface GlobalAiChatModalProps {
 export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
   isOpen,
   onClose,
+  seedPrompt,
   user,
   onUpdateUser,
   onAddPenalty,
@@ -78,6 +80,7 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
     },
   ]);
 
+  const seededRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -145,8 +148,6 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
       }
     }
   };
-
-  if (!isOpen) return null;
 
   const handleSend = async (textToSend?: string) => {
     const text = (textToSend || input).trim();
@@ -384,6 +385,19 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!isOpen) {
+      seededRef.current = null;
+      return;
+    }
+    if (!seedPrompt || seededRef.current === seedPrompt) return;
+    seededRef.current = seedPrompt;
+    setInput('');
+    void handleSend(seedPrompt);
+  }, [isOpen, seedPrompt]);
+
+  if (!isOpen) return null;
 
   const quickPrompts = [
     { label: '⚡ Жим 100 на 5, спал 5ч, талия 82см', prompt: 'Сегодня сделал жим 100 на 5 раз, чувствовалось тяжело, спал всего 5 часов. Еще замерил талию 82 см.' },
