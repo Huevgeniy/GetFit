@@ -26,6 +26,8 @@ bun.lock
 .tmp-dom/
 .tmp-telegram/
 .tmp-foodfilter/
+.tmp-body/
+.tmp-features/
 
 # Python
 __pycache__/
