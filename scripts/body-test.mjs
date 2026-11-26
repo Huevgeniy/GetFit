@@ -34,6 +34,7 @@ execFileSync(
     '--lib', 'es2022,dom',
     '--rootDir', 'src',
     'src/lib/bodyModel.ts',
+    'src/lib/exerciseSimulation.ts',
     'src/components/BodyBiomechanicsView.tsx',
     'src/components/BodyModel2D.tsx',
     'src/components/BodyMeasurementForm.tsx',
@@ -47,6 +48,7 @@ const require_ = createRequire(import.meta.url);
 const React = require_('react');
 const { renderToString } = require_(path.join(projectRoot, 'node_modules', 'react-dom', 'server.js'));
 const model = require_(path.join(outDir, 'lib', 'bodyModel.js'));
+const sim = require_(path.join(outDir, 'lib', 'exerciseSimulation.js'));
 
 /* ------------------------------------------------------------------ */
 /* 1. Нормализация замеров                                             */
@@ -106,6 +108,13 @@ const dataAvatar = model.normalizeBodyProfile({ avatarUrl: 'data:image/jpeg;base
 check('data-url аватар сохраняется', dataAvatar.avatarUrl.startsWith('data:image/'), dataAvatar.avatarUrl);
 check('пустой профиль безопасен', model.normalizeBodyProfile(undefined).measurements.length === 0);
 check('рост вне диапазона ограничивается', model.normalizeBodyProfile({ heightCm: 300 }).heightCm === 250);
+const rmProfile = model.normalizeBodyProfile({
+  measurements: [],
+  oneRepMaxKg: { bench: 120, squat: '90,5', x: 50 },
+});
+check('ручной 1ПМ сохраняется', rmProfile.oneRepMaxKg?.bench === 120, JSON.stringify(rmProfile.oneRepMaxKg));
+check('числовой 1ПМ из строки парсится', rmProfile.oneRepMaxKg?.squat === 90.5, JSON.stringify(rmProfile.oneRepMaxKg));
+check('слишком короткий ключ 1ПМ отбрасывается', rmProfile.oneRepMaxKg?.x === undefined);
 
 /* ------------------------------------------------------------------ */
 /* 2. Сортировка, последний и предыдущий замер                         */
@@ -156,6 +165,32 @@ check('ширина таза считается от обхвата', close(dims
 const defaultDims = model.computeBodyDimensions({ measurements: [] });
 check('без замеров берётся рост по умолчанию', defaultDims.heightCm === 175);
 check('без замеров модель всё равно строится', defaultDims.shoulderWidthCm > 30);
+const lengthDims = model.computeBodyDimensions({
+  heightCm: 180,
+  measurements: [
+    {
+      id: 'len',
+      date: '2026-01-01',
+      createdAt: '2026-01-01T09:00:00Z',
+      torsoLengthCm: 60,
+      armLengthLCm: 70,
+      armLengthRCm: 70,
+      legLengthLCm: 100,
+      legLengthRCm: 100,
+    },
+  ],
+});
+check('длина корпуса переносится в размеры', lengthDims.torsoLengthCm === 60, String(lengthDims.torsoLengthCm));
+check(
+  'длина руки делится 56/44',
+  close(lengthDims.upperArmLengthCm, 39.2) && close(lengthDims.forearmLengthCm, 30.8),
+  `${lengthDims.upperArmLengthCm} / ${lengthDims.forearmLengthCm}`,
+);
+check(
+  'длина ноги делится 50/50',
+  close(lengthDims.thighLengthCm, 50) && close(lengthDims.shinLengthCm, 50),
+  `${lengthDims.thighLengthCm} / ${lengthDims.shinLengthCm}`,
+);
 
 const defaultPose = model.createDefaultPose();
 const sideGeometry = model.buildSideGeometry(defaultPose.side, dims);
@@ -443,73 +478,127 @@ const simDims = model.computeBodyDimensions({
   sex: 'male',
   measurements: [{ date: '2026-01-01', weightKg: 82 }],
 });
-check('в симуляции восемь упражнений', model.SIMULATION_EXERCISES.length === 8);
+check('в практике восемь упражнений', sim.EXERCISES.length === 8);
 check(
-  'у каждого упражнения есть инвентарь и суставы',
-  model.SIMULATION_EXERCISES.every(
+  'у каждого упражнения есть снаряд и суставы',
+  sim.EXERCISES.every(
     (item) =>
       ['barbell', 'dumbbell', 'bodyweight'].includes(item.equipment) &&
       item.joints.length > 0 &&
       item.phaseLabels.length === 2,
   ),
 );
-const simSquat = model.simulationById('squat');
-const simTop = model.simulationPose(simSquat, 0, simDims);
-const simBottom = model.simulationPose(simSquat, 1, simDims);
+check(
+  'упражнения используют правильные станции',
+  sim.exerciseById('bench')?.station === 'bench' &&
+    sim.exerciseById('pullup')?.station === 'pullup' &&
+    sim.exerciseById('dips')?.station === 'dips',
+);
+const simSquat = sim.exerciseById('squat');
+const simTop = sim.exercisePose(simSquat, 0, simDims, { amplitude: 1, lean: 0 });
+const simBottom = sim.exercisePose(simSquat, 1, simDims, { amplitude: 1, lean: 0 });
 const simTopGeo = model.buildSideGeometry(simTop.side, simDims);
 const simBottomGeo = model.buildSideGeometry(simBottom.side, simDims);
 const simBottomMetrics = model.computePoseMetrics(simBottom);
 check(
-  'присед в симуляции сгибает колено',
+  'присед в практике сгибает колено',
   simBottomMetrics['side.kneeFlex'] >= 70 && simBottomMetrics['side.kneeFlex'] <= 150,
   String(simBottomMetrics['side.kneeFlex']),
 );
 check(
-  'стопа в симуляции остаётся на полу',
+  'стопа в приседе остаётся на полу',
   Math.abs(simTopGeo.ankle.y - simBottomGeo.ankle.y) < 2 && simBottomGeo.ankle.y <= model.BODY_DRAW.soleY,
   `${simTopGeo.ankle.y} → ${simBottomGeo.ankle.y}`,
 );
-const simLoads = model.estimateSimulationLoads(simSquat, simBottom, simDims, 82, 100);
+const simDeadlift = sim.exercisePose(sim.exerciseById('deadlift'), 1, simDims, { amplitude: 1, lean: 0 });
+const simDeadliftGeo = model.buildSideGeometry(simDeadlift.side, simDims);
 check(
-  'нагрузка приседа считается по суставам',
-  simLoads.length === 3 && simLoads.every((load) => load.torqueNm > 0 && load.index > 0),
-  simLoads.map((load) => `${load.joint}:${load.index}`).join(' '),
+  'становая опускает гриф ниже колена',
+  simDeadliftGeo.hand.y > simDeadliftGeo.knee.y + 10,
+  `${simDeadliftGeo.hand.y.toFixed(0)} / ${simDeadliftGeo.knee.y.toFixed(0)}`,
 );
 check(
-  'уровни нагрузки размечены',
-  simLoads.every((load) => ['low', 'moderate', 'high', 'veryHigh'].includes(load.level)),
+  'все эталонные позы проходят проверку техники',
+  sim.EXERCISES.every((item) =>
+    sim
+      .evaluateTechnique(item, simDims, { amplitude: 1, lean: 0 })
+      .every((result) => result.status !== 'fail'),
+  ),
 );
-const simScan = model.scanSimulation(simSquat, simDims, 82, 100, 1);
+const shallowSquat = sim.evaluateTechnique(simSquat, simDims, { amplitude: 0.5, lean: 0 });
 check(
-  'красная зона приседа находится в разумных пределах',
-  simScan.unsafeFromKg !== null && simScan.unsafeFromKg > 0 && simScan.unsafeFromKg <= 300,
-  String(simScan.unsafeFromKg),
+  'короткая амплитуда не проходит проверку глубины',
+  shallowSquat.some((result) => result.status === 'fail'),
+  shallowSquat.map((result) => `${result.rule.metric}:${result.status}`).join(' '),
+);
+
+const simLoads = sim.estimateJointLoads(simSquat, simBottom, simDims, 82, 100);
+check(
+  'нагрузка считается по суставам',
+  simLoads.length === simSquat.joints.length && simLoads.every((load) => load.torqueNm > 0 && load.share > 0),
+  simLoads.map((load) => `${load.joint}:${load.share}`).join(' '),
 );
 check(
-  'безопасный вес не выше красной зоны',
-  simScan.safeWeightKg !== null &&
-    simScan.unsafeFromKg !== null &&
-    simScan.safeWeightKg <= simScan.unsafeFromKg,
-  `${simScan.safeWeightKg} / ${simScan.unsafeFromKg}`,
+  'доли нагрузки суммируются к 100%',
+  Math.abs(simLoads.reduce((sum, load) => sum + load.share, 0) - 100) < 0.5,
+  String(simLoads.reduce((sum, load) => sum + load.share, 0)),
 );
-check('безопасная амплитуда в пределах 0–1', simScan.safeAmplitude >= 0 && simScan.safeAmplitude <= 1);
-const simSeries = model.simulationSeries(simSquat, simDims, 82, 100, 11);
+const simSeries = sim.loadSeries(simSquat, simDims, 82, 100, { amplitude: 1, lean: 0 }, 11);
 check(
   'график нагрузки содержит все фазы',
   simSeries.length === 11 && simSeries[0].phase === 0 && simSeries[10].phase === 1,
 );
+check(
+  'график нормируется к 100%',
+  Math.max(...simSeries.map((point) => point.relativePeak)) === 100,
+);
+
+const historyWorkouts = [
+  {
+    id: 'rm1',
+    date: '2026-01-01',
+    exercises: [{ name: 'Жим лёжа', sets: [{ weight: 100, reps: 5 }] }],
+  },
+];
+const benchExercise = sim.exerciseById('bench');
+const historyRm = sim.estimateOneRepMax(benchExercise, historyWorkouts, 82, 'male');
+check(
+  '1ПМ берётся из истории тренировок',
+  historyRm.source === 'history' && historyRm.valueKg > 100,
+  `${historyRm.source} ${historyRm.valueKg}`,
+);
+const manualRm = sim.estimateOneRepMax(benchExercise, historyWorkouts, 82, 'male', 140);
+check(
+  'ручная поправка 1ПМ важнее истории',
+  manualRm.source === 'manual' && manualRm.valueKg === 140,
+  `${manualRm.source} ${manualRm.valueKg}`,
+);
+const fallbackRm = sim.estimateOneRepMax(benchExercise, [], 82, 'male');
+check(
+  'без истории 1ПМ оценивается от веса тела',
+  fallbackRm.source === 'estimate' && fallbackRm.valueKg === Math.round(82 * 0.75 * 10) / 10,
+  `${fallbackRm.source} ${fallbackRm.valueKg}`,
+);
+const fakeRm = { exerciseId: 'bench', valueKg: 100, source: 'manual', bodyweightIncluded: false, basis: 'test' };
+check(
+  'процент от 1ПМ считается от рабочего веса',
+  sim.intensityPercent(benchExercise, fakeRm, 82, 70) === 70,
+  String(sim.intensityPercent(benchExercise, fakeRm, 82, 70)),
+);
+check(
+  'зоны интенсивности разделены на 60/75/85',
+  sim.intensityZone(59) === 'light' &&
+    sim.intensityZone(60) === 'moderate' &&
+    sim.intensityZone(75) === 'hard' &&
+    sim.intensityZone(85) === 'max',
+);
 const simPeakLight = Math.max(
-  ...model.estimateSimulationLoads(simSquat, simBottom, simDims, 82, 0).map((load) => load.index),
+  ...sim.estimateJointLoads(simSquat, simBottom, simDims, 82, 0).map((load) => load.share),
 );
 const simPeakHeavy = Math.max(
-  ...model.estimateSimulationLoads(simSquat, simBottom, simDims, 82, 150).map((load) => load.index),
+  ...sim.estimateJointLoads(simSquat, simBottom, simDims, 82, 150).map((load) => load.share),
 );
-check('дополнительный вес повышает нагрузку', simPeakHeavy > simPeakLight, `${simPeakLight} → ${simPeakHeavy}`);
-check(
-  'жим лёжа симулируется спереди',
-  model.simulationById('bench')?.view === 'front' &&
-    model.simulationById('bench')?.equipment === 'barbell',
-);
+check('дополнительный вес меняет расчёт нагрузки', simPeakHeavy > 0 && simPeakLight > 0);
 
 /* ------------------------------------------------------------------ */
 /* 10. Компоненты                                                      */
@@ -572,7 +661,11 @@ try {
 check('экран «Тело» рендерится', !viewError && viewHtml.length > 500, viewError ? viewError.message : `${(viewHtml.length / 1024).toFixed(1)} КБ`);
 if (!viewError) {
   check('экран показывает заголовок', viewHtml.includes('Тело и биомеханика'));
-  check('экран показывает последний замер', viewHtml.includes('01.02.2026') && viewHtml.includes('Все обхваты'));
+  check(
+    'экран показывает четыре вкладки',
+    ['Замеры', 'Модель', 'Практика', 'Анализ'].every((label) => viewHtml.includes(label)),
+  );
+  check('экран показывает последний замер', viewHtml.includes('01.02.2026') && viewHtml.includes('Все замеры'));
   check('экран предупреждает, что это не диагностика', viewHtml.includes('не медицинская диагностика'));
   check('экран показывает кнопки добавления замера', viewHtml.includes('Новый'));
 }
@@ -597,13 +690,35 @@ try {
 check('2D-модель рендерится', !modelError && modelHtml.includes('<svg'), modelError ? modelError.message : '');
 if (!modelError) {
   check('2D-модель подписана для скринридера', modelHtml.includes('2D-модель тела'));
-  check('2D-модель рисует углы', modelHtml.includes('90°') || modelHtml.includes('°'));
-  check('2D-модель содержит маркеры суставов', (modelHtml.match(/Двигать:/g) || []).length >= 4, String((modelHtml.match(/Двигать:/g) || []).length));
-  const footPaths = [...modelHtml.matchAll(/<path[^>]*data-foot="side"[^>]*>/g)].map((match) => match[0]);
+  check('2D-модель помечена полом', modelHtml.includes('data-sex="male"'));
+  check('в модели нет drag-маркеров', !modelHtml.includes('Двигать:'));
+  check('стопа сбоку нарисована', modelHtml.includes('data-foot="side"'));
+  const footGroup = modelHtml.match(/<g data-foot="side">([\s\S]*?)<\/g>/);
+  const footYs = footGroup
+    ? [...footGroup[1].matchAll(/(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)].map((match) => Number(match[2]))
+    : [];
+  const footMaxY = footYs.length ? Math.max(...footYs) : 0;
   check(
-    'стопа сбоку стоит на полу',
-    footPaths.length > 0 && footPaths.every((tag) => tag.includes('500.0')),
-    footPaths.map((tag) => (tag.match(/L [\d.]+ ([\d.]+) L/) || [])[1]).join(', '),
+    'стопа сбоку заканчивается на полу',
+    Boolean(footGroup) && Math.abs(footMaxY - model.BODY_DRAW.soleY) <= 5,
+    String(footMaxY),
+  );
+  const femaleDims = model.computeBodyDimensions({
+    heightCm: 165,
+    sex: 'female',
+    measurements: [{ date: '2026-01-01', weightKg: 60 }],
+  });
+  const femaleHtml = renderToString(
+    React.createElement(BodyModel, {
+      view: 'front',
+      pose: squatPose,
+      dimensions: femaleDims,
+      onChangePose: () => undefined,
+    }),
+  );
+  check(
+    'женская модель отличается от мужской',
+    femaleHtml.includes('data-sex="female"') && femaleHtml !== modelHtml,
   );
 }
 

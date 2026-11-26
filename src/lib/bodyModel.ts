@@ -16,6 +16,11 @@ export type BodyMetricKey =
   | 'chestCm'
   | 'waistCm'
   | 'hipsCm'
+  | 'torsoLengthCm'
+  | 'armLengthLCm'
+  | 'armLengthRCm'
+  | 'legLengthLCm'
+  | 'legLengthRCm'
   | 'bicepLCm'
   | 'bicepRCm'
   | 'forearmLCm'
@@ -42,9 +47,9 @@ export interface BodyMetricField {
 }
 
 export const BODY_METRIC_GROUPS: Array<{ id: BodyMetricGroup; label: string; hint: string }> = [
-  { id: 'core', label: 'Корпус', hint: 'Обхваты по самой широкой части' },
-  { id: 'arms', label: 'Руки', hint: 'Сантиметровая лента без натяжения' },
-  { id: 'legs', label: 'Ноги', hint: 'Мерьте одну и ту же точку' },
+  { id: 'core', label: 'Корпус', hint: 'Обхваты и длина корпуса от плеча до таза' },
+  { id: 'arms', label: 'Руки', hint: 'Обхваты и длина от плеча до запястья' },
+  { id: 'legs', label: 'Ноги', hint: 'Обхваты и длина от таза до лодыжки' },
 ];
 
 export const BODY_METRIC_FIELDS: BodyMetricField[] = [
@@ -53,6 +58,11 @@ export const BODY_METRIC_FIELDS: BodyMetricField[] = [
   { key: 'chestCm', label: 'Грудь', short: 'Грудь', group: 'core', min: 50, max: 200, placeholder: '102' },
   { key: 'waistCm', label: 'Талия', short: 'Талия', group: 'core', min: 40, max: 180, placeholder: '82' },
   { key: 'hipsCm', label: 'Бёдра (обхват)', short: 'Бёдра', group: 'core', min: 50, max: 200, placeholder: '98' },
+  { key: 'torsoLengthCm', label: 'Длина корпуса', short: 'Корпус', group: 'core', min: 35, max: 80, placeholder: '52' },
+  { key: 'armLengthLCm', label: 'Длина руки левой', short: 'Рука Л', group: 'arms', min: 40, max: 90, placeholder: '60' },
+  { key: 'armLengthRCm', label: 'Длина руки правой', short: 'Рука П', group: 'arms', min: 40, max: 90, placeholder: '60' },
+  { key: 'legLengthLCm', label: 'Длина ноги левой', short: 'Нога Л', group: 'legs', min: 60, max: 130, placeholder: '88' },
+  { key: 'legLengthRCm', label: 'Длина ноги правой', short: 'Нога П', group: 'legs', min: 60, max: 130, placeholder: '88' },
   { key: 'bicepLCm', label: 'Бицепс левый', short: 'Бицепс Л', group: 'arms', min: 15, max: 80, placeholder: '38' },
   { key: 'bicepRCm', label: 'Бицепс правый', short: 'Бицепс П', group: 'arms', min: 15, max: 80, placeholder: '38' },
   { key: 'forearmLCm', label: 'Предплечье левое', short: 'Предплечье Л', group: 'arms', min: 15, max: 60, placeholder: '30' },
@@ -114,6 +124,13 @@ export function normalizeBodyProfile(raw: unknown): BodyProfile {
   const rawMeasurements = Array.isArray(source.measurements) ? source.measurements : [];
   const seenIds = new Set<string>();
   const measurements: BodyMeasurementEntry[] = [];
+  const oneRepMaxKg: Record<string, number> = {};
+  if (source.oneRepMaxKg && typeof source.oneRepMaxKg === 'object') {
+    for (const [key, value] of Object.entries(source.oneRepMaxKg as Record<string, unknown>)) {
+      const clean = cleanNumber(value, 10, 500);
+      if (clean !== undefined && /^[a-z0-9_-]{2,40}$/i.test(key)) oneRepMaxKg[key] = clean;
+    }
+  }
 
   rawMeasurements.slice(0, 500).forEach((item, index) => {
     if (!item || typeof item !== 'object') return;
@@ -148,7 +165,7 @@ export function normalizeBodyProfile(raw: unknown): BodyProfile {
     }
   });
 
-  return { heightCm: height, sex, avatarUrl, measurements };
+  return { heightCm: height, sex, avatarUrl, measurements, oneRepMaxKg };
 }
 
 /** Свежие замеры первыми. */
@@ -268,8 +285,9 @@ export function computeBodyDimensions(profile: BodyProfile): BodyDimensions {
   const latest = latestMeasurement(profile);
   const heightCm = profile.heightCm || 175;
   const sex = profile.sex || 'male';
+  const female = sex === 'female';
   const scale = BODY_DRAW.drawHeight / heightCm;
-  const shoulderFactor = sex === 'female' ? 0.23 : 0.245;
+  const shoulderFactor = female ? 0.225 : 0.25;
 
   const shoulderWidthCm = clampNumber(
     latest?.shouldersCm ? latest.shouldersCm * 0.36 : heightCm * shoulderFactor,
@@ -277,19 +295,19 @@ export function computeBodyDimensions(profile: BodyProfile): BodyDimensions {
     66,
   );
   const chestWidthCm = clampNumber(
-    latest?.chestCm ? latest.chestCm * 0.33 : shoulderWidthCm * 0.82,
+    latest?.chestCm ? latest.chestCm * (female ? 0.31 : 0.33) : shoulderWidthCm * (female ? 0.78 : 0.82),
     24,
     60,
   );
   const waistWidthCm = clampNumber(
-    latest?.waistCm ? latest.waistCm * 0.31 : heightCm * 0.155,
+    latest?.waistCm ? latest.waistCm * (female ? 0.29 : 0.31) : heightCm * (female ? 0.145 : 0.155),
     20,
     55,
   );
   const hipWidthCm = clampNumber(
-    latest?.hipsCm ? latest.hipsCm * 0.34 : heightCm * 0.19,
+    latest?.hipsCm ? latest.hipsCm * (female ? 0.36 : 0.34) : heightCm * (female ? 0.205 : 0.19),
     24,
-    58,
+    60,
   );
   const bicep = averagePair(latest?.bicepLCm, latest?.bicepRCm);
   const forearm = averagePair(latest?.forearmLCm, latest?.forearmRCm);
@@ -297,32 +315,69 @@ export function computeBodyDimensions(profile: BodyProfile): BodyDimensions {
   const calf = averagePair(latest?.calfLCm, latest?.calfRCm);
   const wrist = averagePair(latest?.wristLCm, latest?.wristRCm);
   const ankle = averagePair(latest?.ankleLCm, latest?.ankleRCm);
+  const armLength = averagePair(latest?.armLengthLCm, latest?.armLengthRCm);
+  const legLength = averagePair(latest?.legLengthLCm, latest?.legLengthRCm);
+  const torsoLength = latest?.torsoLengthCm;
+
+  const torsoLengthCm = clampNumber(
+    torsoLength || heightCm * (female ? 0.285 : 0.29),
+    35,
+    80,
+  );
+  const upperArmLengthCm = clampNumber(
+    armLength ? armLength * 0.56 : heightCm * 0.17,
+    18,
+    44,
+  );
+  const forearmLengthCm = clampNumber(
+    armLength ? armLength * 0.44 : heightCm * 0.15,
+    14,
+    38,
+  );
+  const thighLengthCm = clampNumber(
+    legLength ? legLength * 0.5 : heightCm * 0.245,
+    30,
+    65,
+  );
+  const shinLengthCm = clampNumber(
+    legLength ? legLength * 0.5 : heightCm * 0.246,
+    30,
+    65,
+  );
 
   return {
     heightCm,
     sex,
     scale,
-    headHeightCm: heightCm * 0.13,
-    headWidthCm: heightCm * 0.13 * 0.72,
+    headHeightCm: heightCm * (female ? 0.128 : 0.13),
+    headWidthCm: heightCm * (female ? 0.128 : 0.13) * (female ? 0.7 : 0.72),
     neckLengthCm: heightCm * 0.03,
-    torsoLengthCm: heightCm * 0.29,
-    thighLengthCm: heightCm * 0.245,
-    shinLengthCm: heightCm * 0.246,
-    footLengthCm: heightCm * 0.12,
-    upperArmLengthCm: heightCm * 0.17,
-    forearmLengthCm: heightCm * 0.15,
+    torsoLengthCm,
+    thighLengthCm,
+    shinLengthCm,
+    footLengthCm: heightCm * (female ? 0.115 : 0.12),
+    upperArmLengthCm,
+    forearmLengthCm,
     shoulderWidthCm,
     chestWidthCm,
     waistWidthCm,
     hipWidthCm,
-    chestDepthCm: clampNumber(latest?.chestCm ? latest.chestCm * 0.22 : heightCm * 0.145, 16, 40),
-    waistDepthCm: clampNumber(latest?.waistCm ? latest.waistCm * 0.2 : heightCm * 0.12, 12, 32),
-    neckWidthCm: clampNumber(latest?.neckCm ? latest.neckCm * 0.34 : heightCm * 0.052, 9, 20),
-    upperArmWidthCm: clampNumber(bicep ? bicep * 0.36 : heightCm * 0.057, 8, 20),
-    forearmWidthCm: clampNumber(forearm ? forearm * 0.34 : heightCm * 0.043, 6, 15),
+    chestDepthCm: clampNumber(
+      latest?.chestCm ? latest.chestCm * (female ? 0.215 : 0.22) : heightCm * (female ? 0.155 : 0.15),
+      16,
+      42,
+    ),
+    waistDepthCm: clampNumber(
+      latest?.waistCm ? latest.waistCm * (female ? 0.185 : 0.2) : heightCm * (female ? 0.11 : 0.12),
+      12,
+      32,
+    ),
+    neckWidthCm: clampNumber(latest?.neckCm ? latest.neckCm * (female ? 0.3 : 0.34) : heightCm * 0.052, 9, 20),
+    upperArmWidthCm: clampNumber(bicep ? bicep * 0.36 : heightCm * 0.061, 8, 20),
+    forearmWidthCm: clampNumber(forearm ? forearm * 0.34 : heightCm * 0.044, 6, 15),
     wristWidthCm: clampNumber(wrist ? wrist * 0.42 : heightCm * 0.029, 4.5, 10),
-    thighWidthCm: clampNumber(thigh ? thigh * 0.36 : heightCm * 0.092, 12, 30),
-    calfWidthCm: clampNumber(calf ? calf * 0.35 : heightCm * 0.061, 8, 22),
+    thighWidthCm: clampNumber(thigh ? thigh * 0.36 : heightCm * 0.1, 12, 30),
+    calfWidthCm: clampNumber(calf ? calf * 0.35 : heightCm * 0.065, 8, 22),
     ankleWidthCm: clampNumber(ankle ? ankle * 0.48 : heightCm * 0.038, 5.5, 13),
   };
 }
@@ -346,6 +401,12 @@ export interface SidePose {
   thighAngle: number;
   shinAngle: number;
   footAngle: number;
+  /** Наклон головы: в жиме лёжа голова смотрит вверх, а не вслед за торсом. */
+  headAngle?: number;
+  /** Дальняя нога для выпада и других асимметричных поз. */
+  farThighAngle?: number;
+  farShinAngle?: number;
+  farFootAngle?: number;
 }
 
 export interface FrontPose {
@@ -365,7 +426,13 @@ export interface BodyPose {
   front: FrontPose;
 }
 
-export type SideSegmentKey = Exclude<keyof SidePose, 'hipX' | 'hipY'>;
+export type SideSegmentKey =
+  | 'torsoAngle'
+  | 'upperArmAngle'
+  | 'forearmAngle'
+  | 'thighAngle'
+  | 'shinAngle'
+  | 'footAngle';
 export type FrontSegmentKey =
   | 'torsoAngle'
   | 'leftUpperArmAngle'
@@ -387,6 +454,7 @@ export const DEFAULT_SIDE_POSE: SidePose = {
   thighAngle: 90,
   shinAngle: 90,
   footAngle: 0,
+  headAngle: -90,
 };
 
 export const DEFAULT_FRONT_POSE: FrontPose = {
@@ -404,6 +472,27 @@ export const DEFAULT_FRONT_POSE: FrontPose = {
 export function createDefaultPose(): BodyPose {
   return {
     side: { ...DEFAULT_SIDE_POSE },
+    front: { ...DEFAULT_FRONT_POSE },
+  };
+}
+
+/**
+ * Высота стопы от пола до лодыжки. Нужна и модели, и позам: если считать
+ * её от текущего положения лодыжки, поднятая стопа раздувается на весь кадр.
+ */
+export function footSoleOffset(dims: BodyDimensions): number {
+  return dims.footLengthCm * dims.scale * 0.3;
+}
+
+/**
+ * Стойка под конкретные пропорции: если ноги длиннее или короче,
+ * таз сдвигается так, чтобы стопа оставалась на полу, а не висела в воздухе.
+ */
+export function standingPose(dims: BodyDimensions): BodyPose {
+  const legLength = (dims.thighLengthCm + dims.shinLengthCm) * dims.scale;
+  const hipY = clampNumber(BODY_DRAW.soleY - legLength - footSoleOffset(dims), 120, 420);
+  return {
+    side: { ...DEFAULT_SIDE_POSE, hipY: Math.round(hipY * 10) / 10, headAngle: -90 },
     front: { ...DEFAULT_FRONT_POSE },
   };
 }
@@ -634,6 +723,7 @@ export function solveTwoBoneIK(
   ankle: Point,
   upperLength: number,
   lowerLength: number,
+  bend: 1 | -1 = 1,
 ): TwoBoneSolution {
   const rawDx = ankle.x - hip.x;
   const rawDy = ankle.y - hip.y;
@@ -647,6 +737,10 @@ export function solveTwoBoneIK(
   let perpX = uy;
   let perpY = -ux;
   if (perpX < 0 || (Math.abs(perpX) < 0.001 && perpY > 0)) {
+    perpX = -perpX;
+    perpY = -perpY;
+  }
+  if (bend < 0) {
     perpX = -perpX;
     perpY = -perpY;
   }
@@ -735,7 +829,12 @@ export interface SideGeometry {
   ankle: Point;
   toe: Point;
   heel: Point;
+  farKnee: Point;
+  farAnkle: Point;
+  farToe: Point;
+  farHeel: Point;
   headRadius: number;
+  footHeight: number;
   segments: DrawSegment[];
   handles: DrawHandle[];
 }
@@ -767,13 +866,24 @@ export function buildSideGeometry(pose: SidePose, dims: BodyDimensions): SideGeo
   const hip = { x: pose.hipX, y: pose.hipY };
   const shoulder = pointAlong(hip, pose.torsoAngle, dims.torsoLengthCm * s);
   const headRadius = (dims.headHeightCm * s) / 2;
-  const head = pointAlong(shoulder, pose.torsoAngle, dims.neckLengthCm * s + headRadius);
+  const headAngle = pose.headAngle ?? pose.torsoAngle;
+  const head = pointAlong(shoulder, headAngle, dims.neckLengthCm * s + headRadius);
   const elbow = pointAlong(shoulder, pose.upperArmAngle, dims.upperArmLengthCm * s);
   const hand = pointAlong(elbow, pose.forearmAngle, dims.forearmLengthCm * s);
   const knee = pointAlong(hip, pose.thighAngle, dims.thighLengthCm * s);
   const ankle = pointAlong(knee, pose.shinAngle, dims.shinLengthCm * s);
-  const toe = pointAlong(ankle, pose.footAngle, dims.footLengthCm * s);
-  const heel = pointAlong(ankle, pose.footAngle + 180, dims.footLengthCm * s * 0.34);
+  const footLength = dims.footLengthCm * s;
+  const footHeight = footLength * 0.3;
+  const toe = pointAlong(ankle, pose.footAngle, footLength * 0.72);
+  const heel = pointAlong(ankle, pose.footAngle + 180, footLength * 0.28);
+
+  const farThighAngle = pose.farThighAngle ?? pose.thighAngle;
+  const farShinAngle = pose.farShinAngle ?? pose.shinAngle;
+  const farFootAngle = pose.farFootAngle ?? pose.footAngle;
+  const farKnee = pointAlong(hip, farThighAngle, dims.thighLengthCm * s);
+  const farAnkle = pointAlong(farKnee, farShinAngle, dims.shinLengthCm * s);
+  const farToe = pointAlong(farAnkle, farFootAngle, footLength * 0.72);
+  const farHeel = pointAlong(farAnkle, farFootAngle + 180, footLength * 0.28);
 
   const segments: DrawSegment[] = [
     { id: 'torso', a: hip, b: shoulder, width: 30, kind: 'torso' },
@@ -783,6 +893,9 @@ export function buildSideGeometry(pose: SidePose, dims: BodyDimensions): SideGeo
     { id: 'thigh', a: hip, b: knee, width: 23, kind: 'limb' },
     { id: 'shin', a: knee, b: ankle, width: 19, kind: 'limb' },
     { id: 'foot', a: heel, b: toe, width: 11, kind: 'foot' },
+    { id: 'farThigh', a: hip, b: farKnee, width: 21, kind: 'limb' },
+    { id: 'farShin', a: farKnee, b: farAnkle, width: 17, kind: 'limb' },
+    { id: 'farFoot', a: farHeel, b: farToe, width: 10, kind: 'foot' },
   ];
 
   const handles: DrawHandle[] = [
@@ -802,7 +915,26 @@ export function buildSideGeometry(pose: SidePose, dims: BodyDimensions): SideGeo
     { id: 'side-toe', point: toe, pivot: ankle, segment: 'footAngle', label: 'Стопа' },
   ];
 
-  return { view: 'side', hip, shoulder, head, elbow, hand, knee, ankle, toe, heel, headRadius, segments, handles };
+  return {
+    view: 'side',
+    hip,
+    shoulder,
+    head,
+    elbow,
+    hand,
+    knee,
+    ankle,
+    toe,
+    heel,
+    farKnee,
+    farAnkle,
+    farToe,
+    farHeel,
+    headRadius,
+    footHeight,
+    segments,
+    handles,
+  };
 }
 
 export function buildFrontGeometry(pose: FrontPose, dims: BodyDimensions): FrontGeometry {
@@ -2075,6 +2207,11 @@ const METRIC_MUSCLE_MAP: Record<BodyMetricKey, MuscleGroup[]> = {
   chestCm: ['chest'],
   waistCm: ['core'],
   hipsCm: ['glutes', 'hamstrings'],
+  torsoLengthCm: ['core', 'back'],
+  armLengthLCm: ['biceps'],
+  armLengthRCm: ['biceps'],
+  legLengthLCm: ['quads', 'hamstrings'],
+  legLengthRCm: ['quads', 'hamstrings'],
   bicepLCm: ['biceps'],
   bicepRCm: ['biceps'],
   forearmLCm: ['biceps'],

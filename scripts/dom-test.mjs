@@ -423,7 +423,7 @@ if (moreForBody) {
             await act(async () => {
               await new Promise((resolve) => setTimeout(resolve, 1700));
             });
-            check('замер появился в истории', text().includes('Все обхваты') && text().includes('82'), text().slice(0, 160));
+            check('замер появился в истории', text().includes('Все замеры') && text().includes('82'), text().slice(0, 160));
             check(
               'замер уходит в облако вместе с профилем',
               requests.some(
@@ -448,53 +448,43 @@ if (moreForBody) {
         Boolean(container.querySelector('svg[role="img"][aria-label*="2D-модель"]')),
       );
       check(
-        'у модели есть маркеры суставов',
-        container.querySelectorAll('[aria-label^="Двигать:"]').length >= 4,
+        'у модели нет drag-маркеров',
+        container.querySelectorAll('[aria-label^="Двигать:"]').length === 0,
         String(container.querySelectorAll('[aria-label^="Двигать:"]').length),
       );
+      check('модель объясняет позу упражнения', text().includes('Сбоку модель повторяет выбранное упражнение'));
     }
 
-    const exerciseTab = container.querySelector('#body-tab-exercises');
-    if (exerciseTab) {
+    const practiceTab = container.querySelector('#body-tab-practice');
+    if (practiceTab) {
       await act(async () => {
-        exerciseTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-      });
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 120));
-      });
-      check(
-        'вкладка упражнений включает присед и проверку техники',
-        text().includes('Присед со штангой') && text().includes('Проверка техники'),
-      );
-      check(
-        'проверка показывает безопасные коридоры',
-        text().includes('безопасно') && text().includes('Глубина по колену'),
-      );
-    }
-
-    const simulationTab = container.querySelector('#body-tab-simulation');
-    if (simulationTab) {
-      await act(async () => {
-        simulationTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        practiceTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
       });
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 140));
       });
       check(
-        'вкладка симуляции показывает сцену и нагрузку',
-        text().includes('Симуляция движения') && text().includes('Суставы под нагрузкой'),
+        'вкладка практики показывает упражнение, технику и нагрузку',
+        text().includes('Присед со штангой') &&
+          text().includes('Ваш ориентировочный 1ПМ') &&
+          text().includes('Техника в нижней точке') &&
+          text().includes('Нагрузка по суставам'),
       );
-      const simSelect = container.querySelector('#body-simulation-exercise');
       check(
-        'в симуляции есть выбор из восьми упражнений',
-        simSelect instanceof window.HTMLSelectElement && simSelect.options.length === 8,
-        simSelect ? String(simSelect.options.length) : 'нет',
+        'в практике восемь упражнений',
+        container.querySelectorAll('[id^="body-practice-exercise-"]').length === 8,
+        String(container.querySelectorAll('[id^="body-practice-exercise-"]').length),
       );
-      const simWeight = container.querySelector('#body-simulation-weight');
-      const simAmplitude = container.querySelector('#body-simulation-amplitude');
+      const practiceWeight = container.querySelector('#body-practice-weight');
+      const practiceAmplitude = container.querySelector('#body-practice-amplitude');
+      const practiceLean = container.querySelector('#body-practice-lean');
+      const practiceOneRm = container.querySelector('#body-practice-1rm');
       check(
-        'в симуляции есть вес и амплитуда',
-        Boolean(simWeight) && Boolean(simAmplitude),
+        'в практике есть вес, амплитуда, наклон и 1ПМ',
+        Boolean(practiceWeight) &&
+          Boolean(practiceAmplitude) &&
+          Boolean(practiceLean) &&
+          Boolean(practiceOneRm),
       );
       check(
         'график нагрузки отрисован',
@@ -504,41 +494,61 @@ if (moreForBody) {
         'нагрузка разложена по суставам',
         text().includes('Тазобедренный') && text().includes('Коленный'),
       );
-      if (simWeight) {
+      if (practiceWeight) {
         const setter = Object.getOwnPropertyDescriptor(
           window.HTMLInputElement.prototype,
           'value',
         )?.set;
         await act(async () => {
-          setter?.call(simWeight, '140');
-          simWeight.dispatchEvent(new window.Event('input', { bubbles: true }));
+          setter?.call(practiceWeight, '140');
+          practiceWeight.dispatchEvent(new window.Event('input', { bubbles: true }));
         });
         await act(async () => {
           await new Promise((resolve) => setTimeout(resolve, 120));
         });
         check(
-          'симуляция предупреждает о красной зоне',
-          text().includes('красной зоне'),
-          text().slice(-220),
+          'практика показывает очень высокую зону',
+          text().includes('очень высокая'),
+          text().slice(-260),
         );
       }
-      const playSimulation = buttons().find((el) =>
+      if (practiceOneRm) {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value',
+        )?.set;
+        await act(async () => {
+          setter?.call(practiceOneRm, '150');
+          practiceOneRm.dispatchEvent(new window.Event('input', { bubbles: true }));
+        });
+        const saveOneRm = container.querySelector('#body-practice-1rm-save');
+        if (saveOneRm) {
+          await act(async () => {
+            saveOneRm.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+          });
+          await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 140));
+          });
+          check('1ПМ можно поправить вручную', text().includes('вручную') && text().includes('150'));
+        }
+      }
+      const playPractice = buttons().find((el) =>
         (el.textContent || '').trim().startsWith('Запустить'),
       );
-      if (playSimulation) {
+      if (playPractice) {
         await act(async () => {
-          playSimulation.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+          playPractice.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
         });
         await act(async () => {
           await new Promise((resolve) => setTimeout(resolve, 100));
         });
-        check('симуляция запускает анимацию', text().includes('Пауза'));
-        const pauseSimulation = buttons().find((el) =>
+        check('практика запускает анимацию', text().includes('Пауза'));
+        const pausePractice = buttons().find((el) =>
           (el.textContent || '').trim().startsWith('Пауза'),
         );
-        if (pauseSimulation) {
+        if (pausePractice) {
           await act(async () => {
-            pauseSimulation.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            pausePractice.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
           });
         }
       }

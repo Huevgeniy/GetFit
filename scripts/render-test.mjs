@@ -349,14 +349,14 @@ const bodyHtml = renderToString(
 );
 check(
   'экран «Тело» показывает замеры и модель',
-  ['Тело и биомеханика', 'Замеры', 'Модель', 'Упражнения', 'Анализ'].every((label) =>
+  ['Тело и биомеханика', 'Замеры', 'Модель', 'Практика', 'Анализ'].every((label) =>
     bodyHtml.includes(label),
   ),
   bodyHtml.slice(0, 200),
 );
 check(
   'экран «Тело» подставляет последний замер',
-  bodyHtml.includes('10.02.2026') && bodyHtml.includes('Все обхваты'),
+  bodyHtml.includes('10.02.2026') && bodyHtml.includes('Все замеры'),
   bodyHtml.slice(0, 240),
 );
 check(

@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   ChevronRight,
   Dumbbell,
-  Eye,
   Info,
   Minus,
   Pause,
@@ -26,59 +25,52 @@ import {
   TrendingDown,
   TrendingUp,
   Upload,
-  X,
 } from 'lucide-react';
 import type { BodyMeasurementEntry, BodyProfile, UserProfile, WorkoutRecord } from '../types';
 import {
   BODY_METRIC_FIELDS,
   BODY_TREND_OPTIONS,
-  BodyDimensions,
-  BodyMetricId,
-  BodyMetricKey,
   BodyView,
-  BodyPose,
-  EXERCISE_PRESETS,
-  ExerciseEvaluation,
   GrowthRow,
-  JointLoad,
   LIVE_METRICS,
   LOAD_LEVEL_COLOR,
   LoadJoint,
   LoadLevel,
-  MomentArm,
   MuscleVolume,
   ProportionInsight,
-  SIMULATION_EXERCISES,
-  SimulationExercise,
-  SimulationSeriesPoint,
   TrendKey,
-  buildFrontGeometry,
   buildGrowthRows,
   buildProportionInsights,
-  buildSideGeometry,
   computeBodyDimensions,
   computePoseMetrics,
-  createDefaultPose,
-  estimateMomentArms,
-  estimateSimulationLoads,
-  evaluateExercise,
-  exerciseById,
   formatDateLong,
   formatDateShort,
   latestMeasurement,
-  loadLevel,
-  loadLevelLabel,
   measurementSeries,
   measurementValue,
   muscleVolumesFromWorkouts,
   normalizeBodyProfile,
-  poseForExercise,
   previousMeasurement,
-  scanSimulation,
-  simulationById,
-  simulationPose,
-  simulationSeries,
 } from '../lib/bodyModel';
+import {
+  EXERCISES,
+  INTENSITY_META,
+  IntensityZone,
+  JointLoad,
+  LoadSeriesPoint,
+  TechniqueResult,
+  estimateJointLoads,
+  estimateOneRepMax,
+  evaluateTechnique,
+  exerciseById,
+  exercisePose,
+  intensityMeta,
+  intensityPercent,
+  intensityZone,
+  jointLabel,
+  loadSeries,
+  systemLoadKg,
+} from '../lib/exerciseSimulation';
 import { getTelegramPhotoUrl, hapticImpact, hapticNotify, hapticSelect } from '../lib/telegram';
 import { BodyModel2D } from './BodyModel2D';
 import { BodyMeasurementForm } from './BodyMeasurementForm';
@@ -90,7 +82,7 @@ interface BodyBiomechanicsViewProps {
   onUpdateUser: (updated: Partial<UserProfile>) => void;
 }
 
-type BodyTab = 'measurements' | 'model' | 'exercises' | 'simulation' | 'analysis';
+type BodyTab = 'measurements' | 'model' | 'practice' | 'analysis';
 
 const BODY_TABS: Array<{
   id: BodyTab;
@@ -100,28 +92,28 @@ const BODY_TABS: Array<{
 }> = [
   { id: 'measurements', label: 'Замеры', icon: Ruler, tourId: 'body-tab-measurements' },
   { id: 'model', label: 'Модель', icon: PersonStanding, tourId: 'body-tab-model' },
-  { id: 'exercises', label: 'Упражнения', icon: Dumbbell, tourId: 'body-tab-exercises' },
-  { id: 'simulation', label: 'Симуляция', icon: Play, tourId: 'body-tab-simulation' },
+  { id: 'practice', label: 'Практика', icon: Dumbbell, tourId: 'body-tab-practice' },
   { id: 'analysis', label: 'Анализ', icon: Activity, tourId: 'body-tab-analysis' },
 ];
 
-const LOAD_LEVEL_RANK: Record<LoadLevel, number> = {
-  low: 0,
-  moderate: 1,
-  high: 2,
-  veryHigh: 3,
+const INTENSITY_ORDER: IntensityZone[] = ['light', 'moderate', 'hard', 'max'];
+const INTENSITY_SPAN: Record<IntensityZone, number> = {
+  light: 60,
+  moderate: 15,
+  hard: 10,
+  max: 15,
 };
+
+const SHARE_LEGEND: Array<{ level: LoadLevel; label: string }> = [
+  { level: 'low', label: 'меньшая' },
+  { level: 'moderate', label: 'средняя' },
+  { level: 'high', label: 'высокая' },
+  { level: 'veryHigh', label: 'наибольшая' },
+];
 
 const formatNumber = (value: number, digits = 1): string => {
   const rounded = Math.round(value * 10 ** digits) / 10 ** digits;
   return String(rounded).replace('.', ',');
-};
-
-const loadIndexColor = (index: number): string => {
-  if (index >= 0.42) return LOAD_LEVEL_COLOR.veryHigh;
-  if (index >= 0.3) return LOAD_LEVEL_COLOR.high;
-  if (index >= 0.18) return LOAD_LEVEL_COLOR.moderate;
-  return LOAD_LEVEL_COLOR.low;
 };
 
 const formatVolume = (kg: number): string => {
@@ -147,14 +139,12 @@ const insightTone = (status: ProportionInsight['status']): string => {
   return 'border-amber-500/35 bg-amber-500/8 text-amber-300';
 };
 
-const metricStatusMap = (evaluation: ExerciseEvaluation): Partial<Record<BodyMetricId, 'pass' | 'near' | 'fail'>> => {
-  const map: Partial<Record<BodyMetricId, 'pass' | 'near' | 'fail'>> = {};
-  for (const result of evaluation.results) {
-    const previous = map[result.metric];
-    if (previous === 'fail') continue;
-    map[result.metric] = result.status;
-  }
-  return map;
+/** Цвет на модели — доля сустава в общем моменте упражнения. */
+const shareLevel = (share: number): LoadLevel => {
+  if (share < 20) return 'low';
+  if (share < 30) return 'moderate';
+  if (share < 40) return 'high';
+  return 'veryHigh';
 };
 
 const DeltaBadge: React.FC<{ delta?: number; unit: string }> = ({ delta, unit }) => {
@@ -250,26 +240,20 @@ const TrendChart: React.FC<{ points: Array<{ date: string; value: number }>; uni
   );
 };
 
-const SimulationLoadChart: React.FC<{
-  points: SimulationSeriesPoint[];
+const LoadPhaseChart: React.FC<{
+  points: LoadSeriesPoint[];
   phase: number;
 }> = ({ points, phase }) => {
-  const gradientId = `sim-load-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const gradientId = `practice-load-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const width = 300;
-  const height = 92;
-  const maxValue = Math.max(0.55, ...points.map((point) => point.maxIndex));
+  const height = 96;
   const x = (value: number): number => 6 + value * (width - 12);
-  const y = (value: number): number => 8 + (1 - Math.min(1, value / maxValue)) * (height - 22);
+  const y = (value: number): number => 8 + (1 - Math.min(100, Math.max(0, value)) / 100) * (height - 24);
   const line = points
-    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(point.phase).toFixed(1)} ${y(point.maxIndex).toFixed(1)}`)
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(point.phase).toFixed(1)} ${y(point.relativePeak).toFixed(1)}`)
     .join(' ');
-  const area = `${line} L ${x(1)} ${height - 14} L ${x(0)} ${height - 14} Z`;
-  const zones = [
-    { from: 0, to: 0.18, color: LOAD_LEVEL_COLOR.low },
-    { from: 0.18, to: 0.3, color: LOAD_LEVEL_COLOR.moderate },
-    { from: 0.3, to: 0.42, color: LOAD_LEVEL_COLOR.high },
-    { from: 0.42, to: maxValue, color: LOAD_LEVEL_COLOR.veryHigh },
-  ];
+  const area = `${line} L ${x(1)} ${height - 16} L ${x(0)} ${height - 16} Z`;
+
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
@@ -283,51 +267,45 @@ const SimulationLoadChart: React.FC<{
           <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
         </linearGradient>
       </defs>
-      {zones.map((zone) => {
-        const top = y(zone.to);
-        const bottom = y(zone.from);
-        return (
-          <rect
-            key={`zone-${zone.from}`}
-            x={6}
-            y={top}
-            width={width - 12}
-            height={Math.max(0, bottom - top)}
-            fill={zone.color}
-            opacity={0.08}
-          />
-        );
-      })}
-      <line x1={6} y1={y(0.42)} x2={width - 6} y2={y(0.42)} stroke={LOAD_LEVEL_COLOR.veryHigh} strokeDasharray="3 4" opacity={0.55} />
-      <line x1={6} y1={y(0.3)} x2={width - 6} y2={y(0.3)} stroke={LOAD_LEVEL_COLOR.high} strokeDasharray="3 4" opacity={0.45} />
+      {[0, 25, 50, 75, 100].map((value) => (
+        <line
+          key={value}
+          x1={6}
+          y1={y(value)}
+          x2={width - 6}
+          y2={y(value)}
+          stroke="#1b2c38"
+          strokeDasharray="2 6"
+        />
+      ))}
       <path d={area} fill={`url(#${gradientId})`} />
       <path d={line} fill="none" stroke="#38bdf8" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
       {points.map((point, index) => (
         <circle
-          key={`sim-point-${index}`}
+          key={`practice-point-${index}`}
           cx={x(point.phase)}
-          cy={y(point.maxIndex)}
-          r={2.3}
+          cy={y(point.relativePeak)}
+          r={2.2}
           fill="#081016"
-          stroke={loadIndexColor(point.maxIndex)}
-          strokeWidth={1.6}
+          stroke="#38bdf8"
+          strokeWidth={1.4}
         />
       ))}
       <line
         x1={x(phase)}
         y1={6}
         x2={x(phase)}
-        y2={height - 14}
+        y2={height - 16}
         stroke="#e2e8f0"
         strokeWidth={1}
         strokeDasharray="2 3"
-        opacity={0.65}
+        opacity={0.7}
       />
-      <text x={6} y={height - 3} fill="#446070" fontSize={7}>
-        верх
+      <text x={6} y={height - 4} fill="#446070" fontSize={7}>
+        старт
       </text>
-      <text x={width - 6} y={height - 3} fill="#446070" fontSize={7} textAnchor="end">
-        низ
+      <text x={width - 6} y={height - 4} fill="#446070" fontSize={7} textAnchor="end">
+        финиш
       </text>
     </svg>
   );
@@ -349,17 +327,18 @@ const MetricReadout: React.FC<{
   </div>
 );
 
-const RuleRow: React.FC<{ result: ExerciseEvaluation['results'][number] }> = ({ result }) => {
+const TechniqueRow: React.FC<{ result: TechniqueResult }> = ({ result }) => {
+  const { rule, value, status } = result;
   const tone =
-    result.status === 'fail'
+    status === 'fail'
       ? 'border-rose-500/30 bg-rose-500/5'
-      : result.status === 'near'
+      : status === 'near'
         ? 'border-amber-500/25 bg-amber-500/5'
         : 'border-[#223442] bg-[#0b131a]';
-  const Icon = result.status === 'fail' ? AlertCircle : result.status === 'near' ? AlertTriangle : CheckCircle2;
-  const iconTone = result.status === 'fail' ? 'text-rose-400' : result.status === 'near' ? 'text-amber-400' : 'text-emerald-400';
-  const span = Math.max(1, result.max - result.min);
-  const marker = Math.max(0, Math.min(100, ((result.value - result.min) / span) * 100));
+  const Icon = status === 'fail' ? AlertCircle : status === 'near' ? AlertTriangle : CheckCircle2;
+  const iconTone = status === 'fail' ? 'text-rose-400' : status === 'near' ? 'text-amber-400' : 'text-emerald-400';
+  const span = Math.max(1, rule.max - rule.min);
+  const marker = Math.max(0, Math.min(100, ((value - rule.min) / span) * 100));
 
   return (
     <div className={`rounded-xl border p-2.5 ${tone}`}>
@@ -367,49 +346,53 @@ const RuleRow: React.FC<{ result: ExerciseEvaluation['results'][number] }> = ({ 
         <div className="flex min-w-0 items-start gap-1.5">
           <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${iconTone}`} />
           <div className="min-w-0">
-            <div className="text-[11px] font-bold text-slate-200">{result.label}</div>
+            <div className="text-[11px] font-bold text-slate-200">{rule.label}</div>
             <div className="text-[9px] text-slate-500">
-              безопасно {result.min}–{result.max}° · ориентир {result.ideal}
+              коридор {rule.min}–{rule.max}° · ориентир {rule.ideal}
             </div>
           </div>
         </div>
-        <span className={`shrink-0 text-xs font-black ${iconTone}`}>
-          {result.value}°
-        </span>
+        <span className={`shrink-0 text-xs font-black ${iconTone}`}>{value}°</span>
       </div>
       <div className="relative mt-2 h-1.5 overflow-hidden rounded-full bg-[#162530]">
         <div className="absolute inset-y-0 left-0 right-0 rounded-full bg-emerald-500/20" />
         <div
           className={`absolute -top-0.5 h-2.5 w-2.5 -translate-x-1/2 rounded-full border border-[#081016] ${
-            result.status === 'fail' ? 'bg-rose-400' : result.status === 'near' ? 'bg-amber-400' : 'bg-emerald-400'
+            status === 'fail' ? 'bg-rose-400' : status === 'near' ? 'bg-amber-400' : 'bg-emerald-400'
           }`}
           style={{ left: `${marker}%` }}
         />
       </div>
-      {result.status === 'fail' && (
-        <div className="mt-1.5 text-[9px] leading-snug text-rose-200/80">{result.advice}</div>
+      {status !== 'pass' && (
+        <div className={`mt-1.5 text-[9px] leading-snug ${status === 'fail' ? 'text-rose-200/80' : 'text-amber-200/80'}`}>
+          {rule.advice}
+        </div>
       )}
     </div>
   );
 };
 
-const MomentArmRow: React.FC<{ arm: MomentArm }> = ({ arm }) => {
-  const tone =
-    arm.level === 'high'
-      ? 'bg-amber-400'
-      : arm.level === 'moderate'
-        ? 'bg-emerald-400'
-        : 'bg-cyan-400';
+const JointLoadRow: React.FC<{ load: JointLoad; maxShare: number }> = ({ load, maxShare }) => {
+  const level = shareLevel(load.share);
+  const color = LOAD_LEVEL_COLOR[level];
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2 text-[10px]">
-        <span className="font-semibold text-slate-300">{arm.label}</span>
-        <span className="font-mono text-slate-400">{formatNumber(arm.valueCm)} см</span>
+    <div className="rounded-xl border border-[#223442] bg-[#0b131a] px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-bold text-slate-200">{load.label}</span>
+        <span className="text-[9px] font-black" style={{ color }}>
+          {formatNumber(load.share)}% доли · {load.torqueNm} Н·м
+        </span>
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-[#162530]">
-        <div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.min(100, (arm.ratio / 0.28) * 100)}%` }} />
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#16232d]">
+        <div
+          className="h-full rounded-full transition-all"
+          style={{
+            width: `${maxShare > 0 ? Math.max(3, (load.share / maxShare) * 100) : 0}%`,
+            background: color,
+          }}
+        />
       </div>
-      <div className="text-[9px] text-slate-600">{arm.note}</div>
+      <div className="mt-0.5 text-[8px] text-slate-500">{load.muscles}</div>
     </div>
   );
 };
@@ -564,110 +547,128 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
   onUpdateUser,
 }) => {
   const profile = useMemo(() => normalizeBodyProfile(user.bodyProfile), [user.bodyProfile]);
+  const initialLatest = latestMeasurement(profile);
+  const initialBodyWeight = initialLatest?.weightKg || user.currentWeight || 0;
+  const initialBodyWeightForLoad = initialBodyWeight > 0 ? initialBodyWeight : 75;
+  const initialSex = profile.sex || user.gender || 'male';
+  const initialExercise = exerciseById('squat') || EXERCISES[0];
   const [tab, setTab] = useState<BodyTab>('measurements');
   const [view, setView] = useState<BodyView>('side');
-  const [pose, setPose] = useState<BodyPose>(() => createDefaultPose());
-  const [selectedExerciseId, setSelectedExerciseId] = useState('squat');
-  const [appliedExerciseId, setAppliedExerciseId] = useState<string | null>(null);
-  const [showAngles, setShowAngles] = useState(true);
+  const [exerciseId, setExerciseId] = useState<string>('squat');
+  const [phase, setPhase] = useState(1);
+  const [playing, setPlaying] = useState(false);
+  const [amplitude, setAmplitude] = useState(1);
+  const [lean, setLean] = useState(0);
+  const [addedWeight, setAddedWeight] = useState(() => {
+    const initialRm = estimateOneRepMax(
+      initialExercise,
+      pastWorkouts,
+      initialBodyWeightForLoad,
+      initialSex,
+    );
+    return Math.max(0, Math.round((initialRm.valueKg * 0.65) / 2.5) * 2.5);
+  });
+  const [oneRmDraft, setOneRmDraft] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<BodyMeasurementEntry | null>(null);
   const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
   const [avatarHint, setAvatarHint] = useState<string | null>(null);
   const [analysisDays, setAnalysisDays] = useState(90);
   const [trendKey, setTrendKey] = useState<TrendKey>('waistCm');
-  const [simExerciseId, setSimExerciseId] = useState('squat');
-  const [simWeight, setSimWeight] = useState(60);
-  const [simAmplitude, setSimAmplitude] = useState(1);
-  const [simPhase, setSimPhase] = useState(0);
-  const [simPlaying, setSimPlaying] = useState(false);
-  const simPhaseRef = useRef(0);
-  simPhaseRef.current = simPhase;
+  const phaseRef = useRef(0);
+  phaseRef.current = phase;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const latest = latestMeasurement(profile);
   const previous = previousMeasurement(profile);
   const dimensions = useMemo(() => computeBodyDimensions(profile), [profile]);
-  const exercise = exerciseById(selectedExerciseId) || EXERCISE_PRESETS[0];
-  const evaluation = useMemo(() => evaluateExercise(exercise, pose), [exercise, pose]);
-  const metrics = useMemo(() => computePoseMetrics(pose), [pose]);
-  const sideGeometry = useMemo(() => buildSideGeometry(pose.side, dimensions), [pose.side, dimensions]);
-  const frontGeometry = useMemo(() => buildFrontGeometry(pose.front, dimensions), [pose.front, dimensions]);
-  const momentArms = useMemo(
-    () => estimateMomentArms(exercise.id, sideGeometry, frontGeometry, dimensions),
-    [exercise.id, sideGeometry, frontGeometry, dimensions],
-  );
-  const visibleMetrics = LIVE_METRICS.filter((metric) => metric.view === view);
-  const statusByMetric = useMemo(() => metricStatusMap(evaluation), [evaluation]);
   const bodyWeight = latest?.weightKg || user.currentWeight || 0;
-  const simExercise = simulationById(simExerciseId) || SIMULATION_EXERCISES[0];
-  const simBodyWeight = bodyWeight > 0 ? bodyWeight : 75;
-  const simPose = useMemo(
-    () => simulationPose(simExercise, simPhase * simAmplitude, dimensions),
-    [simExercise, simPhase, simAmplitude, dimensions],
+  const bodyWeightForLoad = bodyWeight > 0 ? bodyWeight : 75;
+  const exercise = exerciseById(exerciseId) || EXERCISES[0];
+  const sex = profile.sex || user.gender || 'male';
+  const manualOneRm = profile.oneRepMaxKg?.[exercise.id];
+  const oneRepMax = useMemo(
+    () =>
+      estimateOneRepMax(
+        exercise,
+        pastWorkouts,
+        bodyWeightForLoad,
+        sex,
+        manualOneRm,
+      ),
+    [exercise, pastWorkouts, bodyWeightForLoad, sex, manualOneRm],
   );
-  const simLoads = useMemo(
-    () => estimateSimulationLoads(simExercise, simPose, dimensions, simBodyWeight, simWeight),
-    [simExercise, simPose, dimensions, simBodyWeight, simWeight],
+  const workingLoadKg = systemLoadKg(exercise, bodyWeightForLoad, addedWeight);
+  const intensity = intensityPercent(exercise, oneRepMax, bodyWeightForLoad, addedWeight);
+  const zone = intensityZone(intensity);
+  const zoneMeta = intensityMeta(intensity);
+  const poseOptions = useMemo(() => ({ amplitude, lean }), [amplitude, lean]);
+  const pose = useMemo(
+    () => exercisePose(exercise, phase, dimensions, poseOptions),
+    [exercise, phase, dimensions, poseOptions],
   );
-  const simScan = useMemo(
-    () => scanSimulation(simExercise, dimensions, simBodyWeight, simWeight, 1),
-    [simExercise, dimensions, simBodyWeight, simWeight],
+  const metrics = useMemo(() => computePoseMetrics(pose), [pose]);
+  const technique = useMemo(
+    () => evaluateTechnique(exercise, dimensions, poseOptions),
+    [exercise, dimensions, poseOptions],
   );
-  const simSeries = useMemo(
-    () => simulationSeries(simExercise, dimensions, simBodyWeight, simWeight, 29),
-    [simExercise, dimensions, simBodyWeight, simWeight],
+  const keyPose = useMemo(
+    () => exercisePose(exercise, 1, dimensions, poseOptions),
+    [exercise, dimensions, poseOptions],
   );
-  const simHeat = useMemo(() => {
+  const jointLoads = useMemo(
+    () => estimateJointLoads(exercise, keyPose, dimensions, bodyWeightForLoad, addedWeight),
+    [exercise, keyPose, dimensions, bodyWeightForLoad, addedWeight],
+  );
+  const series = useMemo(
+    () => loadSeries(exercise, dimensions, bodyWeightForLoad, addedWeight, poseOptions, 25),
+    [exercise, dimensions, bodyWeightForLoad, addedWeight, poseOptions],
+  );
+  const heat = useMemo(() => {
     const result: Partial<Record<LoadJoint, LoadLevel>> = {};
-    for (const load of simLoads) {
-      const previousLevel = result[load.joint];
-      if (!previousLevel || LOAD_LEVEL_RANK[load.level] > LOAD_LEVEL_RANK[previousLevel]) {
-        result[load.joint] = load.level;
-      }
+    for (const load of jointLoads) {
+      result[load.joint] = shareLevel(load.share);
     }
     return result;
-  }, [simLoads]);
-  const simPeak = simLoads.reduce((best, load) => (load.index > best.index ? load : best), simLoads[0]);
-  const simSelectedPeakIndex = useMemo(() => {
-    let peak = 0;
-    for (const point of simSeries) {
-      if (point.phase <= simAmplitude + 0.0001) peak = Math.max(peak, point.maxIndex);
-    }
-    return Math.max(peak, ...simLoads.map((load) => load.index));
-  }, [simSeries, simAmplitude, simLoads]);
-  const simSelectedLevel = loadLevel(simSelectedPeakIndex);
-  const simEquipment = {
-    kind: simExercise.equipment,
-    weightKg: simWeight,
-    anchor: simExercise.id === 'squat' ? ('shoulder' as const) : ('hand' as const),
-  };
+  }, [jointLoads]);
+  const visibleMetrics = LIVE_METRICS.filter((metric) => metric.view === view);
+  const techniquePassed = technique.filter((result) => result.status === 'pass').length;
+  const techniqueNear = technique.filter((result) => result.status === 'near').length;
+  const techniqueFailed = technique.filter((result) => result.status === 'fail').length;
+  const maxShare = jointLoads.reduce((max, load) => Math.max(max, load.share), 0);
+  const peakLoad = jointLoads.reduce(
+    (best, load) => (load.share > best.share ? load : best),
+    jointLoads[0],
+  );
+  const equipment =
+    exercise.equipment === 'bodyweight'
+      ? null
+      : {
+          kind: exercise.equipment,
+          weightKg: addedWeight,
+          anchor: exercise.barAnchor,
+        };
+  const leanEnabled = exercise.id !== 'pullup' && exercise.id !== 'dips';
+  const leanLabel = exercise.id === 'bench' ? 'Траектория грифа' : 'Наклон корпуса';
+  const leanLow = exercise.id === 'bench' ? 'к ногам' : 'вертикальнее';
+  const leanHigh = exercise.id === 'bench' ? 'к голове' : 'больше наклон';
+  const sourceLabel =
+    oneRepMax.source === 'history'
+      ? 'из истории'
+      : oneRepMax.source === 'manual'
+        ? 'вручную'
+        : 'ориентир';
+  const sourceTone =
+    oneRepMax.source === 'history'
+      ? 'border-cyan-500/35 bg-cyan-500/10 text-cyan-300'
+      : oneRepMax.source === 'manual'
+        ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-300'
+        : 'border-amber-500/35 bg-amber-500/10 text-amber-300';
+  const phaseLabel = phase < 0.02 ? exercise.phaseLabels[0] : phase > 0.98 ? exercise.phaseLabels[1] : 'середина движения';
+  const weightMax =
+    exercise.equipment === 'barbell' ? 250 : exercise.equipment === 'dumbbell' ? 80 : 80;
+  const weightStep = exercise.equipment === 'barbell' ? 2.5 : exercise.equipment === 'dumbbell' ? 1 : 1;
 
-  useEffect(() => {
-    if (!simPlaying) return;
-    let raf = 0;
-    let last = performance.now();
-    let direction = 1;
-    let phase = simPhaseRef.current >= 0.995 ? 0 : simPhaseRef.current;
-    const tick = (now: number) => {
-      const delta = Math.min(80, Math.max(0, now - last));
-      last = now;
-      phase += direction * (delta / 1500);
-      if (phase >= 1) {
-        phase = 1;
-        direction = -1;
-      }
-      if (phase <= 0) {
-        phase = 0;
-        direction = 1;
-      }
-      simPhaseRef.current = phase;
-      setSimPhase(phase);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [simPlaying]);
   const volumes = useMemo(
     () => muscleVolumesFromWorkouts(pastWorkouts, analysisDays, bodyWeight),
     [pastWorkouts, analysisDays, bodyWeight],
@@ -682,6 +683,36 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
   const trendOption = BODY_TREND_OPTIONS.find((option) => option.key === trendKey) || BODY_TREND_OPTIONS[0];
   const trendPoints = measurementSeries(profile, trendKey);
   const recommendations = buildRecommendations(profile, insights, volumes, Boolean(latest));
+
+  useEffect(() => {
+    setOneRmDraft(manualOneRm !== undefined ? String(manualOneRm) : '');
+  }, [exercise.id, manualOneRm]);
+
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    let last = performance.now();
+    let direction = 1;
+    let current = phaseRef.current >= 0.995 ? 0 : phaseRef.current;
+    const tick = (now: number) => {
+      const delta = Math.min(80, Math.max(0, now - last));
+      last = now;
+      current += direction * (delta / 1600);
+      if (current >= 1) {
+        current = 1;
+        direction = -1;
+      }
+      if (current <= 0) {
+        current = 0;
+        direction = 1;
+      }
+      phaseRef.current = current;
+      setPhase(current);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
 
   const updateBody = (next: BodyProfile, extra: Partial<UserProfile> = {}) => {
     onUpdateUser({ bodyProfile: next, ...extra });
@@ -731,9 +762,9 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
     );
   };
 
-  const handleSexChange = (sex: 'male' | 'female') => {
+  const handleSexChange = (sexValue: 'male' | 'female') => {
     hapticSelect();
-    updateBody({ ...profile, sex });
+    updateBody({ ...profile, sex: sexValue });
   };
 
   const handleAvatarFile = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -768,44 +799,70 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
     setAvatarHint('Фото взято из профиля Telegram.');
   };
 
-  const applyExercise = (id: string) => {
-    const preset = exerciseById(id);
-    if (!preset) return;
+  const chooseExercise = (id: string) => {
+    const next = exerciseById(id);
+    if (!next) return;
     hapticSelect();
-    setSelectedExerciseId(id);
-    setAppliedExerciseId(id);
-    setPose(poseForExercise(preset));
-    setView(preset.view);
+    setExerciseId(next.id);
+    setPhase(1);
+    setPlaying(false);
+    setAmplitude(1);
+    setLean(0);
+    const nextOneRm = estimateOneRepMax(
+      next,
+      pastWorkouts,
+      bodyWeightForLoad,
+      sex,
+      profile.oneRepMaxKg?.[next.id],
+    );
+    const step = next.equipment === 'barbell' ? 2.5 : 1;
+    const target = next.bodyweightFactor > 0 ? 0 : nextOneRm.valueKg * 0.65;
+    setAddedWeight(Math.max(0, Math.round(target / step) * step));
+    setView('side');
   };
 
   const handleTabChange = (next: BodyTab) => {
     hapticSelect();
     setTab(next);
-    if (next !== 'simulation') setSimPlaying(false);
-    if (next === 'exercises' && !appliedExerciseId) applyExercise(selectedExerciseId);
+    if (next !== 'practice') setPlaying(false);
+    if (next === 'practice' || next === 'model') setView('side');
   };
 
-  const chooseSimulation = (id: string) => {
-    const next = simulationById(id);
-    if (!next) return;
+  const saveOneRm = () => {
+    const raw = oneRmDraft.trim().replace(',', '.');
+    const map = { ...(profile.oneRepMaxKg || {}) };
+    if (!raw) {
+      delete map[exercise.id];
+    } else {
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 500) {
+        setOneRmDraft(manualOneRm !== undefined ? String(manualOneRm) : '');
+        return;
+      }
+      map[exercise.id] = Math.round(parsed * 10) / 10;
+    }
+    hapticNotify('success');
+    updateBody({ ...profile, oneRepMaxKg: map });
+  };
+
+  const resetOneRm = () => {
+    hapticImpact('light');
+    const map = { ...(profile.oneRepMaxKg || {}) };
+    delete map[exercise.id];
+    updateBody({ ...profile, oneRepMaxKg: map });
+    setOneRmDraft('');
+  };
+
+  const applyIntensityTarget = (percent: number) => {
     hapticSelect();
-    setSimExerciseId(id);
-    setSimPhase(0);
-    setSimPlaying(false);
-    setSimWeight(next.equipment === 'barbell' ? 60 : next.equipment === 'dumbbell' ? 20 : 0);
-  };
-
-  const resetFreePose = () => {
-    hapticImpact('light');
-    setPose(createDefaultPose());
-    setAppliedExerciseId(null);
-  };
-
-  const applyReferencePose = () => {
-    hapticImpact('light');
-    setPose(poseForExercise(exercise));
-    setView(exercise.view);
-    setAppliedExerciseId(exercise.id);
+    const targetLoad = (oneRepMax.valueKg * percent) / 100;
+    const next =
+      exercise.bodyweightFactor > 0
+        ? targetLoad - bodyWeightForLoad
+        : targetLoad;
+    const step = exercise.equipment === 'barbell' ? 2.5 : 1;
+    setAddedWeight(Math.max(0, Math.round(next / step) * step));
+    setPlaying(false);
   };
 
   const latestMetricRows = BODY_METRIC_FIELDS.filter(
@@ -853,7 +910,7 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
             <div className="min-w-0">
               <div className="text-sm font-black tracking-tight text-slate-100">Тело и биомеханика</div>
               <p className="mt-0.5 text-[10px] leading-snug text-slate-400">
-                Замеры, пропорции и безопасные углы. Модель — схема, а не медицинская диагностика.
+                Замеры, модель и практика упражнений. Ориентиры по нагрузке — не медицинская диагностика.
               </p>
             </div>
           </div>
@@ -891,7 +948,7 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
       {/* Вкладки */}
       <div
         id="tour-body-tabs"
-        className="grid grid-cols-5 gap-1 rounded-2xl border border-[#223442] bg-[#0a1218] p-1"
+        className="grid grid-cols-4 gap-1 rounded-2xl border border-[#223442] bg-[#0a1218] p-1"
       >
         {BODY_TABS.map((item) => {
           const Icon = item.icon;
@@ -926,7 +983,7 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
               <div className="mt-2 text-sm font-bold text-slate-100">Начните с первого замера</div>
               <p className="mx-auto mt-1 max-w-xs text-[10px] leading-relaxed text-slate-400">
                 Вес, талия, грудь и плечи уже позволяют построить модель и увидеть пропорции.
-                Обхваты рук и ног можно добавить позже.
+                Обхваты и длины рук и ног можно добавить позже.
               </p>
               <button
                 id="body-add-measurement-empty"
@@ -1063,7 +1120,7 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
           {latest && latestMetricRows.length > 0 && (
             <div className="rounded-2xl border border-[#223442] bg-[#0d151c] p-3">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-bold text-slate-200">Все обхваты</div>
+                <div className="text-xs font-bold text-slate-200">Все замеры</div>
                 <div className="flex gap-1.5">
                   <button
                     type="button"
@@ -1313,66 +1370,37 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
               </div>
             </div>
 
-            {appliedExerciseId && appliedExerciseId === exercise.id ? (
-              <button
-                type="button"
-                onClick={() => handleTabChange('exercises')}
-                className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-2.5 py-1.5 text-left"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-[9px] font-bold text-emerald-300">{exercise.name}</span>
-                  <span className="block truncate text-[8px] text-slate-500">{exercise.checkpoint}</span>
+            <button
+              type="button"
+              onClick={() => handleTabChange('practice')}
+              className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-2.5 py-1.5 text-left"
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-[9px] font-bold text-emerald-300">
+                  {view === 'side' ? `${exercise.name} · ${phaseLabel}` : 'Нейтральная стойка для пропорций'}
                 </span>
-                <ChevronRight className="h-3 w-3 shrink-0 text-emerald-400" />
-              </button>
-            ) : (
-              <div className="mt-2 rounded-lg border border-[#1f303d] bg-[#091117] px-2.5 py-1.5 text-[9px] text-slate-500">
-                Свободная поза. Выберите упражнение во вкладке «Упражнения», чтобы включить проверку углов.
-              </div>
-            )}
+                <span className="block truncate text-[8px] text-slate-500">
+                  {view === 'side' ? exercise.focus : 'Спереди модель показывает объёмы и симметрию'}
+                </span>
+              </span>
+              <ChevronRight className="h-3 w-3 shrink-0 text-emerald-400" />
+            </button>
 
-            <div className="mt-2 flex justify-center">
+            <div className="mt-2 flex justify-center" data-sex={dimensions.sex}>
               <BodyModel2D
                 view={view}
                 pose={pose}
                 dimensions={dimensions}
                 avatarUrl={profile.avatarUrl}
-                showAngles={showAngles}
-                evaluation={appliedExerciseId === exercise.id ? evaluation : null}
-                onChangePose={setPose}
+                equipment={view === 'side' ? equipment : null}
+                station={view === 'side' ? exercise.station ?? null : null}
               />
             </div>
 
-            <div className="mt-1 flex items-center justify-between gap-2 rounded-xl border border-[#1f303d] bg-[#091117] px-2.5 py-2">
-              <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                <Info className="h-3 w-3 text-cyan-400" />
-                Тяните таз для приседа, маркеры — суставы
-              </div>
-              <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    hapticImpact('light');
-                    setShowAngles((value) => !value);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[9px] font-semibold ${
-                    showAngles
-                      ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
-                      : 'border-[#263a4a] text-slate-500'
-                  }`}
-                >
-                  <Eye className="h-2.5 w-2.5" />
-                  Углы
-                </button>
-                <button
-                  type="button"
-                  onClick={resetFreePose}
-                  className="inline-flex items-center gap-1 rounded-lg border border-[#263a4a] px-2 py-1 text-[9px] font-semibold text-slate-400"
-                >
-                  <RefreshCw className="h-2.5 w-2.5" />
-                  Стойка
-                </button>
-              </div>
+            <div className="mt-1 rounded-xl border border-[#1f303d] bg-[#091117] px-2.5 py-2 text-[9px] leading-snug text-slate-500">
+              <Info className="mr-1 inline h-3 w-3 text-cyan-400" />
+              Сбоку модель повторяет выбранное упражнение с текущей амплитудой. Спереди — нейтральная стойка,
+              чтобы оценить объёмы и симметрию. Позу и технику меняйте в «Практике».
             </div>
           </div>
 
@@ -1391,9 +1419,6 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
                   label={metric.short}
                   value={metrics[metric.id]}
                   unit={metric.unit}
-                  status={
-                    appliedExerciseId === exercise.id ? statusByMetric[metric.id] : undefined
-                  }
                   hint={metric.label}
                 />
               ))}
@@ -1402,175 +1427,89 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
 
           <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-[9px] leading-relaxed text-amber-200/75">
             <ShieldCheck className="mr-1 inline h-3 w-3" />
-            Модель использует рост и обхваты для приблизительных пропорций. Она не показывает
-            реальную кость, сустав или степень повреждения. При боли или ограничении движения
-            обратитесь к врачу или тренеру.
+            Модель использует рост, обхваты и длины конечностей для приблизительных пропорций.
+            Она не показывает реальную кость, сустав или степень повреждения. При боли или
+            ограничении движения обратитесь к врачу или тренеру.
           </div>
         </div>
       )}
 
-      {/* ---------------- Упражнения ---------------- */}
-      {tab === 'exercises' && (
-        <div id="tour-body-exercises" className="space-y-3">
+      {/* ---------------- Практика ---------------- */}
+      {tab === 'practice' && (
+        <div id="tour-body-practice" className="space-y-3">
           <div className="rounded-2xl border border-[#223442] bg-[#0d151c] p-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <Dumbbell className="h-4 w-4 text-cyan-400" />
                 <span className="text-xs font-bold text-slate-200">Упражнение</span>
               </div>
-              <span className="text-[9px] text-slate-600">{EXERCISE_PRESETS.length} пресетов</span>
+              <span className="text-[9px] text-slate-600">идеал → техника → нагрузка</span>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-1.5">
-              {EXERCISE_PRESETS.map((preset) => {
-                const active = preset.id === selectedExerciseId;
+              {EXERCISES.map((item) => {
+                const active = item.id === exercise.id;
                 return (
                   <button
-                    key={preset.id}
-                    id={`body-exercise-${preset.id}`}
+                    key={item.id}
+                    id={`body-practice-exercise-${item.id}`}
                     type="button"
-                    onClick={() => applyExercise(preset.id)}
+                    onClick={() => chooseExercise(item.id)}
                     className={`rounded-xl border p-2 text-left transition-colors ${
                       active
                         ? 'border-emerald-500/45 bg-emerald-500/10 text-emerald-300'
                         : 'border-[#223442] bg-[#0b131a] text-slate-300 hover:border-cyan-500/30'
                     }`}
                   >
-                    <div className="text-[10px] font-bold">{preset.name}</div>
-                    <div className={`mt-0.5 text-[8px] ${active ? 'text-emerald-400/70' : 'text-slate-600'}`}>
-                      {preset.focus}
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="truncate text-[10px] font-bold">{item.name}</span>
+                      <span className={`shrink-0 text-[7px] uppercase ${active ? 'text-emerald-400/70' : 'text-slate-600'}`}>
+                        {item.equipment === 'bodyweight' ? 'свой вес' : item.equipment === 'dumbbell' ? 'гантели' : 'штанга'}
+                      </span>
+                    </div>
+                    <div className={`mt-0.5 truncate text-[8px] ${active ? 'text-emerald-400/70' : 'text-slate-600'}`}>
+                      {item.focus}
                     </div>
                   </button>
                 );
               })}
             </div>
+            <p className="mt-2 text-[9px] leading-relaxed text-slate-500">{exercise.cue}</p>
           </div>
 
-          <div className="rounded-2xl border border-[#223442] bg-[#0d151c] p-3">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="text-sm font-black text-slate-100">{exercise.name}</div>
-                <div className="mt-0.5 text-[9px] text-slate-500">{exercise.checkpoint}</div>
-              </div>
-              <div className="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-full border border-emerald-500/35 bg-emerald-500/10">
-                <span className="text-lg font-black text-emerald-300">{evaluation.score}</span>
-                <span className="text-[7px] uppercase tracking-wider text-emerald-500/70">из 100</span>
-              </div>
-            </div>
-            <div
-              className={`mt-2 rounded-xl border px-2.5 py-2 ${
-                evaluation.tone === 'risk'
-                  ? 'border-rose-500/35 bg-rose-500/8 text-rose-200'
-                  : evaluation.tone === 'attention'
-                    ? 'border-amber-500/35 bg-amber-500/8 text-amber-200'
-                    : 'border-emerald-500/35 bg-emerald-500/8 text-emerald-200'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 text-[11px] font-bold">
-                {evaluation.tone === 'risk' ? (
-                  <AlertCircle className="h-3.5 w-3.5" />
-                ) : evaluation.tone === 'attention' ? (
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                ) : (
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                )}
-                {evaluation.headline}
-              </div>
-              <div className="mt-0.5 text-[9px] opacity-75">
-                {evaluation.passed} в коридоре · {evaluation.near} у границы · {evaluation.failed} вне
-              </div>
-            </div>
-            <p className="mt-2 text-[10px] leading-relaxed text-slate-400">{exercise.cue}</p>
-            <div className="mt-2 flex gap-1.5">
-              <button
-                type="button"
-                onClick={applyReferencePose}
-                className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-500 px-2 py-2 text-[10px] font-bold text-slate-950"
-              >
-                <RefreshCw className="h-3 w-3" />
-                Эталонная поза
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setView(exercise.view);
-                  setTab('model');
-                }}
-                className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl border border-[#263a4a] bg-[#121c25] px-2 py-2 text-[10px] font-semibold text-slate-300"
-              >
-                <PersonStanding className="h-3 w-3" />
-                Открыть модель
-              </button>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[#223442] bg-[#0d151c] p-3">
-            <div className="flex items-center gap-1.5">
-              <ShieldCheck className="h-4 w-4 text-emerald-400" />
-              <span className="text-xs font-bold text-slate-200">Проверка техники</span>
-              <span className="ml-auto text-[8px] uppercase tracking-wider text-slate-600">
-                {exercise.view === 'side' ? 'вид сбоку' : 'вид спереди'}
-              </span>
-            </div>
-            <div className="mt-2 space-y-1.5">
-              {evaluation.results.map((result) => (
-                <RuleRow key={`${result.metric}-${result.label}`} result={result} />
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[#223442] bg-[#0d151c] p-3">
-            <div className="flex items-center gap-1.5">
-              <Scale className="h-4 w-4 text-cyan-400" />
-              <span className="text-xs font-bold text-slate-200">Моментные плечи</span>
-            </div>
-            <div className="mt-2 space-y-2">
-              {momentArms.map((arm) => (
-                <MomentArmRow key={arm.id} arm={arm} />
-              ))}
-            </div>
-            <p className="mt-2 text-[9px] leading-relaxed text-slate-600">
-              Оценка по 2D-проекции: показывает, как поза меняет рычаг нагрузки. Это не
-              точное измерение силы и не медицинский вывод.
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-[9px] leading-relaxed text-amber-200/75">
-            <Info className="mr-1 inline h-3 w-3" />
-            Безопасный коридор — ориентир, а не диагноз. Индивидуальная амплитуда зависит от
-            подвижности, боли и опыта. При неприятных ощущениях остановитесь.
-          </div>
-        </div>
-      )}
-
-      {/* ---------------- Симуляция ---------------- */}
-      {tab === 'simulation' && (
-        <div id="tour-body-simulation" className="space-y-3">
           <div className="rounded-2xl border border-emerald-500/25 bg-gradient-to-br from-emerald-950/35 via-[#0d151c] to-cyan-950/20 p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <Activity className="h-4 w-4 text-emerald-400" />
-                  <span className="text-xs font-bold text-slate-200">Симуляция движения</span>
+                  <span className="text-xs font-bold text-slate-200">{exercise.name}</span>
                 </div>
-                <div className="mt-0.5 truncate text-[10px] font-semibold text-emerald-300">{simExercise.name}</div>
+                <div className="mt-0.5 truncate text-[9px] text-slate-500">
+                  {phaseLabel} · {Math.round(phase * amplitude * 100)}% амплитуды
+                </div>
               </div>
-              <span className="shrink-0 rounded-lg border border-[#2b4050] bg-[#0b131a] px-2 py-1 text-[9px] font-semibold text-slate-400">
-                {Math.round(simPhase * simAmplitude * 100)}% амплитуды
+              <span
+                className="shrink-0 rounded-lg border px-2 py-1 text-[9px] font-bold"
+                style={{
+                  color: zoneMeta.color,
+                  borderColor: `${zoneMeta.color}55`,
+                  backgroundColor: `${zoneMeta.color}18`,
+                }}
+              >
+                {Math.round(intensity)}% 1ПМ
               </span>
             </div>
 
             <div className="mt-1 flex justify-center">
               <BodyModel2D
-                view={simExercise.view}
-                pose={simPose}
+                view="side"
+                pose={pose}
                 dimensions={dimensions}
                 avatarUrl={profile.avatarUrl}
+                heat={heat}
+                equipment={equipment}
+                station={exercise.station ?? null}
                 showAngles={false}
                 showHandles={false}
-                showGrid={false}
-                heat={simHeat}
-                equipment={simEquipment}
-                onChangePose={() => undefined}
               />
             </div>
 
@@ -1579,12 +1518,12 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
                 type="button"
                 onClick={() => {
                   hapticImpact('light');
-                  setSimPlaying((value) => !value);
+                  setPlaying((value) => !value);
                 }}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-2 text-[10px] font-bold text-slate-950 shadow-lg shadow-emerald-500/15"
               >
-                {simPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                {simPlaying ? 'Пауза' : 'Запустить'}
+                {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                {playing ? 'Пауза' : 'Запустить'}
               </button>
               <div className="min-w-0 flex-1">
                 <input
@@ -1592,118 +1531,110 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
                   min={0}
                   max={1}
                   step={0.01}
-                  value={Math.min(1, simPhase * simAmplitude)}
+                  value={phase}
                   onChange={(event) => {
-                    setSimPlaying(false);
-                    const value = Number(event.target.value);
-                    setSimPhase(simAmplitude > 0 ? Math.min(1, value / simAmplitude) : 0);
+                    setPlaying(false);
+                    setPhase(Number(event.target.value));
                   }}
                   className="w-full accent-emerald-400"
                   aria-label="Фаза движения"
                 />
                 <div className="flex justify-between text-[8px] text-slate-600">
-                  <span>{simExercise.phaseLabels[0]}</span>
-                  <span>{simExercise.phaseLabels[1]}</span>
+                  <span>{exercise.phaseLabels[0]}</span>
+                  <span>{exercise.phaseLabels[1]}</span>
                 </div>
               </div>
             </div>
 
-            <div className="mt-1 flex items-center justify-between gap-2 text-[8px] text-slate-600">
-              <span>Тепловая карта: зелёный — низкая, красный — очень высокая нагрузка</span>
-              <span className="shrink-0">{simExercise.view === 'side' ? 'сбоку' : 'спереди'}</span>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[#223442] bg-[#0d151c] p-3">
-            <div className="flex items-center gap-1.5">
-              <Dumbbell className="h-4 w-4 text-cyan-400" />
-              <span className="text-xs font-bold text-slate-200">Параметры</span>
-            </div>
-
-            <label className="mt-2 block">
-              <span className="mb-1 block text-[9px] font-semibold uppercase tracking-wider text-slate-500">
-                Упражнение
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-[#1f303d] bg-[#091117] px-2 py-1.5">
+              <span className="text-[8px] leading-tight text-slate-500">
+                Цвет на модели — доля сустава в общей нагрузке упражнения:
               </span>
-              <select
-                id="body-simulation-exercise"
-                value={simExercise.id}
-                onChange={(event) => chooseSimulation(event.target.value)}
-                className="w-full rounded-xl border border-[#263a4a] bg-[#081016] px-3 py-2 text-xs font-semibold text-slate-100 outline-none focus:border-cyan-500/60"
-              >
-                {SIMULATION_EXERCISES.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="mt-3">
-              <div className="flex items-center justify-between text-[9px]">
-                <span className="font-semibold uppercase tracking-wider text-slate-500">Доп. вес</span>
-                <span className="font-bold text-slate-200">{formatNumber(simWeight)} кг</span>
-              </div>
-              <input
-                id="body-simulation-weight"
-                type="range"
-                min={0}
-                max={200}
-                step={2.5}
-                value={simWeight}
-                onChange={(event) => {
-                  setSimWeight(Number(event.target.value));
-                  setSimPlaying(false);
-                }}
-                className="mt-1 w-full accent-cyan-400"
-              />
-              <div className="flex justify-between text-[8px] text-slate-600">
-                <span>без веса</span>
-                <span>{simExercise.bodyweightLoad > 0 ? 'собственный вес уже учтён' : 'гриф + блины'}</span>
-                <span>200 кг</span>
-              </div>
+              {SHARE_LEGEND.map((item) => (
+                <span key={item.level} className="inline-flex items-center gap-1 text-[8px] text-slate-500">
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: LOAD_LEVEL_COLOR[item.level] }} />
+                  {item.label}
+                </span>
+              ))}
             </div>
-
-            <div className="mt-3">
-              <div className="flex items-center justify-between text-[9px]">
-                <span className="font-semibold uppercase tracking-wider text-slate-500">Амплитуда</span>
-                <span className="font-bold text-slate-200">{Math.round(simAmplitude * 100)}%</span>
-              </div>
-              <input
-                id="body-simulation-amplitude"
-                type="range"
-                min={0.3}
-                max={1}
-                step={0.05}
-                value={simAmplitude}
-                onChange={(event) => {
-                  setSimAmplitude(Number(event.target.value));
-                  setSimPlaying(false);
-                }}
-                className="mt-1 w-full accent-cyan-400"
-              />
-              <div className="flex justify-between text-[8px] text-slate-600">
-                <span>30% — короткая</span>
-                <span>100% — полная</span>
-              </div>
-            </div>
-
-            <p className="mt-2 text-[9px] leading-relaxed text-slate-600">{simExercise.cue}</p>
           </div>
 
           <div className="rounded-2xl border border-[#223442] bg-[#0d151c] p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <TrendingUp className="h-4 w-4 text-cyan-400" />
-                <span className="text-xs font-bold text-slate-200">Нагрузка по фазе</span>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <Scale className="h-4 w-4 text-cyan-400" />
+                  <span className="text-xs font-bold text-slate-200">Ваш ориентировочный 1ПМ</span>
+                </div>
+                <div className="mt-0.5 text-[8px] text-slate-500">
+                  максимум на одно повторение · {oneRepMax.bodyweightIncluded ? 'с собственным весом' : 'вес на снаряде'}
+                </div>
               </div>
-              <span className="text-[9px] text-slate-500">пик {formatNumber(simSelectedPeakIndex * 100, 0)}%</span>
+              <span className={`shrink-0 rounded-lg border px-2 py-1 text-[8px] font-bold ${sourceTone}`}>
+                {sourceLabel}
+              </span>
             </div>
-            <div className="mt-2">
-              <SimulationLoadChart points={simSeries} phase={Math.min(1, simPhase * simAmplitude)} />
+
+            <div className="mt-2 flex items-end justify-between gap-2">
+              <div>
+                <span className="text-2xl font-black text-slate-100">{formatNumber(oneRepMax.valueKg)}</span>
+                <span className="ml-1 text-[10px] text-slate-500">кг</span>
+              </div>
+              <div className="text-right text-[8px] leading-snug text-slate-500">
+                {oneRepMax.source === 'estimate'
+                  ? 'Ориентир по весу тела. Уточните вручную, если знаете свой максимум.'
+                  : oneRepMax.source === 'history'
+                    ? 'Оценка по лучшему подходу из истории (формула Эпли).'
+                    : 'Вы задали значение вручную.'}
+              </div>
             </div>
-            <p className="mt-1 text-[9px] leading-relaxed text-slate-600">
-              Линия — максимум по суставам на каждой фазе. Красная пунктирная граница — зона,
-              где модель считает нагрузку очень высокой.
+            <div className="mt-1 text-[9px] text-slate-500">Основа: {oneRepMax.basis}</div>
+
+            <div className="mt-2 flex items-end gap-1.5">
+              <label className="min-w-0 flex-1">
+                <span className="mb-1 block text-[9px] font-semibold uppercase tracking-wider text-slate-500">
+                  Свой 1ПМ, кг
+                </span>
+                <input
+                  id="body-practice-1rm"
+                  type="text"
+                  inputMode="decimal"
+                  value={oneRmDraft}
+                  onChange={(event) => setOneRmDraft(event.target.value)}
+                  onBlur={saveOneRm}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      saveOneRm();
+                      (event.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  placeholder={formatNumber(oneRepMax.valueKg)}
+                  className="w-full rounded-xl border border-[#263a4a] bg-[#081016] px-3 py-2 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-500/60"
+                />
+              </label>
+              <button
+                id="body-practice-1rm-save"
+                type="button"
+                onClick={saveOneRm}
+                className="rounded-xl bg-cyan-500/15 px-2.5 py-2 text-[10px] font-bold text-cyan-300"
+              >
+                Сохранить
+              </button>
+              {manualOneRm !== undefined && (
+                <button
+                  id="body-practice-1rm-reset"
+                  type="button"
+                  onClick={resetOneRm}
+                  className="inline-flex items-center gap-1 rounded-xl border border-[#263a4a] px-2 py-2 text-[10px] font-semibold text-slate-400"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Сброс
+                </button>
+              )}
+            </div>
+            <p className="mt-1.5 text-[9px] leading-relaxed text-slate-600">
+              Для упражнений с собственным весом 1ПМ — это общая нагрузка системы: тело плюс добавка.
+              Без истории приложение берёт ориентир от веса тела, поэтому цифра не заменяет реальный тест.
             </p>
           </div>
 
@@ -1711,109 +1642,256 @@ export const BodyBiomechanicsView: React.FC<BodyBiomechanicsViewProps> = ({
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <Target className="h-4 w-4 text-emerald-400" />
-                <span className="text-xs font-bold text-slate-200">Суставы под нагрузкой</span>
+                <span className="text-xs font-bold text-slate-200">Рабочий вес и зона</span>
               </div>
-              <span className="text-[9px] text-slate-500">{simExercise.focus}</span>
+              <span
+                className="rounded-lg border px-2 py-1 text-[9px] font-black"
+                style={{
+                  color: zoneMeta.color,
+                  borderColor: `${zoneMeta.color}55`,
+                  backgroundColor: `${zoneMeta.color}18`,
+                }}
+              >
+                {zoneMeta.label}
+              </span>
             </div>
-            <div className="mt-2 space-y-1.5">
-              {simLoads.map((load) => (
-                <div key={load.joint} className="rounded-xl border border-[#223442] bg-[#0b131a] px-2.5 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-bold text-slate-200">{load.label}</span>
-                    <span
-                      className="text-[9px] font-black"
-                      style={{ color: LOAD_LEVEL_COLOR[load.level] }}
-                    >
-                      {loadLevelLabel(load.level)} · {formatNumber(load.torqueNm, 0)} Н·м
-                    </span>
-                  </div>
-                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#16232d]">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{
-                        width: `${Math.min(100, (load.index / 0.55) * 100)}%`,
-                        background: LOAD_LEVEL_COLOR[load.level],
-                      }}
-                    />
-                  </div>
-                  <div className="mt-0.5 text-[8px] text-slate-500">{load.muscles}</div>
-                </div>
+
+            <div className="mt-2">
+              <div className="flex items-center justify-between text-[9px]">
+                <span className="font-semibold uppercase tracking-wider text-slate-500">
+                  {exercise.bodyweightFactor > 0 ? 'Дополнительный вес' : 'Вес снаряда'}
+                </span>
+                <span className="font-bold text-slate-200">
+                  {exercise.bodyweightFactor > 0 ? `+${formatNumber(addedWeight)} кг` : `${formatNumber(addedWeight)} кг`}
+                </span>
+              </div>
+              <input
+                id="body-practice-weight"
+                type="range"
+                min={0}
+                max={weightMax}
+                step={weightStep}
+                value={addedWeight}
+                onChange={(event) => {
+                  setAddedWeight(Number(event.target.value));
+                  setPlaying(false);
+                }}
+                className="mt-1 w-full accent-cyan-400"
+                aria-label="Рабочий вес"
+              />
+              <div className="flex justify-between text-[8px] text-slate-600">
+                <span>{exercise.bodyweightFactor > 0 ? 'только свой вес' : 'пустой гриф / без веса'}</span>
+                <span>{weightMax} кг</span>
+              </div>
+            </div>
+
+            <div className="mt-2 grid grid-cols-3 gap-1.5">
+              {[55, 70, 82].map((percent) => (
+                <button
+                  key={percent}
+                  type="button"
+                  onClick={() => applyIntensityTarget(percent)}
+                  className="rounded-lg border border-[#263a4a] bg-[#0b131a] px-1 py-1.5 text-[9px] font-semibold text-slate-300 hover:border-cyan-500/40 hover:text-cyan-300"
+                >
+                  {percent}% 1ПМ
+                </button>
               ))}
             </div>
-            <div className="mt-2 rounded-xl border border-[#1f303d] bg-[#091117] px-2.5 py-2 text-[9px] text-slate-400">
-              Сейчас максимальная нагрузка —{' '}
-              <span className="font-bold" style={{ color: LOAD_LEVEL_COLOR[simPeak.level] }}>
-                {simPeak.label.toLowerCase()}, {loadLevelLabel(simPeak.level)}
-              </span>
-              . Индекс {formatNumber(simPeak.index * 100, 0)}% от ориентировочного максимума.
+
+            <div className="mt-2 rounded-xl border border-[#1f303d] bg-[#091117] px-2.5 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] text-slate-400">
+                  Общая нагрузка:{' '}
+                  <span className="font-bold text-slate-200">
+                    {exercise.bodyweightFactor > 0
+                      ? `${formatNumber(bodyWeightForLoad)} + ${formatNumber(addedWeight)} = ${formatNumber(workingLoadKg)} кг`
+                      : `${formatNumber(workingLoadKg)} кг`}
+                  </span>
+                </span>
+                <span className="text-[10px] font-black" style={{ color: zoneMeta.color }}>
+                  {Math.round(intensity)}%
+                </span>
+              </div>
+
+              <div className="relative mt-2 flex h-2 overflow-hidden rounded-full">
+                {INTENSITY_ORDER.map((item) => (
+                  <div
+                    key={item}
+                    style={{
+                      width: `${INTENSITY_SPAN[item]}%`,
+                      backgroundColor: INTENSITY_META[item].color,
+                      opacity: item === zone ? 0.95 : 0.35,
+                    }}
+                  />
+                ))}
+                <div
+                  className="absolute -top-0.5 h-3 w-1 -translate-x-1/2 rounded-full bg-slate-100 shadow"
+                  style={{ left: `${Math.max(1, Math.min(100, intensity))}%` }}
+                />
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-1">
+                {INTENSITY_ORDER.map((item) => {
+                  const meta = INTENSITY_META[item];
+                  const active = item === zone;
+                  return (
+                    <div
+                      key={item}
+                      className={`flex items-center gap-1.5 rounded-lg px-1 py-1 ${
+                        active ? 'bg-white/5' : ''
+                      }`}
+                    >
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: meta.color }} />
+                      <span className={`text-[8px] leading-tight ${active ? 'font-bold text-slate-200' : 'text-slate-500'}`}>
+                        {meta.short} — {meta.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
+
+            <p className="mt-2 text-[9px] leading-relaxed text-slate-600">{zoneMeta.description}</p>
+            {intensity > 100 && (
+              <div className="mt-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-2.5 py-2 text-[9px] leading-relaxed text-rose-200">
+                <AlertTriangle className="mr-1 inline h-3 w-3" />
+                Вес выше вашего ориентировочного 1ПМ. Это расчётная нагрузка, а не рекомендация
+                выполнять такой подход.
+              </div>
+            )}
+            <p className="mt-1.5 text-[9px] leading-relaxed text-slate-600">
+              Зона считается от вашего 1ПМ: до 60% — лёгкая, 60–75% — умеренная, 75–85% — высокая,
+              выше 85% — очень высокая. 100 кг для одного могут быть разминкой, для другого —
+              пределом; поэтому проценты важнее абсолютного веса.
+            </p>
           </div>
 
           <div className="rounded-2xl border border-[#223442] bg-[#0d151c] p-3">
-            <div className="flex items-center gap-1.5">
-              <ShieldCheck className="h-4 w-4 text-amber-400" />
-              <span className="text-xs font-bold text-slate-200">Где начинается небезопасно</span>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                <span className="text-xs font-bold text-slate-200">Техника в нижней точке</span>
+              </div>
+              <span className="text-[8px] text-slate-500">
+                {techniquePassed} в норме · {techniqueNear} у границы · {techniqueFailed} вне
+              </span>
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <div className="rounded-xl border border-[#223442] bg-[#0b131a] px-2.5 py-2">
-                <div className="text-[8px] uppercase tracking-wider text-slate-500">жёлтая зона с</div>
-                <div className="mt-0.5 text-sm font-black text-amber-300">
-                  {simScan.cautionFromKg !== null ? `${formatNumber(simScan.cautionFromKg, 0)} кг` : '—'}
-                </div>
+
+            <div className="mt-2">
+              <div className="flex items-center justify-between text-[9px]">
+                <span className="font-semibold uppercase tracking-wider text-slate-500">Амплитуда</span>
+                <span className="font-bold text-slate-200">{Math.round(amplitude * 100)}%</span>
               </div>
-              <div className="rounded-xl border border-[#223442] bg-[#0b131a] px-2.5 py-2">
-                <div className="text-[8px] uppercase tracking-wider text-slate-500">красная зона с</div>
-                <div className="mt-0.5 text-sm font-black text-rose-300">
-                  {simScan.unsafeFromKg !== null ? `${formatNumber(simScan.unsafeFromKg, 0)} кг` : 'не достигнута'}
-                </div>
-              </div>
-              <div className="rounded-xl border border-[#223442] bg-[#0b131a] px-2.5 py-2">
-                <div className="text-[8px] uppercase tracking-wider text-slate-500">безопасный вес</div>
-                <div className="mt-0.5 text-sm font-black text-emerald-300">
-                  {simScan.safeWeightKg !== null ? `до ${formatNumber(simScan.safeWeightKg, 0)} кг` : '—'}
-                </div>
-              </div>
-              <div className="rounded-xl border border-[#223442] bg-[#0b131a] px-2.5 py-2">
-                <div className="text-[8px] uppercase tracking-wider text-slate-500">безопасная амплитуда</div>
-                <div className="mt-0.5 text-sm font-black text-cyan-300">
-                  до {formatNumber(simScan.safeAmplitude * 100, 0)}%
-                </div>
+              <input
+                id="body-practice-amplitude"
+                type="range"
+                min={0.3}
+                max={1}
+                step={0.05}
+                value={amplitude}
+                onChange={(event) => {
+                  setAmplitude(Number(event.target.value));
+                  setPlaying(false);
+                }}
+                className="mt-1 w-full accent-cyan-400"
+                aria-label="Амплитуда движения"
+              />
+              <div className="flex justify-between text-[8px] text-slate-600">
+                <span>30% — короткая</span>
+                <span>100% — полная</span>
               </div>
             </div>
 
-            {simSelectedLevel === 'veryHigh' ? (
-              <div className="mt-2 rounded-xl border border-rose-500/35 bg-rose-500/10 px-2.5 py-2 text-[9px] leading-relaxed text-rose-200">
-                <AlertTriangle className="mr-1 inline h-3 w-3" />
-                При этой амплитуде нагрузка оказывается в красной зоне. Уменьшите вес или амплитуду —
-                модель показывает расчётный ориентир, а не безопасный для вас вес.
-              </div>
-            ) : simSelectedLevel === 'high' ? (
-              <div className="mt-2 rounded-xl border border-orange-500/35 bg-orange-500/10 px-2.5 py-2 text-[9px] leading-relaxed text-orange-200">
-                <AlertTriangle className="mr-1 inline h-3 w-3" />
-                Нагрузка высокая. Следите за техникой и не увеличивайте вес, пока амплитуда
-                остаётся такой.
-              </div>
-            ) : null}
-
-            {simScan.safeAmplitude < simAmplitude && (
-              <div className="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[9px] leading-relaxed text-amber-200">
-                При текущем весе модель держит нагрузку в норме примерно до{' '}
-                {formatNumber(simScan.safeAmplitude * 100, 0)}% амплитуды. Выбранные{' '}
-                {formatNumber(simAmplitude * 100, 0)}% уже выходят за этот ориентир.
+            {leanEnabled && (
+              <div className="mt-2">
+                <div className="flex items-center justify-between text-[9px]">
+                  <span className="font-semibold uppercase tracking-wider text-slate-500">{leanLabel}</span>
+                  <span className="font-bold text-slate-200">
+                    {lean > 0 ? '+' : ''}
+                    {Math.round(lean * 100)}%
+                  </span>
+                </div>
+                <input
+                  id="body-practice-lean"
+                  type="range"
+                  min={-1}
+                  max={1}
+                  step={0.05}
+                  value={lean}
+                  onChange={(event) => {
+                    setLean(Number(event.target.value));
+                    setPlaying(false);
+                  }}
+                  className="mt-1 w-full accent-cyan-400"
+                  aria-label={leanLabel}
+                />
+                <div className="flex justify-between text-[8px] text-slate-600">
+                  <span>{leanLow}</span>
+                  <span>{leanHigh}</span>
+                </div>
               </div>
             )}
 
+            <div className="mt-2 space-y-1.5">
+              {technique.map((result) => (
+                <TechniqueRow key={result.rule.metric} result={result} />
+              ))}
+            </div>
             <p className="mt-2 text-[9px] leading-relaxed text-slate-600">
-              Расчёт упрощённый: момент силы по 2D-проекции с учётом вашего веса и дополнительного
-              веса. Он помогает сравнить амплитуду и нагрузку, но не учитывает связки, технику,
-              разминку и индивидуальные ограничения.
+              Проверка идёт по нижней точке при текущей амплитуде и наклоне. Коридор — ориентир
+              для техники, а не диагноз и не оценка подвижности.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-[#223442] bg-[#0d151c] p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <TrendingUp className="h-4 w-4 text-cyan-400" />
+                <span className="text-xs font-bold text-slate-200">Где движение тяжелее</span>
+              </div>
+              <span className="text-[9px] text-slate-500">
+                пик: {jointLabel(peakLoad.joint).toLowerCase()}
+              </span>
+            </div>
+            <div className="mt-2">
+              <LoadPhaseChart points={series} phase={phase} />
+            </div>
+            <p className="mt-1 text-[9px] leading-relaxed text-slate-600">
+              Линия — расчётный момент в самом нагруженном суставе, в процентах от пика этого
+              упражнения. Она показывает, в какой фазе движение тяжелее, но не является процентом
+              от 1ПМ. Общая интенсивность считается отдельно, по весу.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-[#223442] bg-[#0d151c] p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <Target className="h-4 w-4 text-emerald-400" />
+                <span className="text-xs font-bold text-slate-200">Нагрузка по суставам</span>
+              </div>
+              <span className="text-[9px] text-slate-500">в ключевой точке</span>
+            </div>
+            <div className="mt-2 space-y-1.5">
+              {jointLoads.map((load) => (
+                <JointLoadRow key={load.joint} load={load} maxShare={maxShare} />
+              ))}
+            </div>
+            <div className="mt-2 rounded-xl border border-[#1f303d] bg-[#091117] px-2.5 py-2 text-[9px] leading-relaxed text-slate-400">
+              В ключевой точке больше всего нагружен{' '}
+              <span className="font-bold" style={{ color: LOAD_LEVEL_COLOR[shareLevel(peakLoad.share)] }}>
+                {jointLabel(peakLoad.joint).toLowerCase()}
+              </span>{' '}
+              — {formatNumber(peakLoad.share)}% расчётной доли упражнения.
+            </div>
+            <p className="mt-1.5 text-[9px] leading-relaxed text-slate-600">
+              Доля нагрузки — вклад сустава в общий момент при текущей позе. Это не риск травмы и
+              не медицинский вывод: связки, техника и подготовка здесь не моделируются.
             </p>
           </div>
 
           <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-[9px] leading-relaxed text-amber-200/75">
             <ShieldCheck className="mr-1 inline h-3 w-3" />
-            Это обучающая симуляция, а не медицинская диагностика и не персональная программа.
-            При боли, травме или ограничении подвижности остановитесь и обратитесь к специалисту.
+            «Практика» показывает идеальную механику и расчётную нагрузку. Она не заменяет тренера,
+            разминку и очную оценку техники. При боли, травме или ограничении подвижности остановитесь.
           </div>
         </div>
       )}

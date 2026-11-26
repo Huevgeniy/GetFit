@@ -84,6 +84,14 @@ export interface BodyMeasurementEntry {
   chestCm?: number;
   waistCm?: number;
   hipsCm?: number;
+  /** Длина корпуса от плеча до таза — помогает не растягивать торс. */
+  torsoLengthCm?: number;
+  /** Длина руки от плеча до запястья. */
+  armLengthLCm?: number;
+  armLengthRCm?: number;
+  /** Длина ноги от таза до лодыжки. */
+  legLengthLCm?: number;
+  legLengthRCm?: number;
   bicepLCm?: number;
   bicepRCm?: number;
   forearmLCm?: number;
@@ -110,6 +118,8 @@ export interface BodyProfile {
   /** Фото лица: data URL после кадрирования или ссылка из Telegram. */
   avatarUrl?: string;
   measurements: BodyMeasurementEntry[];
+  /** Ручная поправка 1ПМ по id упражнения, кг. */
+  oneRepMaxKg?: Record<string, number>;
 }
 
 export interface UserProfile {
