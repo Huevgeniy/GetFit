@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   ShieldCheck, 
   Flame, 
@@ -111,6 +111,18 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
     cycle: cycleDoneToday,
     lab: false,
   }));
+
+  useEffect(() => {
+    const refreshCycle = () => {
+      const cycle = loadActiveCycle();
+      const done = Boolean(
+        cycle && Object.values(cycle.completedAt || {}).some(value => value.slice(0, 10) === today),
+      );
+      if (done) setDayCompleted(prev => ({ ...prev, cycle: true }));
+    };
+    window.addEventListener('getfit-cycle-updated', refreshCycle);
+    return () => window.removeEventListener('getfit-cycle-updated', refreshCycle);
+  }, [today]);
 
   // Reschedule form state
   const [selectedPlanId, setSelectedPlanId] = useState<string>(workoutPlans[0]?.id || '');
