@@ -521,6 +521,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     { id: 'ranks', label: 'Спортивные разряды', enabled: Boolean(features.ranks) },
     { id: 'lab', label: 'Лаборатория', enabled: Boolean(features.lab) },
     { id: 'periodization', label: 'Циклы тренировок', enabled: Boolean(features.periodization) },
+    { id: 'body', label: 'Тело и биомеханика', enabled: Boolean(features.body) },
   ];
   const visibleTourItems = tourItems.filter(item => item.enabled);
 

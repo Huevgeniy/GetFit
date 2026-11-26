@@ -111,12 +111,14 @@ export const Navigation: React.FC<NavigationProps> = ({
       : []),
   ];
 
-  // Один дополнительный раздел показываем напрямую. Если включено два и больше,
-  // нижняя панель не растягивается: четыре базовые вкладки + «Ещё».
-  const hasOverflow = optional.length > 1;
+  // «Тело» всегда живёт в меню «Ещё»: это настройка модели, а не ежедневная
+  // вкладка. Остальные одиночные разделы по-прежнему можно показать напрямую.
+  const bodyInMore = Boolean(features?.body);
+  const inlineOptional = optional.filter((tab) => tab.id !== 'body');
+  const hasOverflow = bodyInMore || inlineOptional.length > 1;
   const visible: TabDef[] = hasOverflow
     ? [...primary, { id: 'profile', label: 'Ещё', icon: MoreHorizontal }]
-    : [...primary.slice(0, 3), ...optional, primary[3]];
+    : [...primary.slice(0, 3), ...inlineOptional, primary[3]];
 
   const hiddenActive = hasOverflow && optional.some((tab) => tab.id === currentTab);
   const hiddenBadge = pendingPenaltiesCount > 0 && features?.discipline ? pendingPenaltiesCount : undefined;

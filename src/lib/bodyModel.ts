@@ -251,6 +251,13 @@ export interface BodyDimensions {
   hipWidthCm: number;
   chestDepthCm: number;
   waistDepthCm: number;
+  neckWidthCm: number;
+  upperArmWidthCm: number;
+  forearmWidthCm: number;
+  wristWidthCm: number;
+  thighWidthCm: number;
+  calfWidthCm: number;
+  ankleWidthCm: number;
 }
 
 /**
@@ -284,6 +291,12 @@ export function computeBodyDimensions(profile: BodyProfile): BodyDimensions {
     24,
     58,
   );
+  const bicep = averagePair(latest?.bicepLCm, latest?.bicepRCm);
+  const forearm = averagePair(latest?.forearmLCm, latest?.forearmRCm);
+  const thigh = averagePair(latest?.thighLCm, latest?.thighRCm);
+  const calf = averagePair(latest?.calfLCm, latest?.calfRCm);
+  const wrist = averagePair(latest?.wristLCm, latest?.wristRCm);
+  const ankle = averagePair(latest?.ankleLCm, latest?.ankleRCm);
 
   return {
     heightCm,
@@ -304,6 +317,13 @@ export function computeBodyDimensions(profile: BodyProfile): BodyDimensions {
     hipWidthCm,
     chestDepthCm: clampNumber(latest?.chestCm ? latest.chestCm * 0.22 : heightCm * 0.145, 16, 40),
     waistDepthCm: clampNumber(latest?.waistCm ? latest.waistCm * 0.2 : heightCm * 0.12, 12, 32),
+    neckWidthCm: clampNumber(latest?.neckCm ? latest.neckCm * 0.34 : heightCm * 0.052, 9, 20),
+    upperArmWidthCm: clampNumber(bicep ? bicep * 0.36 : heightCm * 0.057, 8, 20),
+    forearmWidthCm: clampNumber(forearm ? forearm * 0.34 : heightCm * 0.043, 6, 15),
+    wristWidthCm: clampNumber(wrist ? wrist * 0.42 : heightCm * 0.029, 4.5, 10),
+    thighWidthCm: clampNumber(thigh ? thigh * 0.36 : heightCm * 0.092, 12, 30),
+    calfWidthCm: clampNumber(calf ? calf * 0.35 : heightCm * 0.061, 8, 22),
+    ankleWidthCm: clampNumber(ankle ? ankle * 0.48 : heightCm * 0.038, 5.5, 13),
   };
 }
 
@@ -317,6 +337,9 @@ export interface Point {
 }
 
 export interface SidePose {
+  /** Положение таза: его можно опустить и отвести назад, как в приседе. */
+  hipX: number;
+  hipY: number;
   torsoAngle: number;
   upperArmAngle: number;
   forearmAngle: number;
@@ -342,7 +365,7 @@ export interface BodyPose {
   front: FrontPose;
 }
 
-export type SideSegmentKey = keyof SidePose;
+export type SideSegmentKey = Exclude<keyof SidePose, 'hipX' | 'hipY'>;
 export type FrontSegmentKey =
   | 'torsoAngle'
   | 'leftUpperArmAngle'
@@ -356,6 +379,8 @@ export type FrontSegmentKey =
 export type PoseSegmentKey = SideSegmentKey | FrontSegmentKey;
 
 export const DEFAULT_SIDE_POSE: SidePose = {
+  hipX: BODY_DRAW.hipX,
+  hipY: BODY_DRAW.hipY,
   torsoAngle: -90,
   upperArmAngle: 90,
   forearmAngle: 90,
@@ -422,9 +447,10 @@ export function clampSegmentAngle(
   if (view === 'side') {
     switch (segment as SideSegmentKey) {
       case 'torsoAngle':
-        return clampNumber(normalized, -130, -35);
+        return clampNumber(normalized, -125, -30);
       case 'thighAngle':
-        return clampNumber(normalized, -20, 170);
+        // Бедро может уйти назад примерно на 20° и вперёд до 120°.
+        return clampNumber(normalized, -30, 110);
       case 'shinAngle': {
         // Колено не разгибается вперёд: считаем сгибание относительно бедра
         // и держим его в диапазоне 0–150°, как у живого сустава.
@@ -432,20 +458,56 @@ export function clampSegmentAngle(
         const flex = clampNumber(normalizeAngle(normalized - thigh), 0, 150);
         return roundAngle(thigh + flex);
       }
+      case 'upperArmAngle':
+        // Плечо не уходит в бесконечное вращение за спину.
+        return clampNumber(normalized, -115, 155);
+      case 'forearmAngle': {
+        // Локоть сгибается только в одну сторону: предплечье идёт кпереди
+        // от плеча, а не выворачивается назад.
+        const upperArm = pose?.side.upperArmAngle ?? 90;
+        const flex = clampNumber(normalizeAngle(upperArm - normalized), 0, 150);
+        return roundAngle(upperArm - flex);
+      }
       case 'footAngle':
-        return clampNumber(normalized, -45, 60);
+        return clampNumber(normalized, -40, 55);
       default:
         return normalized;
     }
   }
   switch (segment as FrontSegmentKey) {
     case 'torsoAngle':
-      return clampNumber(normalized, -120, -60);
+      return clampNumber(normalized, -115, -65);
     case 'leftThighAngle':
     case 'rightThighAngle':
-    case 'leftShinAngle':
-    case 'rightShinAngle':
       return clampNumber(normalized, 45, 135);
+    case 'leftShinAngle': {
+      // В виде спереди колено не должно складываться вбок: допускаем
+      // небольшой завал/разворот, а не произвольный угол.
+      const thigh = pose?.front.leftThighAngle ?? 90;
+      const valgus = clampNumber(normalizeAngle(normalized - thigh), -15, 15);
+      return roundAngle(thigh + valgus);
+    }
+    case 'rightShinAngle': {
+      const thigh = pose?.front.rightThighAngle ?? 90;
+      const valgus = clampNumber(normalizeAngle(normalized - thigh), -15, 15);
+      return roundAngle(thigh + valgus);
+    }
+    case 'leftUpperArmAngle':
+      return clampNumber(normalized, -150, 160);
+    case 'rightUpperArmAngle':
+      return clampNumber(normalized, -160, 150);
+    case 'leftForearmAngle': {
+      // Левая рука сгибается к центру корпуса.
+      const upperArm = pose?.front.leftUpperArmAngle ?? 90;
+      const flex = clampNumber(normalizeAngle(normalized - upperArm), 0, 150);
+      return roundAngle(upperArm + flex);
+    }
+    case 'rightForearmAngle': {
+      // Правая — зеркально.
+      const upperArm = pose?.front.rightUpperArmAngle ?? 90;
+      const flex = clampNumber(normalizeAngle(upperArm - normalized), 0, 150);
+      return roundAngle(upperArm - flex);
+    }
     default:
       return normalized;
   }
@@ -457,6 +519,191 @@ export function updateSidePose(pose: SidePose, segment: SideSegmentKey, angle: n
 
 export function updateFrontPose(pose: FrontPose, segment: FrontSegmentKey, angle: number): FrontPose {
   return { ...pose, [segment]: roundAngle(angle) };
+}
+
+/**
+ * Поворот одного сегмента с «живой» цепочкой: плечо тянет за собой локоть,
+ * бедро — голень, наклон корпуса — руки. Так конечности не выгибаются
+ * в противоположную сторону при перетаскивании.
+ */
+export function rotateSideSegment(pose: SidePose, segment: SideSegmentKey, angle: number): SidePose {
+  const bodyPose: BodyPose = { side: pose, front: DEFAULT_FRONT_POSE };
+  const next = clampSegmentAngle('side', segment, angle, bodyPose);
+  const delta = normalizeAngle(next - pose[segment]);
+  const result: SidePose = { ...pose, [segment]: next };
+
+  const rotateArm = (armDelta: number) => {
+    const upperArm = clampSegmentAngle(
+      'side',
+      'upperArmAngle',
+      roundAngle(result.upperArmAngle + armDelta),
+      { side: result, front: DEFAULT_FRONT_POSE },
+    );
+    const actualDelta = normalizeAngle(upperArm - result.upperArmAngle);
+    result.upperArmAngle = upperArm;
+    result.forearmAngle = roundAngle(result.forearmAngle + actualDelta);
+  };
+
+  if (segment === 'torsoAngle') {
+    rotateArm(delta);
+  } else if (segment === 'upperArmAngle') {
+    rotateArm(delta);
+  } else if (segment === 'thighAngle') {
+    result.shinAngle = roundAngle(result.shinAngle + delta);
+  }
+
+  if (segment === 'torsoAngle' || segment === 'upperArmAngle' || segment === 'forearmAngle') {
+    result.forearmAngle = clampSegmentAngle('side', 'forearmAngle', result.forearmAngle, {
+      side: result,
+      front: DEFAULT_FRONT_POSE,
+    });
+  }
+  if (segment === 'thighAngle' || segment === 'shinAngle') {
+    result.shinAngle = clampSegmentAngle('side', 'shinAngle', result.shinAngle, {
+      side: result,
+      front: DEFAULT_FRONT_POSE,
+    });
+  }
+  return result;
+}
+
+/** То же для вида спереди: руки и ноги двигаются вместе с родительским сегментом. */
+export function rotateFrontSegment(pose: FrontPose, segment: FrontSegmentKey, angle: number): FrontPose {
+  const bodyPose: BodyPose = { side: DEFAULT_SIDE_POSE, front: pose };
+  const next = clampSegmentAngle('front', segment, angle, bodyPose);
+  const delta = normalizeAngle(next - pose[segment]);
+  const result: FrontPose = { ...pose, [segment]: next };
+
+  if (segment === 'torsoAngle') {
+    // Наклон корпуса во фронтальной проекции почти не используется, но
+    // пусть руки следуют за плечами, а не остаются в воздухе.
+    result.leftUpperArmAngle = roundAngle(result.leftUpperArmAngle + delta);
+    result.rightUpperArmAngle = roundAngle(result.rightUpperArmAngle + delta);
+    result.leftForearmAngle = roundAngle(result.leftForearmAngle + delta);
+    result.rightForearmAngle = roundAngle(result.rightForearmAngle + delta);
+  } else if (segment === 'leftUpperArmAngle') {
+    result.leftForearmAngle = roundAngle(result.leftForearmAngle + delta);
+  } else if (segment === 'rightUpperArmAngle') {
+    result.rightForearmAngle = roundAngle(result.rightForearmAngle + delta);
+  } else if (segment === 'leftThighAngle') {
+    result.leftShinAngle = roundAngle(result.leftShinAngle + delta);
+  } else if (segment === 'rightThighAngle') {
+    result.rightShinAngle = roundAngle(result.rightShinAngle + delta);
+  }
+
+  result.leftUpperArmAngle = clampSegmentAngle('front', 'leftUpperArmAngle', result.leftUpperArmAngle, {
+    side: DEFAULT_SIDE_POSE,
+    front: result,
+  });
+  result.rightUpperArmAngle = clampSegmentAngle('front', 'rightUpperArmAngle', result.rightUpperArmAngle, {
+    side: DEFAULT_SIDE_POSE,
+    front: result,
+  });
+  result.leftForearmAngle = clampSegmentAngle('front', 'leftForearmAngle', result.leftForearmAngle, {
+    side: DEFAULT_SIDE_POSE,
+    front: result,
+  });
+  result.rightForearmAngle = clampSegmentAngle('front', 'rightForearmAngle', result.rightForearmAngle, {
+    side: DEFAULT_SIDE_POSE,
+    front: result,
+  });
+  result.leftShinAngle = clampSegmentAngle('front', 'leftShinAngle', result.leftShinAngle, {
+    side: DEFAULT_SIDE_POSE,
+    front: result,
+  });
+  result.rightShinAngle = clampSegmentAngle('front', 'rightShinAngle', result.rightShinAngle, {
+    side: DEFAULT_SIDE_POSE,
+    front: result,
+  });
+  return result;
+}
+
+export interface TwoBoneSolution {
+  knee: Point;
+  /** Абсолютные углы для отрисовки и метрик. */
+  thighAngle: number;
+  shinAngle: number;
+}
+
+/**
+ * Двухзвенная IK для ноги: таз можно опустить, а стопа останется на месте.
+ * Колено выбирается вперёд (в сторону +x), чтобы не было обратного изгиба.
+ */
+export function solveTwoBoneIK(
+  hip: Point,
+  ankle: Point,
+  upperLength: number,
+  lowerLength: number,
+): TwoBoneSolution {
+  const rawDx = ankle.x - hip.x;
+  const rawDy = ankle.y - hip.y;
+  const rawDistance = Math.hypot(rawDx, rawDy);
+  const distance = clampNumber(rawDistance, Math.abs(upperLength - lowerLength) + 0.5, upperLength + lowerLength - 0.5);
+  const ux = rawDistance > 0.001 ? rawDx / rawDistance : 0;
+  const uy = rawDistance > 0.001 ? rawDy / rawDistance : 1;
+  const along = (upperLength * upperLength - lowerLength * lowerLength + distance * distance) / (2 * distance);
+  const base = { x: hip.x + ux * along, y: hip.y + uy * along };
+  const height = Math.sqrt(Math.max(0, upperLength * upperLength - along * along));
+  let perpX = uy;
+  let perpY = -ux;
+  if (perpX < 0 || (Math.abs(perpX) < 0.001 && perpY > 0)) {
+    perpX = -perpX;
+    perpY = -perpY;
+  }
+  const knee = {
+    x: base.x + perpX * height,
+    y: base.y + perpY * height,
+  };
+  return {
+    knee,
+    thighAngle: roundAngle((Math.atan2(knee.y - hip.y, knee.x - hip.x) * 180) / Math.PI),
+    shinAngle: roundAngle((Math.atan2(ankle.y - knee.y, ankle.x - knee.x) * 180) / Math.PI),
+  };
+}
+
+/**
+ * Таз двигается, стопа остаётся точкой опоры. Это превращает перетаскивание
+ * в понятный присед: бёдра и колени сгибаются сами, без разрывов модели.
+ */
+export function dragSidePelvis(
+  pose: SidePose,
+  target: Point,
+  plantedAnkle: Point,
+  dims: BodyDimensions,
+): SidePose {
+  const upperLength = dims.thighLengthCm * dims.scale;
+  const lowerLength = dims.shinLengthCm * dims.scale;
+  const maxDistance = upperLength + lowerLength - 1;
+  // При сгибании колена больше 150° нога выглядит сломанной.
+  const minDistance = Math.max(
+    Math.abs(upperLength - lowerLength) + 1,
+    2 * Math.min(upperLength, lowerLength) * Math.sin((15 * Math.PI) / 180),
+  );
+
+  const x = clampNumber(target.x, plantedAnkle.x - 75, plantedAnkle.x + 75);
+  const y = clampNumber(target.y, plantedAnkle.y - maxDistance, plantedAnkle.y - minDistance);
+  let dx = x - plantedAnkle.x;
+  let dy = y - plantedAnkle.y;
+  let distance = Math.hypot(dx, dy);
+  if (distance < 0.001) {
+    dx = 0;
+    dy = -minDistance;
+    distance = minDistance;
+  }
+  const clampedDistance = clampNumber(distance, minDistance, maxDistance);
+  const hip = {
+    x: plantedAnkle.x + (dx / distance) * clampedDistance,
+    y: plantedAnkle.y + (dy / distance) * clampedDistance,
+  };
+  const solution = solveTwoBoneIK(hip, plantedAnkle, upperLength, lowerLength);
+
+  return {
+    ...pose,
+    hipX: Math.round(hip.x * 10) / 10,
+    hipY: Math.round(hip.y * 10) / 10,
+    thighAngle: solution.thighAngle,
+    shinAngle: solution.shinAngle,
+  };
 }
 
 export interface DrawSegment {
@@ -471,8 +718,10 @@ export interface DrawHandle {
   id: string;
   point: Point;
   pivot: Point;
-  segment: PoseSegmentKey;
+  /** Для таза это режим перемещения, для остальных — поворот сегмента. */
+  segment: PoseSegmentKey | 'pelvis';
   label: string;
+  mode?: 'rotate' | 'move';
 }
 
 export interface SideGeometry {
@@ -515,7 +764,7 @@ export interface FrontGeometry {
 
 export function buildSideGeometry(pose: SidePose, dims: BodyDimensions): SideGeometry {
   const s = dims.scale;
-  const hip = { x: BODY_DRAW.hipX, y: BODY_DRAW.hipY };
+  const hip = { x: pose.hipX, y: pose.hipY };
   const shoulder = pointAlong(hip, pose.torsoAngle, dims.torsoLengthCm * s);
   const headRadius = (dims.headHeightCm * s) / 2;
   const head = pointAlong(shoulder, pose.torsoAngle, dims.neckLengthCm * s + headRadius);
@@ -537,6 +786,14 @@ export function buildSideGeometry(pose: SidePose, dims: BodyDimensions): SideGeo
   ];
 
   const handles: DrawHandle[] = [
+    {
+      id: 'side-pelvis',
+      point: hip,
+      pivot: hip,
+      segment: 'pelvis',
+      mode: 'move',
+      label: 'Таз и глубина приседа',
+    },
     { id: 'side-shoulder', point: shoulder, pivot: hip, segment: 'torsoAngle', label: 'Наклон корпуса' },
     { id: 'side-elbow', point: elbow, pivot: shoulder, segment: 'upperArmAngle', label: 'Плечо' },
     { id: 'side-hand', point: hand, pivot: elbow, segment: 'forearmAngle', label: 'Локоть' },
@@ -753,12 +1010,23 @@ export const EXERCISE_PRESETS: ExercisePreset[] = [
     view: 'side',
     checkpoint: 'Нижняя точка, бёдра около параллели',
     cue: 'Тяни таз вниз, колени по направлению стоп. Корпус наклоняется, но не складывается.',
-    side: side({ torsoAngle: -65, upperArmAngle: 20, forearmAngle: -70, thighAngle: 10, shinAngle: 100, footAngle: 0 }),
+    // Таз отведён назад и опущен, стопа стоит на полу: это настоящий присед,
+    // а не «сидение в воздухе» с неподвижным тазом.
+    side: side({
+      hipX: 108,
+      hipY: 370,
+      torsoAngle: -65,
+      upperArmAngle: 20,
+      forearmAngle: -70,
+      thighAngle: 10,
+      shinAngle: 120,
+      footAngle: 0,
+    }),
     front: front({
       leftUpperArmAngle: 105,
       rightUpperArmAngle: 75,
-      leftForearmAngle: 15,
-      rightForearmAngle: 165,
+      leftForearmAngle: 165,
+      rightForearmAngle: 15,
       leftThighAngle: 96,
       rightThighAngle: 84,
       leftShinAngle: 96,
@@ -779,7 +1047,16 @@ export const EXERCISE_PRESETS: ExercisePreset[] = [
     view: 'side',
     checkpoint: 'Старт: штанга у голени, спина нейтральна',
     cue: 'Тянись грудью вперёд, а тазом назад. Руки прямые, гриф близко к ногам.',
-    side: side({ torsoAngle: -45, upperArmAngle: 90, forearmAngle: 90, thighAngle: 75, shinAngle: 90, footAngle: 0 }),
+    side: side({
+      hipX: 132,
+      hipY: 270,
+      torsoAngle: -45,
+      upperArmAngle: 90,
+      forearmAngle: 90,
+      thighAngle: 75,
+      shinAngle: 90,
+      footAngle: 0,
+    }),
     front: front({
       leftUpperArmAngle: 95,
       rightUpperArmAngle: 85,
@@ -883,12 +1160,12 @@ export const EXERCISE_PRESETS: ExercisePreset[] = [
     view: 'front',
     checkpoint: 'Низ: гриф у груди, лопатки сведены',
     cue: 'Локти под углом около 45–60°, предплечья ближе к вертикали. Схема показывает углы, а не положение на скамье.',
-    side: side({ torsoAngle: -80, upperArmAngle: 20, forearmAngle: 90, thighAngle: 90, shinAngle: 90, footAngle: 0 }),
+    side: side({ torsoAngle: -80, upperArmAngle: 20, forearmAngle: -70, thighAngle: 90, shinAngle: 90, footAngle: 0 }),
     front: front({
       leftUpperArmAngle: 140,
       rightUpperArmAngle: 40,
-      leftForearmAngle: 70,
-      rightForearmAngle: 110,
+      leftForearmAngle: -150,
+      rightForearmAngle: -30,
       leftThighAngle: 92,
       rightThighAngle: 88,
       leftShinAngle: 92,
@@ -910,7 +1187,7 @@ export const EXERCISE_PRESETS: ExercisePreset[] = [
     view: 'side',
     checkpoint: 'Середина тяги, локоть согнут',
     cue: 'Корпус зафиксирован, тяните локти назад к поясу, не выпрямляйте спину рывком.',
-    side: side({ torsoAngle: -55, upperArmAngle: 30, forearmAngle: 120, thighAngle: 80, shinAngle: 90, footAngle: 0 }),
+    side: side({ torsoAngle: -55, upperArmAngle: 120, forearmAngle: 30, thighAngle: 80, shinAngle: 90, footAngle: 0 }),
     front: front({
       leftUpperArmAngle: 95,
       rightUpperArmAngle: 85,
@@ -936,7 +1213,16 @@ export const EXERCISE_PRESETS: ExercisePreset[] = [
     view: 'side',
     checkpoint: 'Нижняя точка, переднее колено над стопой',
     cue: 'Держите корпус вертикально, переднее колено не уходит далеко за носок. Схема показывает переднюю ногу.',
-    side: side({ torsoAngle: -85, upperArmAngle: 90, forearmAngle: 90, thighAngle: -5, shinAngle: 80, footAngle: 0 }),
+    side: side({
+      hipX: 108,
+      hipY: 380,
+      torsoAngle: -88,
+      upperArmAngle: 90,
+      forearmAngle: 90,
+      thighAngle: 10,
+      shinAngle: 120,
+      footAngle: 0,
+    }),
     front: front({
       leftThighAngle: 98,
       rightThighAngle: 82,
@@ -965,6 +1251,533 @@ export function poseForExercise(preset: ExercisePreset): BodyPose {
   return {
     side: { ...preset.side },
     front: { ...preset.front },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Симуляция упражнения и расчёт нагрузки                              */
+/* ------------------------------------------------------------------ */
+
+export type LoadJoint = 'hip' | 'knee' | 'spine' | 'shoulder' | 'elbow' | 'ankle';
+export type LoadLevel = 'low' | 'moderate' | 'high' | 'veryHigh';
+
+export interface SimulationExercise {
+  id: string;
+  presetId: string;
+  name: string;
+  focus: string;
+  view: BodyView;
+  equipment: 'barbell' | 'dumbbell' | 'bodyweight';
+  /** Верхняя точка амплитуды. */
+  start: BodyPose;
+  /** Нижняя/конечная точка амплитуды. */
+  end: BodyPose;
+  /** Стопа остаётся на полу, а колено решается через IK. */
+  plantedFoot: boolean;
+  /** Какая доля массы тела работает как внешняя нагрузка (подтягивания, брусья). */
+  bodyweightLoad: number;
+  joints: LoadJoint[];
+  cue: string;
+  phaseLabels: [string, string];
+}
+
+export interface JointLoad {
+  joint: LoadJoint;
+  label: string;
+  muscles: string;
+  torqueNm: number;
+  index: number;
+  level: LoadLevel;
+}
+
+export interface SimulationSeriesPoint {
+  phase: number;
+  loads: JointLoad[];
+  maxIndex: number;
+  peakJoint: LoadJoint;
+}
+
+export interface SimulationScan {
+  loads: JointLoad[];
+  peakIndex: number;
+  peakJoint: LoadJoint;
+  level: LoadLevel;
+  cautionFromKg: number | null;
+  unsafeFromKg: number | null;
+  safeWeightKg: number | null;
+  safeAmplitude: number;
+}
+
+const LOAD_META: Record<LoadJoint, { label: string; muscles: string }> = {
+  hip: { label: 'Тазобедренный', muscles: 'ягодицы · бицепс бедра' },
+  knee: { label: 'Коленный', muscles: 'квадрицепс' },
+  spine: { label: 'Поясница', muscles: 'разгибатели спины' },
+  shoulder: { label: 'Плечевой', muscles: 'дельты · вращательная манжета' },
+  elbow: { label: 'Локтевой', muscles: 'бицепс · трицепс' },
+  ankle: { label: 'Голеностоп', muscles: 'икры · ахилл' },
+};
+
+const LOAD_LEVEL_LABEL: Record<LoadLevel, string> = {
+  low: 'низкая',
+  moderate: 'умеренная',
+  high: 'высокая',
+  veryHigh: 'очень высокая',
+};
+
+export const LOAD_LEVEL_COLOR: Record<LoadLevel, string> = {
+  low: '#34d399',
+  moderate: '#fbbf24',
+  high: '#fb923c',
+  veryHigh: '#fb7185',
+};
+
+export function loadLevelLabel(level: LoadLevel): string {
+  return LOAD_LEVEL_LABEL[level];
+}
+
+export function loadLevel(index: number): LoadLevel {
+  if (index < 0.18) return 'low';
+  if (index < 0.3) return 'moderate';
+  if (index < 0.42) return 'high';
+  return 'veryHigh';
+}
+const simulationStart = (
+  sidePatch: Partial<SidePose> = {},
+  frontPatch: Partial<FrontPose> = {},
+): BodyPose => ({
+  side: { ...DEFAULT_SIDE_POSE, ...sidePatch },
+  front: { ...DEFAULT_FRONT_POSE, ...frontPatch },
+});
+
+const presetFor = (id: string): ExercisePreset => {
+  const preset = exerciseById(id);
+  if (!preset) throw new Error(`Не найдено упражнение ${id}`);
+  return preset;
+};
+
+/**
+ * Верхняя и нижняя позы для анимации. Для упражнений со стопой на полу
+ * нижняя точка решается через IK, поэтому стопа не уезжает с пола.
+ */
+export const SIMULATION_EXERCISES: SimulationExercise[] = [
+  {
+    id: 'squat',
+    presetId: 'squat',
+    name: presetFor('squat').name,
+    focus: presetFor('squat').focus,
+    view: 'side',
+    equipment: 'barbell',
+    start: simulationStart(),
+    end: poseForExercise(presetFor('squat')),
+    plantedFoot: true,
+    bodyweightLoad: 0,
+    joints: ['hip', 'knee', 'spine'],
+    cue: presetFor('squat').cue,
+    phaseLabels: ['Стоя', 'Низ'],
+  },
+  {
+    id: 'deadlift',
+    presetId: 'deadlift',
+    name: presetFor('deadlift').name,
+    focus: presetFor('deadlift').focus,
+    view: 'side',
+    equipment: 'barbell',
+    start: simulationStart(),
+    end: poseForExercise(presetFor('deadlift')),
+    plantedFoot: true,
+    bodyweightLoad: 0,
+    joints: ['hip', 'knee', 'spine'],
+    cue: presetFor('deadlift').cue,
+    phaseLabels: ['Стоя', 'Старт'],
+  },
+  {
+    id: 'overhead',
+    presetId: 'overhead',
+    name: presetFor('overhead').name,
+    focus: presetFor('overhead').focus,
+    view: 'side',
+    equipment: 'barbell',
+    start: simulationStart({ upperArmAngle: 40, forearmAngle: -80 }),
+    end: poseForExercise(presetFor('overhead')),
+    plantedFoot: true,
+    bodyweightLoad: 0,
+    joints: ['shoulder', 'elbow', 'spine'],
+    cue: presetFor('overhead').cue,
+    phaseLabels: ['У плеч', 'Над головой'],
+  },
+  {
+    id: 'row',
+    presetId: 'row',
+    name: presetFor('row').name,
+    focus: presetFor('row').focus,
+    view: 'side',
+    equipment: 'barbell',
+    start: simulationStart({
+      torsoAngle: -55,
+      upperArmAngle: 90,
+      forearmAngle: 90,
+      thighAngle: 80,
+      shinAngle: 90,
+    }),
+    end: poseForExercise(presetFor('row')),
+    plantedFoot: true,
+    bodyweightLoad: 0,
+    joints: ['shoulder', 'elbow', 'spine'],
+    cue: presetFor('row').cue,
+    phaseLabels: ['Руки вниз', 'Локоть у пояса'],
+  },
+  {
+    id: 'lunge',
+    presetId: 'lunge',
+    name: presetFor('lunge').name,
+    focus: presetFor('lunge').focus,
+    view: 'side',
+    equipment: 'dumbbell',
+    start: simulationStart(),
+    end: poseForExercise(presetFor('lunge')),
+    plantedFoot: true,
+    bodyweightLoad: 0,
+    joints: ['hip', 'knee', 'spine'],
+    cue: presetFor('lunge').cue,
+    phaseLabels: ['Стоя', 'Низ'],
+  },
+  {
+    id: 'dips',
+    presetId: 'dips',
+    name: presetFor('dips').name,
+    focus: presetFor('dips').focus,
+    view: 'side',
+    equipment: 'bodyweight',
+    start: simulationStart({
+      torsoAngle: -85,
+      upperArmAngle: 90,
+      forearmAngle: 90,
+      thighAngle: 90,
+      shinAngle: 95,
+    }),
+    end: poseForExercise(presetFor('dips')),
+    plantedFoot: false,
+    bodyweightLoad: 1,
+    joints: ['shoulder', 'elbow'],
+    cue: presetFor('dips').cue,
+    phaseLabels: ['Верх', 'Низ'],
+  },
+  {
+    id: 'pullup',
+    presetId: 'pullup',
+    name: presetFor('pullup').name,
+    focus: presetFor('pullup').focus,
+    view: 'side',
+    equipment: 'bodyweight',
+    start: simulationStart({
+      torsoAngle: -88,
+      upperArmAngle: -90,
+      forearmAngle: -90,
+      thighAngle: 90,
+      shinAngle: 110,
+    }),
+    end: poseForExercise(presetFor('pullup')),
+    plantedFoot: false,
+    bodyweightLoad: 1,
+    joints: ['shoulder', 'elbow'],
+    cue: presetFor('pullup').cue,
+    phaseLabels: ['Вис', 'Верх'],
+  },
+  {
+    id: 'bench',
+    presetId: 'bench',
+    name: presetFor('bench').name,
+    focus: presetFor('bench').focus,
+    view: 'front',
+    equipment: 'barbell',
+    start: simulationStart(
+      {},
+      {
+        leftUpperArmAngle: -90,
+        rightUpperArmAngle: -90,
+        leftForearmAngle: -90,
+        rightForearmAngle: -90,
+      },
+    ),
+    end: poseForExercise(presetFor('bench')),
+    plantedFoot: false,
+    bodyweightLoad: 0,
+    joints: ['shoulder', 'elbow'],
+    cue: presetFor('bench').cue,
+    phaseLabels: ['Руки прямые', 'Гриф у груди'],
+  },
+];
+
+export function simulationById(id: string): SimulationExercise | undefined {
+  return SIMULATION_EXERCISES.find((exercise) => exercise.id === id);
+}
+
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+/** Поза на выбранной фазе амплитуды: 0 — верх, 1 — низ. */
+export function simulationPose(
+  exercise: SimulationExercise,
+  phase: number,
+  dims: BodyDimensions,
+): BodyPose {
+  const t = clampNumber(phase, 0, 1);
+  const side: SidePose = {
+    hipX: lerp(exercise.start.side.hipX, exercise.end.side.hipX, t),
+    hipY: lerp(exercise.start.side.hipY, exercise.end.side.hipY, t),
+    torsoAngle: roundAngle(lerp(exercise.start.side.torsoAngle, exercise.end.side.torsoAngle, t)),
+    upperArmAngle: roundAngle(lerp(exercise.start.side.upperArmAngle, exercise.end.side.upperArmAngle, t)),
+    forearmAngle: roundAngle(lerp(exercise.start.side.forearmAngle, exercise.end.side.forearmAngle, t)),
+    thighAngle: roundAngle(lerp(exercise.start.side.thighAngle, exercise.end.side.thighAngle, t)),
+    shinAngle: roundAngle(lerp(exercise.start.side.shinAngle, exercise.end.side.shinAngle, t)),
+    footAngle: roundAngle(lerp(exercise.start.side.footAngle, exercise.end.side.footAngle, t)),
+  };
+  const front: FrontPose = {
+    torsoAngle: roundAngle(lerp(exercise.start.front.torsoAngle, exercise.end.front.torsoAngle, t)),
+    leftUpperArmAngle: roundAngle(
+      lerp(exercise.start.front.leftUpperArmAngle, exercise.end.front.leftUpperArmAngle, t),
+    ),
+    rightUpperArmAngle: roundAngle(
+      lerp(exercise.start.front.rightUpperArmAngle, exercise.end.front.rightUpperArmAngle, t),
+    ),
+    leftForearmAngle: roundAngle(
+      lerp(exercise.start.front.leftForearmAngle, exercise.end.front.leftForearmAngle, t),
+    ),
+    rightForearmAngle: roundAngle(
+      lerp(exercise.start.front.rightForearmAngle, exercise.end.front.rightForearmAngle, t),
+    ),
+    leftThighAngle: roundAngle(
+      lerp(exercise.start.front.leftThighAngle, exercise.end.front.leftThighAngle, t),
+    ),
+    rightThighAngle: roundAngle(
+      lerp(exercise.start.front.rightThighAngle, exercise.end.front.rightThighAngle, t),
+    ),
+    leftShinAngle: roundAngle(
+      lerp(exercise.start.front.leftShinAngle, exercise.end.front.leftShinAngle, t),
+    ),
+    rightShinAngle: roundAngle(
+      lerp(exercise.start.front.rightShinAngle, exercise.end.front.rightShinAngle, t),
+    ),
+  };
+
+  // Стопа стоит на полу: колено и голень считаем через IK, а не просто
+  // линейно поворачиваем — иначе на середине приседа стопа уходит под пол.
+  // Опорная точка берётся из верхней позы, поэтому стопа не смещается за цикл.
+  if (exercise.plantedFoot && exercise.view === 'side') {
+    const planted = buildSideGeometry(exercise.start.side, dims).ankle;
+    const ik = solveTwoBoneIK(
+      { x: side.hipX, y: side.hipY },
+      planted,
+      dims.thighLengthCm * dims.scale,
+      dims.shinLengthCm * dims.scale,
+    );
+    side.thighAngle = ik.thighAngle;
+    side.shinAngle = ik.shinAngle;
+  }
+
+  return { side, front };
+}
+
+/**
+ * Упрощённая оценка моментов в суставах по 2D-проекции. Это не обратная
+ * динамика и не медицинский вывод: модель сравнивает позы и вес между собой.
+ */
+export function estimateSimulationLoads(
+  exercise: SimulationExercise,
+  pose: BodyPose,
+  dims: BodyDimensions,
+  bodyWeightKg: number,
+  addedWeightKg: number,
+): JointLoad[] {
+  const bodyWeight = bodyWeightKg > 0 ? bodyWeightKg : 75;
+  const added = Math.max(0, Number.isFinite(addedWeightKg) ? addedWeightKg : 0);
+  const external = added + exercise.bodyweightLoad * bodyWeight;
+  const side = buildSideGeometry(pose.side, dims);
+  const front = buildFrontGeometry(pose.front, dims);
+  const scale = dims.scale;
+  const heightM = dims.heightCm / 100;
+  const gravity = 9.81;
+  const normalizer = bodyWeight * gravity * heightM;
+  const horizontal = (a: Point, b: Point): number => Math.abs(a.x - b.x) / scale / 100;
+
+  const make = (joint: LoadJoint, leverM: number, massKg: number): JointLoad => {
+    const torqueNm = Math.max(0, massKg * gravity * leverM);
+    const index = torqueNm / normalizer;
+    return {
+      joint,
+      label: LOAD_META[joint].label,
+      muscles: LOAD_META[joint].muscles,
+      torqueNm: Math.round(torqueNm),
+      index: Math.round(index * 1000) / 1000,
+      level: loadLevel(index),
+    };
+  };
+
+  return exercise.joints.map((joint) => {
+    if (exercise.view === 'front') {
+      if (joint === 'shoulder') {
+        const lever = Math.max(
+          horizontal(front.leftShoulder, front.leftHand),
+          horizontal(front.rightShoulder, front.rightHand),
+        );
+        return make(joint, lever, external + bodyWeight * 0.08);
+      }
+      if (joint === 'elbow') {
+        const lever = Math.max(
+          horizontal(front.leftElbow, front.leftHand),
+          horizontal(front.rightElbow, front.rightHand),
+        );
+        return make(joint, lever, external + bodyWeight * 0.03);
+      }
+      if (joint === 'knee') {
+        const lever = Math.max(
+          horizontal(front.leftKnee, front.leftAnkle),
+          horizontal(front.rightKnee, front.rightAnkle),
+        );
+        return make(joint, lever, external + bodyWeight);
+      }
+      if (joint === 'hip') {
+        const lever = Math.max(
+          horizontal(front.leftHip, front.leftKnee),
+          horizontal(front.rightHip, front.rightKnee),
+        );
+        return make(joint, lever, external + bodyWeight * 0.45);
+      }
+    }
+
+    if (joint === 'hip') {
+      return make(joint, horizontal(side.hip, side.shoulder), external + bodyWeight * 0.45);
+    }
+    if (joint === 'knee') {
+      return make(joint, horizontal(side.knee, side.ankle), external + bodyWeight);
+    }
+    if (joint === 'spine') {
+      const lever = Math.max(
+        horizontal(side.hip, side.shoulder),
+        horizontal(side.hip, side.hand) * 0.7,
+      );
+      return make(joint, lever, external + bodyWeight * 0.35);
+    }
+    if (joint === 'shoulder') {
+      return make(joint, horizontal(side.shoulder, side.hand), external + bodyWeight * 0.08);
+    }
+    if (joint === 'elbow') {
+      return make(joint, horizontal(side.elbow, side.hand), external + bodyWeight * 0.03);
+    }
+    return make(joint, horizontal(side.ankle, side.toe), external + bodyWeight);
+  });
+}
+
+export function simulationSeries(
+  exercise: SimulationExercise,
+  dims: BodyDimensions,
+  bodyWeightKg: number,
+  addedWeightKg: number,
+  steps = 21,
+): SimulationSeriesPoint[] {
+  const count = Math.max(2, Math.round(steps));
+  return Array.from({ length: count }, (_, index) => {
+    const phase = index / (count - 1);
+    const loads = estimateSimulationLoads(
+      exercise,
+      simulationPose(exercise, phase, dims),
+      dims,
+      bodyWeightKg,
+      addedWeightKg,
+    );
+    let peakJoint: LoadJoint = exercise.joints[0] || 'knee';
+    let maxIndex = 0;
+    for (const load of loads) {
+      if (load.index > maxIndex) {
+        maxIndex = load.index;
+        peakJoint = load.joint;
+      }
+    }
+    return { phase, loads, maxIndex, peakJoint };
+  });
+}
+
+/** Ищет границы, где расчётная нагрузка выходит в жёлтую и красную зоны. */
+export function scanSimulation(
+  exercise: SimulationExercise,
+  dims: BodyDimensions,
+  bodyWeightKg: number,
+  addedWeightKg: number,
+  phase: number,
+): SimulationScan {
+  const loads = estimateSimulationLoads(
+    exercise,
+    simulationPose(exercise, phase, dims),
+    dims,
+    bodyWeightKg,
+    addedWeightKg,
+  );
+  let peakIndex = 0;
+  let peakJoint: LoadJoint = exercise.joints[0] || 'knee';
+  for (const load of loads) {
+    if (load.index > peakIndex) {
+      peakIndex = load.index;
+      peakJoint = load.joint;
+    }
+  }
+
+  const peakAtWeight = (weight: number): number => {
+    let peak = 0;
+    for (let step = 0; step <= 10; step += 1) {
+      const frameLoads = estimateSimulationLoads(
+        exercise,
+        simulationPose(exercise, step / 10, dims),
+        dims,
+        bodyWeightKg,
+        weight,
+      );
+      for (const load of frameLoads) peak = Math.max(peak, load.index);
+    }
+    return peak;
+  };
+
+  let cautionFromKg: number | null = null;
+  let unsafeFromKg: number | null = null;
+  for (let weight = 0; weight <= 300; weight += 5) {
+    const peak = peakAtWeight(weight);
+    if (cautionFromKg === null && peak >= 0.3) cautionFromKg = weight;
+    if (unsafeFromKg === null && peak >= 0.42) {
+      unsafeFromKg = weight;
+      break;
+    }
+  }
+
+  let safeWeightKg: number | null = null;
+  for (let weight = 300; weight >= 0; weight -= 5) {
+    if (peakAtWeight(weight) < 0.42) {
+      safeWeightKg = weight;
+      break;
+    }
+  }
+
+  let safeAmplitude = 0;
+  for (let step = 20; step >= 0; step -= 1) {
+    const frameLoads = estimateSimulationLoads(
+      exercise,
+      simulationPose(exercise, step / 20, dims),
+      dims,
+      bodyWeightKg,
+      addedWeightKg,
+    );
+    if (frameLoads.every((load) => load.index < 0.42)) {
+      safeAmplitude = step / 20;
+      break;
+    }
+  }
+
+  return {
+    loads,
+    peakIndex: Math.round(peakIndex * 1000) / 1000,
+    peakJoint,
+    level: loadLevel(peakIndex),
+    cautionFromKg,
+    unsafeFromKg,
+    safeWeightKg,
+    safeAmplitude,
   };
 }
 

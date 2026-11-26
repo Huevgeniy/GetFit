@@ -12,12 +12,19 @@ const SIZE = 256;
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
+interface Transform {
+  zoom: number;
+  x: number;
+  y: number;
+}
+
+const INITIAL_TRANSFORM: Transform = { zoom: 1, x: 0, y: 0 };
+
 export const BodyAvatarModal: React.FC<BodyAvatarModalProps> = ({ src, onSave, onClose }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
-  const [zoom, setZoom] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [transform, setTransform] = useState<Transform>(INITIAL_TRANSFORM);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,6 +33,7 @@ export const BodyAvatarModal: React.FC<BodyAvatarModalProps> = ({ src, onSave, o
     img.onload = () => {
       if (!cancelled) {
         setImage(img);
+        setTransform(INITIAL_TRANSFORM);
         setError(null);
       }
     };
@@ -38,21 +46,34 @@ export const BodyAvatarModal: React.FC<BodyAvatarModalProps> = ({ src, onSave, o
     };
   }, [src]);
 
+  const clampOffset = (
+    value: { x: number; y: number },
+    zoom: number,
+    img: HTMLImageElement,
+  ): { x: number; y: number } => {
+    const baseScale = Math.max(SIZE / img.width, SIZE / img.height) * zoom;
+    const drawWidth = img.width * baseScale;
+    const drawHeight = img.height * baseScale;
+    return {
+      x: clamp(value.x, SIZE - drawWidth, 0),
+      y: clamp(value.y, SIZE - drawHeight, 0),
+    };
+  };
+
   useEffect(() => {
     if (!image) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
-    const baseScale = Math.max(SIZE / image.width, SIZE / image.height) * zoom;
+    const baseScale = Math.max(SIZE / image.width, SIZE / image.height) * transform.zoom;
     const drawWidth = image.width * baseScale;
     const drawHeight = image.height * baseScale;
-    const x = clamp(offset.x, SIZE - drawWidth, 0);
-    const y = clamp(offset.y, SIZE - drawHeight, 0);
+    const offset = clampOffset({ x: transform.x, y: transform.y }, transform.zoom, image);
 
     ctx.clearRect(0, 0, SIZE, SIZE);
     ctx.fillStyle = '#081016';
     ctx.fillRect(0, 0, SIZE, SIZE);
-    ctx.drawImage(image, x, y, drawWidth, drawHeight);
+    ctx.drawImage(image, offset.x, offset.y, drawWidth, drawHeight);
 
     // Мягкая круглая маска: видно, как фото попадёт в голову модели.
     ctx.save();
@@ -61,7 +82,7 @@ export const BodyAvatarModal: React.FC<BodyAvatarModalProps> = ({ src, onSave, o
     ctx.arc(SIZE / 2, SIZE / 2, SIZE / 2 - 2, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-  }, [image, zoom, offset]);
+  }, [image, transform]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -70,17 +91,17 @@ export const BodyAvatarModal: React.FC<BodyAvatarModalProps> = ({ src, onSave, o
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!dragRef.current || !image) return;
-    const dx = event.clientX - dragRef.current.x;
-    const dy = event.clientY - dragRef.current.y;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    // Переводим пиксели экрана в пиксели canvas: на телефоне canvas
+    // отображается меньше 256 px, поэтому без коэффициента фото «убегает».
+    const ratio = SIZE / rect.width;
+    const dx = (event.clientX - dragRef.current.x) * ratio;
+    const dy = (event.clientY - dragRef.current.y) * ratio;
     dragRef.current = { x: event.clientX, y: event.clientY };
-    setOffset((prev) => {
-      const baseScale = Math.max(SIZE / image.width, SIZE / image.height) * zoom;
-      const drawWidth = image.width * baseScale;
-      const drawHeight = image.height * baseScale;
-      return {
-        x: clamp(prev.x + dx, SIZE - drawWidth, 0),
-        y: clamp(prev.y + dy, SIZE - drawHeight, 0),
-      };
+    setTransform((prev) => {
+      const next = clampOffset({ x: prev.x + dx, y: prev.y + dy }, prev.zoom, image);
+      return { ...prev, x: next.x, y: next.y };
     });
   };
 
@@ -91,6 +112,25 @@ export const BodyAvatarModal: React.FC<BodyAvatarModalProps> = ({ src, onSave, o
     } catch {
       /* ignore */
     }
+  };
+
+  const handleZoomChange = (value: number) => {
+    if (!image) return;
+    setTransform((prev) => {
+      const zoom = clamp(value, 1, 3);
+      if (zoom === prev.zoom) return prev;
+      // Масштаб вокруг центра: лицо в центре кадра не уезжает при зуме.
+      const ratio = zoom / prev.zoom;
+      const next = clampOffset(
+        {
+          x: SIZE / 2 - (SIZE / 2 - prev.x) * ratio,
+          y: SIZE / 2 - (SIZE / 2 - prev.y) * ratio,
+        },
+        zoom,
+        image,
+      );
+      return { zoom, x: next.x, y: next.y };
+    });
   };
 
   const handleSave = () => {
@@ -158,8 +198,8 @@ export const BodyAvatarModal: React.FC<BodyAvatarModalProps> = ({ src, onSave, o
               min={1}
               max={3}
               step={0.02}
-              value={zoom}
-              onChange={(event) => setZoom(Number(event.target.value))}
+              value={transform.zoom}
+              onChange={(event) => handleZoomChange(Number(event.target.value))}
               className="w-full accent-emerald-500"
             />
           </label>

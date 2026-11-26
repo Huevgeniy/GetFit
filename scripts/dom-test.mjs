@@ -47,6 +47,9 @@ const { window } = dom;
 
 // В интеграционном тесте не нужен онбординг-оверлей: он сам переключает вкладки
 window.localStorage.setItem('getfit_tour_completed', 'true');
+// Обучение по «Телу» проверяется отдельным тестом туров: здесь оно только мешало бы кликам.
+window.localStorage.setItem('getfit_tour_done:tg:555:body', 'true');
+window.localStorage.setItem('getfit_tour_done:local:body', 'true');
 
 const noop = () => undefined;
 // В Node 24 часть глобалов (navigator, localStorage) объявлена только для чтения
@@ -467,6 +470,78 @@ if (moreForBody) {
         'проверка показывает безопасные коридоры',
         text().includes('безопасно') && text().includes('Глубина по колену'),
       );
+    }
+
+    const simulationTab = container.querySelector('#body-tab-simulation');
+    if (simulationTab) {
+      await act(async () => {
+        simulationTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 140));
+      });
+      check(
+        'вкладка симуляции показывает сцену и нагрузку',
+        text().includes('Симуляция движения') && text().includes('Суставы под нагрузкой'),
+      );
+      const simSelect = container.querySelector('#body-simulation-exercise');
+      check(
+        'в симуляции есть выбор из восьми упражнений',
+        simSelect instanceof window.HTMLSelectElement && simSelect.options.length === 8,
+        simSelect ? String(simSelect.options.length) : 'нет',
+      );
+      const simWeight = container.querySelector('#body-simulation-weight');
+      const simAmplitude = container.querySelector('#body-simulation-amplitude');
+      check(
+        'в симуляции есть вес и амплитуда',
+        Boolean(simWeight) && Boolean(simAmplitude),
+      );
+      check(
+        'график нагрузки отрисован',
+        Boolean(container.querySelector('svg[aria-label*="График нагрузки"]')),
+      );
+      check(
+        'нагрузка разложена по суставам',
+        text().includes('Тазобедренный') && text().includes('Коленный'),
+      );
+      if (simWeight) {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value',
+        )?.set;
+        await act(async () => {
+          setter?.call(simWeight, '140');
+          simWeight.dispatchEvent(new window.Event('input', { bubbles: true }));
+        });
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        });
+        check(
+          'симуляция предупреждает о красной зоне',
+          text().includes('красной зоне'),
+          text().slice(-220),
+        );
+      }
+      const playSimulation = buttons().find((el) =>
+        (el.textContent || '').trim().startsWith('Запустить'),
+      );
+      if (playSimulation) {
+        await act(async () => {
+          playSimulation.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        });
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        });
+        check('симуляция запускает анимацию', text().includes('Пауза'));
+        const pauseSimulation = buttons().find((el) =>
+          (el.textContent || '').trim().startsWith('Пауза'),
+        );
+        if (pauseSimulation) {
+          await act(async () => {
+            pauseSimulation.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+          });
+        }
+      }
     }
 
     // Возвращаемся в профиль для проверок напоминаний и резервной копии.

@@ -311,6 +311,7 @@ const flags = (enabled = []) => ({
   ranks: enabled.includes('ranks'),
   lab: enabled.includes('lab'),
   periodization: enabled.includes('periodization'),
+  body: enabled.includes('body'),
 });
 const placementOf = (steps) =>
   steps.find((step) => step.id === 'optional-sections' || step.id === 'optional-off');
@@ -365,6 +366,23 @@ check(
     manySections.bullets.some((line) => line.includes('Лаборатория')) &&
     manySections.bullets.some((line) => line.includes('Зарубы')),
   JSON.stringify(manySections),
+);
+
+const onlyBody = placementOf(buildMainTourSteps(flags(['body'])));
+check(
+  'только тело: раздел уходит под «Ещё»',
+  onlyBody && onlyBody.target === '#tour-tab-more' && !onlyBody.tab &&
+    onlyBody.bullets.some((line) => line.includes('Тело и биомеханика') && line.includes('«Ещё»')),
+  JSON.stringify(onlyBody),
+);
+
+const bodyAndLab = placementOf(buildMainTourSteps(flags(['body', 'lab'])));
+check(
+  'тело и лаборатория: оба раздела под «Ещё»',
+  bodyAndLab && bodyAndLab.target === '#tour-tab-more' &&
+    bodyAndLab.bullets.some((line) => line.includes('Тело и биомеханика')) &&
+    bodyAndLab.bullets.some((line) => line.includes('Лаборатория')),
+  JSON.stringify(bodyAndLab),
 );
 
 const allSteps = SECTION_TOUR_IDS.flatMap((id) => buildSectionTour(id));

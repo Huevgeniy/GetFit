@@ -12,7 +12,7 @@ import { FeatureFlags } from './features';
 
 export type TourTarget = string | (() => Element | null);
 
-export type SectionTourId = 'marathons' | 'discipline' | 'ranks' | 'lab' | 'periodization';
+export type SectionTourId = 'marathons' | 'discipline' | 'ranks' | 'lab' | 'periodization' | 'body';
 export type TourId = 'main' | SectionTourId;
 
 export interface TourStep {
@@ -39,6 +39,7 @@ export const SECTION_TOUR_IDS: SectionTourId[] = [
   'ranks',
   'lab',
   'periodization',
+  'body',
 ];
 
 const storage = (): Storage | null => {
@@ -125,6 +126,7 @@ const FEATURE_PLACEMENT: Record<SectionTourId, string> = {
   ranks: 'вкладка «Разряды» в нижнем меню',
   lab: 'вкладка «Лаборатория» в нижнем меню',
   periodization: 'вкладка «Циклы» в нижнем меню',
+  body: 'кнопка «Ещё» → «Тело»',
 };
 
 const FEATURE_LABEL: Record<SectionTourId, string> = {
@@ -133,14 +135,16 @@ const FEATURE_LABEL: Record<SectionTourId, string> = {
   ranks: 'Спортивные разряды',
   lab: 'Лаборатория',
   periodization: 'Циклы тренировок',
+  body: 'Тело и биомеханика',
 };
 
 const enabledSections = (features?: FeatureFlags): SectionTourId[] =>
   SECTION_TOUR_IDS.filter((key) => Boolean(features?.[key]));
 
-/** Есть ли в нижнем меню «Ещё»: один дополнительный раздел показывается напрямую. */
+/** «Ещё» появляется, если включено больше одного нижнего раздела или включено «Тело». */
 const hasMoreMenu = (features?: FeatureFlags): boolean => {
-  const bottomTabs = (['discipline', 'ranks', 'lab', 'periodization', 'body'] as const).filter(
+  if (features?.body) return true;
+  const bottomTabs = (['discipline', 'ranks', 'lab', 'periodization'] as const).filter(
     (key) => Boolean(features?.[key]),
   );
   // Зарубы тоже занимают место в нижнем меню, поэтому учитываем их в переполнении.
@@ -152,18 +156,21 @@ export function buildMainTourSteps(features?: FeatureFlags): TourStep[] {
   const battlesEnabled = Boolean(features?.battles);
   const bodyEnabled = Boolean(features?.body);
   const moreMenu = hasMoreMenu(features);
-  const optionalNavCount = sections.length + (battlesEnabled ? 1 : 0) + (bodyEnabled ? 1 : 0);
+  const optionalNavCount = sections.length + (battlesEnabled ? 1 : 0);
 
-  // Марафоны не занимают место в нижнем меню: это под-вкладка «Тренировок».
-  const bottomSections = sections.filter((key) => key !== 'marathons');
-  const bottomNavCount = bottomSections.length + (battlesEnabled ? 1 : 0) + (bodyEnabled ? 1 : 0);
-  const onlyMarathons = bottomNavCount === 0 && sections.includes('marathons');
+  // Марафоны — под-вкладка «Тренировок», «Тело» — всегда внутри «Ещё».
+  const bottomSections = sections.filter((key) => key !== 'marathons' && key !== 'body');
+  const bottomNavCount = bottomSections.length + (battlesEnabled ? 1 : 0);
+  const onlyMarathons = bottomNavCount === 0 && !bodyEnabled && sections.includes('marathons');
   const singleNavItem: NavTab | null =
-    bottomNavCount === 1
-      ? bodyEnabled && bottomSections.length === 0 && !battlesEnabled
-        ? 'body'
-        : (bottomSections[0] as NavTab | undefined) || (battlesEnabled ? 'battles' : null)
+    !moreMenu && bottomNavCount === 1
+      ? (bottomSections[0] as NavTab | undefined) || (battlesEnabled ? 'battles' : null)
       : null;
+
+  const placementFor = (key: SectionTourId): string => {
+    if (key === 'body' || key === 'marathons') return FEATURE_PLACEMENT[key];
+    return moreMenu ? `кнопка «Ещё» → «${FEATURE_LABEL[key]}»` : FEATURE_PLACEMENT[key];
+  };
 
   const placementStep: TourStep[] =
     optionalNavCount > 0
@@ -189,12 +196,13 @@ export function buildMainTourSteps(features?: FeatureFlags): TourStep[] {
                   ? 'Этот раздел появился в нижнем меню, а марафоны живут внутри «Тренировок». При первом открытии каждого раздела будет короткая подсказка.'
                   : 'Включённый раздел появился в нижнем меню. При первом открытии приложение само покажет короткую подсказку.',
             bullets: [
-              ...sections.map((key) => `${FEATURE_LABEL[key]} — ${FEATURE_PLACEMENT[key]}`),
-              ...(bodyEnabled
-                ? ['Тело и биомеханика — вкладка «Тело» в нижнем меню']
-                : []),
+              ...sections.map((key) => `${FEATURE_LABEL[key]} — ${placementFor(key)}`),
               ...(battlesEnabled
-                ? ['Зарубы с друзьями — отдельная вкладка в нижнем меню']
+                ? [
+                    `Зарубы с друзьями — ${
+                      moreMenu ? 'кнопка «Ещё»' : 'отдельная вкладка в нижнем меню'
+                    }`,
+                  ]
                 : []),
               moreMenu
                 ? 'Открыть список: «Ещё» внизу справа'
@@ -212,7 +220,7 @@ export function buildMainTourSteps(features?: FeatureFlags): TourStep[] {
               'Приложение не перегружает первый экран: в базовом режиме остаются четыре вкладки. Когда понадобятся марафоны, дисциплина, разряды, циклы, тело или лаборатория — включите их здесь.',
             bullets: [
               'Выключите «Базовый режим» и включите нужный раздел',
-              'Один раздел появится сразу в нижнем меню',
+              'Один обычный раздел появится сразу; «Тело» — всегда под «Ещё»',
               'Несколько разделов прячутся под «Ещё»',
             ],
           },
@@ -592,6 +600,92 @@ const SECTION_TOURS: Record<SectionTourId, TourStep[]> = {
       ],
     },
   ],
+  body: [
+    {
+      id: 'body-intro',
+      tab: 'body',
+      prepare: () => clickWhenReady('#body-tab-measurements'),
+      target: '#tour-body-header',
+      title: 'Тело и биомеханика',
+      description:
+        'Раздел строит приблизительные пропорции по замерам и помогает проверить безопасные углы в упражнениях. Это схема, а не медицинская диагностика.',
+      bullets: [
+        '«Тело» включается в профиле и всегда живёт под «Ещё»',
+        'Замеры и рост строят модель',
+        'Есть вид сбоку и спереди',
+      ],
+    },
+    {
+      id: 'body-measurements',
+      tab: 'body',
+      prepare: () => clickWhenReady('#body-tab-measurements'),
+      target: '#tour-body-measurements',
+      title: 'Замеры и динамика',
+      description:
+        'Первый замер задаёт вес, талию, грудь и плечи. Дальше приложение показывает динамику и сравнивает обхваты с прошлым разом.',
+      bullets: [
+        'Добавляйте замер кнопкой «Новый»',
+        'График показывает изменение выбранного показателя',
+        'Все данные хранятся в вашем профиле',
+      ],
+    },
+    {
+      id: 'body-model',
+      tab: 'body',
+      prepare: () => clickWhenReady('#body-tab-model'),
+      target: '#tour-body-model',
+      title: '2D-модель и подвижный таз',
+      description:
+        'Потяните таз вниз и назад — стопа останется на полу, а колени согнутся сами. Остальные маркеры двигают плечи, локти, бёдра и стопы в анатомических пределах.',
+      bullets: [
+        'Таз — глубина приседа и наклон корпуса',
+        'Колено сгибается только в одну сторону',
+        'Фото лица можно подвинуть и увеличить',
+      ],
+    },
+    {
+      id: 'body-exercises',
+      tab: 'body',
+      prepare: () => clickWhenReady('#body-tab-exercises'),
+      target: '#tour-body-exercises',
+      title: 'Упражнения и углы',
+      description:
+        'Выберите пресет — приложение подставит ориентировочную позу и проверит углы. Зелёный означает безопасный коридор, жёлтый — близко к границе, красный — вне его.',
+      bullets: [
+        'Присед, тяга, жим и другие базовые движения',
+        'Оценка показывает, какие углы вышли за коридор',
+        'Подсказки не заменяют тренера или врача',
+      ],
+    },
+    {
+      id: 'body-simulation',
+      tab: 'body',
+      prepare: () => clickWhenReady('#body-tab-simulation'),
+      target: '#tour-body-simulation',
+      title: 'Симуляция нагрузки',
+      description:
+        'Включите движение и меняйте вес с амплитудой — модель покажет, какие суставы и мышцы нагружаются сильнее, где начинается жёлтая и красная зона.',
+      bullets: [
+        'Восемь упражнений: присед, тяга, жимы, выпады и другие',
+        'Тепловая карта показывает нагрузку на суставы',
+        'Красная зона — ориентир, а не диагноз',
+      ],
+    },
+    {
+      id: 'body-analysis',
+      tab: 'body',
+      prepare: () => clickWhenReady('#body-tab-analysis'),
+      target: '#tour-body-analysis',
+      title: 'Анализ пропорций',
+      description:
+        'Вкладка сравнивает обхваты и показывает, где есть рост или отставание. Объём тренировок по группам мышц берётся из ваших завершённых тренировок.',
+      bullets: [
+        'Пропорции описаны простыми словами',
+        'Видно объём по группам мышц',
+        'Рекомендации подсказывают, что добавить в план',
+      ],
+    },
+  ],
 };
 
 export function buildSectionTour(tourId: SectionTourId): TourStep[] {
@@ -609,6 +703,8 @@ export function sectionForTab(tab: NavTab): SectionTourId | null {
       return 'lab';
     case 'periodization':
       return 'periodization';
+    case 'body':
+      return 'body';
     default:
       return null;
   }

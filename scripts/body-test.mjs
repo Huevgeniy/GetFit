@@ -160,7 +160,7 @@ check('без замеров модель всё равно строится', d
 const defaultPose = model.createDefaultPose();
 const sideGeometry = model.buildSideGeometry(defaultPose.side, dims);
 const frontGeometry = model.buildFrontGeometry(defaultPose.front, dims);
-check('сбоку шесть маркеров суставов', sideGeometry.handles.length === 6, String(sideGeometry.handles.length));
+check('сбоку семь маркеров суставов', sideGeometry.handles.length === 7, String(sideGeometry.handles.length));
 check('спереди девять маркеров суставов', frontGeometry.handles.length === 9, String(frontGeometry.handles.length));
 check('сбоку туловище направлено вверх', sideGeometry.shoulder.y < sideGeometry.hip.y, `${sideGeometry.shoulder.y} / ${sideGeometry.hip.y}`);
 check(
@@ -171,7 +171,29 @@ check(
   'ширина плеч спереди соответствует расчёту',
   close(frontGeometry.rightShoulder.x - frontGeometry.leftShoulder.x, dims.shoulderWidthCm * dims.scale, 0.02),
 );
-check('все маркеры имеют уникальные id', new Set([...sideGeometry.handles, ...frontGeometry.handles].map((handle) => handle.id)).size === 15);
+check('все маркеры имеют уникальные id', new Set([...sideGeometry.handles, ...frontGeometry.handles].map((handle) => handle.id)).size === 16);
+
+const ikUpper = dims.thighLengthCm * dims.scale;
+const ikLower = dims.shinLengthCm * dims.scale;
+const ikHip = { x: 132, y: 310 };
+const ikAnkle = { x: 160, y: 482 };
+const ik = model.solveTwoBoneIK(ikHip, ikAnkle, ikUpper, ikLower);
+check(
+  'IK сохраняет длину бедра',
+  close(Math.hypot(ik.knee.x - ikHip.x, ik.knee.y - ikHip.y), ikUpper, 0.6),
+  Math.hypot(ik.knee.x - ikHip.x, ik.knee.y - ikHip.y).toFixed(2),
+);
+check(
+  'IK сохраняет длину голени',
+  close(Math.hypot(ikAnkle.x - ik.knee.x, ikAnkle.y - ik.knee.y), ikLower, 0.6),
+  Math.hypot(ikAnkle.x - ik.knee.x, ikAnkle.y - ik.knee.y).toFixed(2),
+);
+const ikRebuilt = model.pointAlong(ik.knee, ik.shinAngle, ikLower);
+check(
+  'IK возвращает голень в точку опоры',
+  close(ikRebuilt.x, ikAnkle.x, 1.5) && close(ikRebuilt.y, ikAnkle.y, 1.5),
+  `${ikRebuilt.x.toFixed(1)},${ikRebuilt.y.toFixed(1)}`,
+);
 
 const bentPose = {
   side: { ...defaultPose.side, thighAngle: 10, shinAngle: 100 },
@@ -206,7 +228,22 @@ const squatPose = model.poseForExercise(squat);
 const squatMetrics = model.computePoseMetrics(squatPose);
 check('присед: наклон корпуса 25°', squatMetrics['side.torsoLean'] === 25, String(squatMetrics['side.torsoLean']));
 check('присед: бедро согнуто на 105°', squatMetrics['side.hipFlex'] === 105, String(squatMetrics['side.hipFlex']));
-check('присед: колено согнуто на 90°', squatMetrics['side.kneeFlex'] === 90, String(squatMetrics['side.kneeFlex']));
+check('присед: колено согнуто на 110°', squatMetrics['side.kneeFlex'] === 110, String(squatMetrics['side.kneeFlex']));
+const squatSideGeometry = model.buildSideGeometry(squatPose.side, dims);
+const draggedSide = model.dragSidePelvis(squatPose.side, { x: 132, y: 310 }, squatSideGeometry.ankle, dims);
+const draggedGeometry = model.buildSideGeometry(draggedSide, dims);
+check(
+  'перетаскивание таза оставляет стопу на полу',
+  close(draggedGeometry.ankle.x, squatSideGeometry.ankle.x, 1.5) &&
+    close(draggedGeometry.ankle.y, squatSideGeometry.ankle.y, 1.5),
+  `${draggedGeometry.ankle.x.toFixed(1)},${draggedGeometry.ankle.y.toFixed(1)}`,
+);
+const draggedMetrics = model.computePoseMetrics({ ...squatPose, side: draggedSide });
+check(
+  'перетаскивание таза сгибает колено',
+  draggedMetrics['side.kneeFlex'] > 0,
+  String(draggedMetrics['side.kneeFlex']),
+);
 const squatEvaluation = model.evaluateExercise(squat, squatPose);
 check('эталонный присед проходит проверку', squatEvaluation.tone === 'good' && squatEvaluation.score === 100, `${squatEvaluation.tone} / ${squatEvaluation.score}`);
 check('эталонный присед не имеет провалов', squatEvaluation.failed === 0, String(squatEvaluation.failed));
@@ -399,6 +436,82 @@ check('моментные плечи приседа считаются', momentS
 check('для жима лёжа используется вид спереди', momentBench.length === 3 && momentBench.some((arm) => arm.id === 'shoulder'));
 
 /* ------------------------------------------------------------------ */
+/* 10. Симуляция упражнений и нагрузка                                 */
+/* ------------------------------------------------------------------ */
+const simDims = model.computeBodyDimensions({
+  heightCm: 180,
+  sex: 'male',
+  measurements: [{ date: '2026-01-01', weightKg: 82 }],
+});
+check('в симуляции восемь упражнений', model.SIMULATION_EXERCISES.length === 8);
+check(
+  'у каждого упражнения есть инвентарь и суставы',
+  model.SIMULATION_EXERCISES.every(
+    (item) =>
+      ['barbell', 'dumbbell', 'bodyweight'].includes(item.equipment) &&
+      item.joints.length > 0 &&
+      item.phaseLabels.length === 2,
+  ),
+);
+const simSquat = model.simulationById('squat');
+const simTop = model.simulationPose(simSquat, 0, simDims);
+const simBottom = model.simulationPose(simSquat, 1, simDims);
+const simTopGeo = model.buildSideGeometry(simTop.side, simDims);
+const simBottomGeo = model.buildSideGeometry(simBottom.side, simDims);
+const simBottomMetrics = model.computePoseMetrics(simBottom);
+check(
+  'присед в симуляции сгибает колено',
+  simBottomMetrics['side.kneeFlex'] >= 70 && simBottomMetrics['side.kneeFlex'] <= 150,
+  String(simBottomMetrics['side.kneeFlex']),
+);
+check(
+  'стопа в симуляции остаётся на полу',
+  Math.abs(simTopGeo.ankle.y - simBottomGeo.ankle.y) < 2 && simBottomGeo.ankle.y <= model.BODY_DRAW.soleY,
+  `${simTopGeo.ankle.y} → ${simBottomGeo.ankle.y}`,
+);
+const simLoads = model.estimateSimulationLoads(simSquat, simBottom, simDims, 82, 100);
+check(
+  'нагрузка приседа считается по суставам',
+  simLoads.length === 3 && simLoads.every((load) => load.torqueNm > 0 && load.index > 0),
+  simLoads.map((load) => `${load.joint}:${load.index}`).join(' '),
+);
+check(
+  'уровни нагрузки размечены',
+  simLoads.every((load) => ['low', 'moderate', 'high', 'veryHigh'].includes(load.level)),
+);
+const simScan = model.scanSimulation(simSquat, simDims, 82, 100, 1);
+check(
+  'красная зона приседа находится в разумных пределах',
+  simScan.unsafeFromKg !== null && simScan.unsafeFromKg > 0 && simScan.unsafeFromKg <= 300,
+  String(simScan.unsafeFromKg),
+);
+check(
+  'безопасный вес не выше красной зоны',
+  simScan.safeWeightKg !== null &&
+    simScan.unsafeFromKg !== null &&
+    simScan.safeWeightKg <= simScan.unsafeFromKg,
+  `${simScan.safeWeightKg} / ${simScan.unsafeFromKg}`,
+);
+check('безопасная амплитуда в пределах 0–1', simScan.safeAmplitude >= 0 && simScan.safeAmplitude <= 1);
+const simSeries = model.simulationSeries(simSquat, simDims, 82, 100, 11);
+check(
+  'график нагрузки содержит все фазы',
+  simSeries.length === 11 && simSeries[0].phase === 0 && simSeries[10].phase === 1,
+);
+const simPeakLight = Math.max(
+  ...model.estimateSimulationLoads(simSquat, simBottom, simDims, 82, 0).map((load) => load.index),
+);
+const simPeakHeavy = Math.max(
+  ...model.estimateSimulationLoads(simSquat, simBottom, simDims, 82, 150).map((load) => load.index),
+);
+check('дополнительный вес повышает нагрузку', simPeakHeavy > simPeakLight, `${simPeakLight} → ${simPeakHeavy}`);
+check(
+  'жим лёжа симулируется спереди',
+  model.simulationById('bench')?.view === 'front' &&
+    model.simulationById('bench')?.equipment === 'barbell',
+);
+
+/* ------------------------------------------------------------------ */
 /* 10. Компоненты                                                      */
 /* ------------------------------------------------------------------ */
 const BodyView = require_(path.join(outDir, 'components', 'BodyBiomechanicsView.js')).BodyBiomechanicsView;
@@ -486,6 +599,12 @@ if (!modelError) {
   check('2D-модель подписана для скринридера', modelHtml.includes('2D-модель тела'));
   check('2D-модель рисует углы', modelHtml.includes('90°') || modelHtml.includes('°'));
   check('2D-модель содержит маркеры суставов', (modelHtml.match(/Двигать:/g) || []).length >= 4, String((modelHtml.match(/Двигать:/g) || []).length));
+  const footPaths = [...modelHtml.matchAll(/<path[^>]*data-foot="side"[^>]*>/g)].map((match) => match[0]);
+  check(
+    'стопа сбоку стоит на полу',
+    footPaths.length > 0 && footPaths.every((tag) => tag.includes('500.0')),
+    footPaths.map((tag) => (tag.match(/L [\d.]+ ([\d.]+) L/) || [])[1]).join(', '),
+  );
 }
 
 const Form = require_(path.join(outDir, 'components', 'BodyMeasurementForm.js')).BodyMeasurementForm;
