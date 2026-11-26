@@ -680,7 +680,7 @@ export const SavedTemplatesModal: React.FC<SavedTemplatesModalProps> = ({
         {/* Footer */}
         <div className="p-3.5 bg-[#141f2c] border-t border-[#233345] flex items-center justify-between shrink-0">
           <span className="text-[11px] text-slate-400 font-mono">
-            GetFitBot Workout Templates Engine
+            GetFit Workout Templates Engine
           </span>
           <button
             type="button"

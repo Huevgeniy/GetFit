@@ -80,6 +80,26 @@ import {
   TourId,
 } from './lib/tours';
 import { readLegacyStepLog } from './lib/steps';
+import {
+  calculateCycleWeight,
+  cycleTemplateById,
+  loadActiveCycle,
+  loadCustomCycles,
+  saveActiveCycle,
+} from './lib/cycleTemplates';
+import {
+  DEFAULT_DISCIPLINE_SETTINGS,
+  DISCIPLINE_HABITS,
+  buildPenaltyNotice,
+  deductionForHabit,
+  disciplineIsActive,
+  disciplineLevel,
+  enabledHabits,
+  normalizeDisciplineSettings,
+  penaltyDeadline,
+  penaltyIsOverdue,
+  suggestPenalties,
+} from './lib/discipline';
 
 import { 
   UserProfile, 
@@ -93,7 +113,10 @@ import {
   FoodItem,
   PersonalRecord,
   GoalMarathon,
-  AiProvidersInfo
+  AiProvidersInfo,
+  DisciplineHabitId,
+  DisciplineSettings,
+  DisciplineEvent
 } from './types';
 import { 
   INITIAL_USER_PROFILE, 
@@ -170,6 +193,7 @@ export default function App() {
       return INITIAL_PENALTIES;
     }
   });
+  const expiredPenaltiesRef = useRef<Set<string>>(new Set());
 
   // Achievements
   const [achievements, setAchievements] = useState<Achievement[]>(() => {
@@ -744,17 +768,73 @@ export default function App() {
   };
 
   const handleFinishLiveWorkout = (record: WorkoutRecord) => {
+    const wasPlanned = Boolean(activeWorkoutPlan && !activeWorkoutPlan.id.startsWith('free_plan'));
+    const wasCycle = Boolean(activeWorkoutPlan?.id.startsWith('cycle_'));
     setPastWorkouts(prev => [record, ...prev]);
     setActiveWorkoutPlan(null);
     setIsLiveWorkoutOpen(false);
 
-    // Update user streak and discipline score
-    setUser(prev => ({
-      ...prev,
-      streakDays: prev.streakDays + 1,
-      disciplineScore: Math.min(100, prev.disciplineScore + 2),
-      longestStreak: Math.max(prev.longestStreak, prev.streakDays + 1),
-    }));
+    // Завершённая тренировка из цикла закрывает соответствующий день.
+    if (wasCycle) {
+      try {
+        const raw = localStorage.getItem('getfit_pending_cycle_day');
+        if (raw) {
+          const pending = JSON.parse(raw) as {
+            templateId?: string;
+            weekIndex?: number;
+            dayId?: string;
+          };
+          const active = loadActiveCycle();
+          if (
+            active &&
+            pending.templateId === active.templateId &&
+            typeof pending.weekIndex === 'number' &&
+            pending.dayId
+          ) {
+            const key = `${pending.weekIndex}-${pending.dayId}`;
+            const next = {
+              ...active,
+              completed: { ...active.completed, [key]: true },
+              completedAt: { ...(active.completedAt || {}), [key]: new Date().toISOString() },
+            };
+            saveActiveCycle(next);
+            window.dispatchEvent(new Event('getfit-cycle-updated'));
+          }
+          localStorage.removeItem('getfit_pending_cycle_day');
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // Дисциплина активируется только после первого задания по плану.
+    if (wasPlanned) {
+      setUser(prev => {
+        const settings = normalizeDisciplineSettings(prev.disciplineSettings);
+        if (!disciplineIsActive(settings, workoutPlans) && !(settings.enabled.workout && activeWorkoutPlan)) {
+          return prev;
+        }
+        const now = new Date().toISOString();
+        const first = !prev.disciplineStartedAt;
+        const nextStreak = prev.streakDays + 1;
+        const event: DisciplineEvent = {
+          id: `dev_${Date.now()}`,
+          date: now.slice(0, 10),
+          habit: wasCycle ? 'cycle' : 'workout',
+          type: first ? 'start' : 'complete',
+          points: 0,
+          note: first ? 'Первое задание по плану — дисциплина активирована' : 'Тренировка по плану выполнена',
+        };
+        return {
+          ...prev,
+          disciplineStartedAt: prev.disciplineStartedAt || now,
+          disciplineScore: first ? 100 : prev.disciplineScore,
+          streakDays: nextStreak,
+          longestStreak: Math.max(prev.longestStreak, nextStreak),
+          disciplineEvents: [event, ...(prev.disciplineEvents || [])].slice(0, 300),
+        };
+      });
+    }
 
     // Unlock achievement if 100+ kg reached
     const benchEx = record.exercises?.find(e => e?.name && e.name.toLowerCase().includes('жим'));
@@ -770,37 +850,253 @@ export default function App() {
     setCurrentTab('charts');
   };
 
+  const pushDisciplineEvent = (event: DisciplineEvent) => {
+    setUser(prev => ({
+      ...prev,
+      disciplineEvents: [event, ...(prev.disciplineEvents || [])].slice(0, 300),
+    }));
+  };
+
+  const sendPenaltyNotification = (penalty: DisciplinePenalty) => {
+    if (!disciplineSettings.notifyPenalties || !/^\d{3,}$/.test(user.id)) return;
+    apiFetch('/api/telegram/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        chatId: user.id,
+        message: buildPenaltyNotice(penalty, disciplineSettings),
+        parseMode: 'HTML',
+      }),
+    }).catch(() => undefined);
+  };
+
+  const createPenalty = (
+    reason: string,
+    task: string,
+    points: number,
+    meta: {
+      restorePoints?: number;
+      habit?: DisciplineHabitId;
+      category?: DisciplinePenalty['category'];
+      severity?: number;
+      expiresAt?: string;
+      deductScore?: boolean;
+    } = {},
+  ): DisciplinePenalty => {
+    const safePoints = Math.max(1, Math.round(points));
+    const penalty: DisciplinePenalty = {
+      id: `pen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      workoutDate: new Date().toISOString().split('T')[0],
+      reason,
+      penaltyTask: task,
+      pointsDeducted: safePoints,
+      restorePoints: meta.restorePoints ?? safePoints,
+      habit: meta.habit,
+      category: meta.category,
+      severity: meta.severity,
+      expiresAt: meta.expiresAt ?? penaltyDeadline(disciplineSettings),
+      status: 'pending',
+      date: 'Сегодня',
+    };
+    setPenalties(prev => [penalty, ...prev]);
+    if (meta.deductScore !== false) {
+      setUser(prev => ({
+        ...prev,
+        disciplineScore: Math.max(0, prev.disciplineScore - safePoints),
+        disciplineEvents: [
+          {
+            id: `dev_${Date.now()}`,
+            date: new Date().toISOString().slice(0, 10),
+            habit: meta.habit,
+            type: 'miss' as const,
+            points: -safePoints,
+            note: reason,
+          },
+          ...(prev.disciplineEvents || []),
+        ].slice(0, 300),
+      }));
+    }
+    sendPenaltyNotification(penalty);
+    return penalty;
+  };
+
   const handleResolvePenalty = (penaltyId: string) => {
+    const penalty = penalties.find(p => p.id === penaltyId);
+    if (!penalty || penalty.status !== 'pending') return;
+    const restore = Math.max(0, penalty.restorePoints ?? penalty.pointsDeducted);
+    const remainingPending = penalties.filter(
+      item => item.id !== penaltyId && item.status === 'pending',
+    );
+    const hasExpiredDebt = penalties.some(item => item.status === 'expired');
+    const holdUntil = !remainingPending.length && hasExpiredDebt
+      ? new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      : undefined;
     setPenalties(prev =>
-      prev.map(p => (p.id === penaltyId ? { ...p, status: 'completed' } : p))
+      prev.map(p => (p.id === penaltyId ? { ...p, status: 'completed', completedAt: new Date().toISOString() } : p))
+    );
+    setUser(prev => {
+      const holdActive = Boolean(
+        prev.disciplineHoldUntil && Date.parse(prev.disciplineHoldUntil) >= Date.now(),
+      );
+      const ceiling = hasExpiredDebt || holdActive ? 99 : 100;
+      return {
+        ...prev,
+        disciplineHoldUntil: holdUntil || prev.disciplineHoldUntil,
+        disciplineScore: Math.min(ceiling, prev.disciplineScore + restore),
+        disciplineEvents: [
+          {
+            id: `dev_${Date.now()}`,
+            date: new Date().toISOString().slice(0, 10),
+            habit: penalty.habit,
+            type: 'penalty-restored' as const,
+            points: restore,
+            note: holdUntil
+              ? `Штраф выполнен: ${penalty.penaltyTask}. До 100 — удерживать серию до ${holdUntil}`
+              : `Штраф выполнен: ${penalty.penaltyTask}`,
+          },
+          ...(prev.disciplineEvents || []),
+        ].slice(0, 300),
+      };
+    });
+  };
+
+  const handleApplyPenalty = (reason: string, task: string, points: number) => {
+    createPenalty(reason, task, points, { restorePoints: points });
+  };
+
+  const handleAssignPenalty = (
+    penaltyId: string,
+    task: string,
+    category: string,
+    severity: number,
+  ) => {
+    const target = penalties.find(item => item.id === penaltyId);
+    if (!target) return;
+    const updated: DisciplinePenalty = {
+      ...target,
+      penaltyTask: task,
+      category: category as DisciplinePenalty['category'],
+      severity,
+      expiresAt: penaltyDeadline(disciplineSettings),
+      status: 'pending',
+    };
+    setPenalties(prev => prev.map(item => (item.id === penaltyId ? updated : item)));
+    sendPenaltyNotification(updated);
+  };
+
+  const handleCloseDisciplineDay = (completed: DisciplineHabitId[]) => {
+    const settings = normalizeDisciplineSettings(user.disciplineSettings);
+    if (!disciplineIsActive(settings, workoutPlans) && !user.disciplineStartedAt) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (user.disciplineLastClosedDate === today) return;
+
+    const habits = enabledHabits(settings);
+    const misses = habits.filter(habit => !completed.includes(habit));
+    const totalDeduction = misses.reduce((sum, habit) => sum + deductionForHabit(settings, habit), 0);
+    const started = Boolean(user.disciplineStartedAt) || completed.length > 0;
+    const baseScore = user.disciplineStartedAt ? user.disciplineScore : completed.length > 0 ? 100 : 0;
+    const holdActive = Boolean(
+      user.disciplineHoldUntil && Date.parse(user.disciplineHoldUntil) >= Date.now(),
+    );
+    const ceiling = holdActive ? 99 : 100;
+    const nextScore = misses.length === 0 && started
+      ? Math.min(ceiling, baseScore + 5)
+      : Math.max(0, Math.min(ceiling, baseScore - totalDeduction));
+    const nextStreak = misses.length === 0 ? user.streakDays + 1 : 0;
+    const labels = misses
+      .map(habit => DISCIPLINE_HABITS.find(item => item.id === habit)?.short || habit)
+      .join(', ');
+
+    setUser(prev => ({
+      ...prev,
+      disciplineStartedAt: prev.disciplineStartedAt || (started ? new Date().toISOString() : undefined),
+      disciplineScore: started ? nextScore : 0,
+      streakDays: started ? nextStreak : 0,
+      longestStreak: Math.max(prev.longestStreak, started ? nextStreak : 0),
+      disciplineLastClosedDate: today,
+      disciplineEvents: [
+        {
+          id: `dev_${Date.now()}`,
+          date: today,
+          type: 'closed-day' as const,
+          points: misses.length === 0 && started ? Math.max(0, nextScore - baseScore) : -totalDeduction,
+          note: misses.length > 0 ? `Пропуски: ${labels}` : 'День закрыт без пропусков',
+        },
+        ...(prev.disciplineEvents || []),
+      ].slice(0, 300),
+    }));
+
+    if (totalDeduction > 0) {
+      const suggestions = suggestPenalties(
+        settings,
+        totalDeduction,
+        Boolean(user.stepGoalEnabled),
+        user.dailyStepGoal,
+      );
+      const first = suggestions[0];
+      const needsChoice = settings.penaltyMode === 'confirm';
+      createPenalty(
+        `Пропуски: ${labels}`,
+        needsChoice
+          ? 'Выбери штраф в арбитре и подтверди его выполнение'
+          : first?.task || 'Выбери наказание в разделе дисциплины',
+        totalDeduction,
+        {
+          restorePoints: totalDeduction,
+          category: needsChoice ? undefined : first?.category,
+          severity: needsChoice ? undefined : first?.severity,
+          deductScore: false,
+        },
+      );
+    }
+  };
+
+  useEffect(() => {
+    const overdue = penalties.filter(
+      penalty =>
+        penalty.status === 'pending' &&
+        penaltyIsOverdue(penalty) &&
+        !expiredPenaltiesRef.current.has(penalty.id),
+    );
+    if (overdue.length === 0) return;
+    for (const penalty of overdue) expiredPenaltiesRef.current.add(penalty.id);
+    const extraPenalty = Math.max(25, ...overdue.map(penalty => (penalty.pointsDeducted || 0) + 5));
+    setPenalties(prev =>
+      prev.map(penalty =>
+        overdue.some(item => item.id === penalty.id)
+          ? { ...penalty, status: 'expired' as const }
+          : penalty,
+      ),
     );
     setUser(prev => ({
       ...prev,
-      disciplineScore: Math.min(100, prev.disciplineScore + 5),
+      disciplineScore: Math.max(0, prev.disciplineScore - extraPenalty),
+      streakDays: 0,
+      disciplineEvents: [
+        {
+          id: `dev_${Date.now()}`,
+          date: new Date().toISOString().slice(0, 10),
+          type: 'penalty-missed' as const,
+          points: -extraPenalty,
+          note: 'Штраф не выполнен вовремя — дополнительное снижение',
+        },
+        ...(prev.disciplineEvents || []),
+      ].slice(0, 300),
     }));
-  };
+    const overdueTasks = overdue.map(penalty => penalty.penaltyTask).join('; ');
+    createPenalty(
+      'Пропущен срок штрафа',
+      `Восстановительный штраф за невыполненное: ${overdueTasks}`,
+      extraPenalty,
+      { restorePoints: extraPenalty, deductScore: false },
+    );
+    // createPenalty is stable enough for this one-shot effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [penalties]);
 
   const handleRescheduleWorkout = (planId: string, newDate: string, reason: string) => {
     setWorkoutPlans(prev =>
       prev.map(p => (p.id === planId ? { ...p, scheduledDay: newDate } : p))
     );
-  };
-
-  const handleApplyPenalty = (reason: string, task: string, points: number) => {
-    const newPenalty: DisciplinePenalty = {
-      id: `pen_${Date.now()}`,
-      workoutDate: new Date().toISOString().split('T')[0],
-      reason,
-      penaltyTask: task,
-      status: 'pending',
-      date: 'Сегодня',
-      pointsDeducted: points,
-    };
-    setPenalties(prev => [newPenalty, ...prev]);
-    setUser(prev => ({
-      ...prev,
-      disciplineScore: Math.max(0, prev.disciplineScore - points),
-    }));
   };
 
   // Зарубы: источник истины — сервер, поэтому обе стороны видят один прогресс
@@ -870,7 +1166,7 @@ export default function App() {
   }> => {
     try {
       const payload = {
-        app: 'GetFitBot',
+        app: 'GetFit',
         version: 1,
         exportedAt: new Date().toISOString(),
         data: buildSyncBlob(),
@@ -993,8 +1289,95 @@ export default function App() {
     }
   };
 
-  const handleLogMetricFromAi = (name: string, value: number, unit: string, category?: string) => {
-    if (name.toLowerCase().includes('вес')) {
+  /** Чат-фиксация тренировки по активному циклу: отмечает следующий невыполненный день. */
+  const handleFixCycleWorkoutFromChat = (note: string) => {
+    const active = loadActiveCycle();
+    if (!active) return null;
+    const template = cycleTemplateById(active.templateId, loadCustomCycles());
+    if (!template) return null;
+    const week = template.weeks[active.weekIndex];
+    if (!week || week.days.length === 0) return null;
+
+    const day =
+      week.days.find(item => !active.completed[`${active.weekIndex}-${item.id}`]) || week.days[0];
+    const key = `${active.weekIndex}-${day.id}`;
+    const nowIso = new Date().toISOString();
+    const nextActive = {
+      ...active,
+      completed: { ...active.completed, [key]: true },
+      completedAt: { ...(active.completedAt || {}), [key]: nowIso },
+      notes: { ...(active.notes || {}), [key]: note.slice(0, 160) },
+    };
+    saveActiveCycle(nextActive);
+    window.dispatchEvent(new Event('getfit-cycle-updated'));
+
+    let tonnage = 0;
+    const exercises = day.exercises.map((exercise, index) => {
+      const weight = calculateCycleWeight(exercise.percent, exercise.lift, active.maxes);
+      const reps = Number.parseInt(exercise.reps, 10) || 1;
+      tonnage += weight * reps * exercise.sets;
+      const oneRM = weight > 0 ? Math.round(weight * (1 + reps / 30) * 10) / 10 : 0;
+      return {
+        exerciseId: `cycle_${template.id}_${index}`,
+        name: exercise.name,
+        notes: exercise.note,
+        best1RM: oneRM || undefined,
+        sets: Array.from({ length: exercise.sets }).map((_, setIndex) => ({
+          id: `cycle_set_${Date.now()}_${index}_${setIndex}`,
+          setNumber: setIndex + 1,
+          weight,
+          reps,
+          rpe: 8,
+          timestamp: nowIso,
+          calculated1RM: oneRM,
+          normalizedRepsAt100kg: Math.max(0, Math.round(reps * (weight / 100))),
+        })),
+      };
+    });
+
+    const record: WorkoutRecord = {
+      id: `cycle_record_${Date.now()}`,
+      planId: `cycle_${template.id}`,
+      title: `${template.name} · Неделя ${active.weekIndex + 1} · ${day.label}`,
+      date: nowIso.slice(0, 10),
+      startedAt: nowIso,
+      completedAt: nowIso,
+      durationMinutes: Math.max(30, day.exercises.length * 10),
+      exercises,
+      totalTonnageKg: Math.round(tonnage),
+      status: 'completed',
+    };
+    setPastWorkouts(prev => [record, ...prev]);
+    setUser(prev => {
+      const first = !prev.disciplineStartedAt;
+      const nextStreak = prev.streakDays + 1;
+      return {
+        ...prev,
+        disciplineStartedAt: prev.disciplineStartedAt || nowIso,
+        disciplineScore: first ? 100 : Math.min(100, prev.disciplineScore + 2),
+        streakDays: nextStreak,
+        longestStreak: Math.max(prev.longestStreak, nextStreak),
+        disciplineEvents: [
+          {
+            id: `dev_${Date.now()}`,
+            date: nowIso.slice(0, 10),
+            habit: 'cycle' as const,
+            type: first ? ('start' as const) : ('complete' as const),
+            points: first ? 0 : 2,
+            note: `Цикл: ${template.name}, неделя ${active.weekIndex + 1}, ${day.label}`,
+          },
+          ...(prev.disciplineEvents || []),
+        ].slice(0, 300),
+      };
+    });
+
+    return {
+      label: `${template.name}: ${day.label}`,
+      details: `Неделя ${active.weekIndex + 1} · ${day.exercises.length} упражнений · ${Math.round(tonnage)} кг общего объёма`,
+    };
+  };
+
+  const handleLogMetricFromAi = (name: string, value: number, unit: string, category?: string) => {    if (name.toLowerCase().includes('вес')) {
       setUser(prev => ({ ...prev, currentWeight: value }));
     }
     try {
@@ -1095,6 +1478,15 @@ export default function App() {
   };
 
   const pendingPenaltiesCount = penalties.filter(p => p.status === 'pending').length;
+  const disciplineSettings = useMemo(
+    () => normalizeDisciplineSettings(user.disciplineSettings),
+    [user.disciplineSettings],
+  );
+  const disciplineActive = useMemo(
+    () => disciplineIsActive(disciplineSettings, workoutPlans),
+    [disciplineSettings, workoutPlans],
+  );
+  const disciplineLevelMeta = disciplineLevel(user.disciplineScore, disciplineActive);
 
   const storageWarning =
     storageMode === 'unavailable'
@@ -1119,9 +1511,9 @@ export default function App() {
         {/* Fixed Telegram Mini App Header */}
         <TelegramHeader
           user={user}
-          title="GetFitBot"
+          title="GetFit"
           subtitle="AI Fitness & Discipline"
-          disciplineScore={user?.disciplineScore}
+          disciplineScore={user?.disciplineStartedAt ? user.disciplineScore : 0}
           streakDays={user?.streakDays}
           isWorkoutActive={Boolean(activeWorkoutPlan)}
           showDiscipline={features.discipline}
@@ -1258,9 +1650,15 @@ export default function App() {
                   user={user}
                   penalties={penalties}
                   workoutPlans={workoutPlans}
+                  pastWorkouts={pastWorkouts}
+                  dailyNutritionRecords={dailyNutritionRecords}
+                  sleepRecords={sleepRecords}
+                  marathons={marathons}
                   onResolvePenalty={handleResolvePenalty}
                   onRescheduleWorkout={handleRescheduleWorkout}
                   onApplyPenalty={handleApplyPenalty}
+                  onAssignPenalty={handleAssignPenalty}
+                  onCloseDisciplineDay={handleCloseDisciplineDay}
                   onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
                 />
               )}
@@ -1278,6 +1676,7 @@ export default function App() {
                   user={user}
                   pastWorkouts={pastWorkouts}
                   onUpdateUser={updated => setUser(prev => ({ ...prev, ...updated }))}
+                  onStartPlan={handleStartPlan}
                 />
               )}
 
@@ -1353,6 +1752,7 @@ export default function App() {
           onLogMetric={handleLogMetricFromAi}
           onLogDailyState={handleLogDailyStateFromAi}
           onCreateExperiment={handleCreateExperimentFromAi}
+          onFixCycleWorkout={handleFixCycleWorkoutFromChat}
         />
         )}
 

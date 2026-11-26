@@ -73,8 +73,7 @@ export interface InBodyRecord {
   coachNotes?: string;
 }
 
-/** Один замер тела. Все обхваты — в сантиметрах, вес — в килограммах. */
-export interface BodyMeasurementEntry {
+/** Один замер тела. Все обхваты — в сантиметрах, вес — в килограммах. */export interface BodyMeasurementEntry {
   id: string;
   /** Локальная дата YYYY-MM-DD. */
   date: string;
@@ -122,6 +121,45 @@ export interface BodyProfile {
   oneRepMaxKg?: Record<string, number>;
 }
 
+export type DisciplineHabitId = 'workout' | 'sleep' | 'nutrition' | 'steps' | 'marathon' | 'cycle' | 'lab';
+
+export type DisciplinePenaltyCategory =
+  | 'cardio'
+  | 'steps'
+  | 'financial'
+  | 'diet'
+  | 'sleep'
+  | 'social'
+  | 'skill';
+
+export interface DisciplineSettings {
+  enabled: Record<DisciplineHabitId, boolean>;
+  weights: Record<DisciplineHabitId, number>;
+  penaltyMode: 'confirm' | 'auto';
+  confirmationHours: number;
+  difficulty: 'soft' | 'normal' | 'hard';
+  financialMin: number;
+  financialMax: number;
+  allowedCategories: Record<DisciplinePenaltyCategory, boolean>;
+  notifyPenalties: boolean;
+}
+
+export interface DisciplineContract {
+  text: string;
+  friendName: string;
+  acceptedAt: string;
+  friendAcceptedAt?: string;
+  status: 'draft' | 'active';
+}
+
+export interface DisciplineEvent {  id: string;
+  date: string;
+  habit?: DisciplineHabitId;
+  type: 'start' | 'complete' | 'miss' | 'penalty-restored' | 'penalty-missed' | 'closed-day';
+  points: number;
+  note: string;
+}
+
 export interface UserProfile {
   id: string;
   name: string;
@@ -138,6 +176,16 @@ export interface UserProfile {
   disciplineScore: number; // 0 to 100
   streakDays: number;
   longestStreak: number;
+  disciplineSettings?: DisciplineSettings;
+  disciplineEvents?: DisciplineEvent[];
+  /** Первое выполненное задание по плану — с этого момента дисциплина активна. */
+  disciplineStartedAt?: string;
+  /** Последний день, который пользователь закрыл в чек-ине. */
+  disciplineLastClosedDate?: string;
+  /** До этой даты (включительно) дисциплина не поднимается до 100 — удержание после долгов. */
+  disciplineHoldUntil?: string;
+  /** Двусторонний договор дисциплины: текст и подписи обеих сторон. */
+  disciplineContract?: DisciplineContract;
   /** Дата последнего внесения данных через бота — защита от накрутки серии. */
   lastBotLogDate?: string;
   selectedDisciplines: string[];
@@ -280,7 +328,15 @@ export interface DisciplinePenalty {
   reason: string;
   penaltyTask: string;
   pointsDeducted: number;
-  status: 'pending' | 'completed' | 'rescheduled';
+  /** Сколько очков вернётся после выполнения. */
+  restorePoints?: number;
+  /** За какую привычку назначен штраф. */
+  habit?: DisciplineHabitId;
+  category?: DisciplinePenaltyCategory;
+  severity?: number;
+  /** Срок подтверждения/выполнения. */
+  expiresAt?: string;
+  status: 'pending' | 'completed' | 'rescheduled' | 'expired';
   completedAt?: string;
 }
 

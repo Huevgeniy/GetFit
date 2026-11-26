@@ -34,6 +34,7 @@ import {
 } from '../types';
 import { BASE_FOODS_DATABASE } from '../data/foodsData';
 import { apiFetch } from '../lib/api';
+import { calculateNutritionTargets } from '../lib/nutritionTargets';
 
 const MEAL_TYPE_LABELS: Record<LoggedMealItem['mealType'], string> = {
   breakfast: 'Завтрак',
@@ -104,7 +105,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
   onSaveCustomFood,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'calories' | 'meals' | 'sleep' | 'analysis'>('calories');
-
+  const [showTargetsModal, setShowTargetsModal] = useState(false);
   // Today's date string YYYY-MM-DD
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -191,64 +192,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
 
   // Норма питания: базовый обмен по формуле Миффлина — Сан Жеора,
   // затем поправка на активность и цель по весу.
-  const calculatedTargets = useMemo(() => {
-    const weight = user.currentWeight > 0 ? user.currentWeight : 75;
-    const height = user.heightCm && user.heightCm > 0 ? user.heightCm : 175;
-    const age = user.age && user.age > 0 ? user.age : 30;
-    const goal = user.weightGoalType || 'maintain';
-
-    const baseMetabolism =
-      10 * weight + 6.25 * height - 5 * age + (user.gender === 'female' ? -161 : 5);
-
-    const activityFactor =
-      user.activityLevel === 'sedentary'
-        ? 1.2
-        : user.activityLevel === 'active'
-          ? 1.55
-          : user.activityLevel === 'very_active'
-            ? 1.725
-            : 1.375;
-    const maintenanceCalories = Math.round(baseMetabolism * activityFactor);
-
-    let calories = maintenanceCalories;
-    let proteinPerKg = 1.8;
-    let fatPerKg = 1.0;
-    let fiberTarget = 30;
-
-    if (goal === 'gain') {
-      calories = Math.round(maintenanceCalories * 1.12);
-      proteinPerKg = 1.8; // 1,6–2,0 г на кг веса
-      fatPerKg = 1.1;
-      fiberTarget = 28;
-    } else if (goal === 'lose') {
-      calories = Math.round(maintenanceCalories * 0.82);
-      proteinPerKg = 2.2; // при дефиците белок выше, чтобы сохранить мышцы
-      fatPerKg = 0.8;
-      fiberTarget = 35; // больше клетчатки для сытости
-    } else if (goal === 'recomp') {
-      calories = Math.round(maintenanceCalories * 0.95);
-      proteinPerKg = 2.4; // перестройка тела требует больше белка
-      fatPerKg = 0.9;
-      fiberTarget = 32;
-    }
-
-    const targetProtein = user.customProteinTarget || Math.round(weight * proteinPerKg);
-    const targetFat = user.customFatTarget || Math.round(weight * fatPerKg);
-    // Свои калории тоже должны сходиться с БЖУ: остаток считаем от итоговой цели.
-    const effectiveCalories = user.customCalorieTarget || calories;
-    const remainingCalories = effectiveCalories - (targetProtein * 4 + targetFat * 9);
-    const targetCarbs =
-      user.customCarbsTarget || Math.max(80, Math.round(remainingCalories / 4));
-
-    return {
-      calories: effectiveCalories,
-      protein: targetProtein,
-      fat: targetFat,
-      carbs: targetCarbs,
-      fiber: user.customFiberTarget || fiberTarget,
-      proteinPerKg,
-    };
-  }, [user]);
+  const calculatedTargets = useMemo(() => calculateNutritionTargets(user), [user]);
 
   // Filter foods for picker
   const filteredFoods = useMemo(() => {
@@ -827,6 +771,14 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                     / {calculatedTargets.calories} ккал
                   </span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTargetsModal(true)}
+                  className="mt-1 inline-flex items-center gap-1 text-[9px] font-semibold text-cyan-400 hover:text-cyan-300"
+                >
+                  <Info className="w-3 h-3" />
+                  Как рассчитана норма?
+                </button>
               </div>
 
               <div className="text-right">
@@ -877,7 +829,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
               {/* Protein */}
               <div className="bg-[#141d27] border border-[#223142] p-3 rounded-xl space-y-1.5">
                 <div className="flex items-center justify-between text-slate-400 text-[11px]">
-                  <span>Белок (4 ккал)</span>
+                  <span>Белки (4 ккал/г)</span>
                   <span className="font-mono text-emerald-400 font-bold">{proteinPercent}%</span>
                 </div>
                 <div className="flex items-baseline justify-between font-mono">
@@ -892,7 +844,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
               {/* Fats */}
               <div className="bg-[#141d27] border border-[#223142] p-3 rounded-xl space-y-1.5">
                 <div className="flex items-center justify-between text-slate-400 text-[11px]">
-                  <span>Жиры (9 ккал)</span>
+                  <span>Жиры (9 ккал/г)</span>
                   <span className="font-mono text-amber-400 font-bold">{fatPercent}%</span>
                 </div>
                 <div className="flex items-baseline justify-between font-mono">
@@ -907,7 +859,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
               {/* Carbs */}
               <div className="bg-[#141d27] border border-[#223142] p-3 rounded-xl space-y-1.5">
                 <div className="flex items-center justify-between text-slate-400 text-[11px]">
-                  <span>Углеводы</span>
+                  <span>Углеводы (4 ккал/г)</span>
                   <span className="font-mono text-teal-400 font-bold">{carbsPercent}%</span>
                 </div>
                 <div className="flex items-baseline justify-between font-mono">
@@ -1260,7 +1212,7 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
             <div className="flex items-center gap-2">
               <Brain className="w-5 h-5 text-emerald-400" />
               <div>
-                <h3 className="text-xs font-bold text-slate-100">Единая нейро-аналитика GetFitBot</h3>
+                <h3 className="text-xs font-bold text-slate-100">Единая нейро-аналитика GetFit</h3>
                 <p className="text-[10px] text-slate-400">Связка: Тренировки + Калории/БЖУ + Сон + InBody</p>
               </div>
             </div>
@@ -1691,6 +1643,87 @@ export const NutritionSleepTracker: React.FC<NutritionSleepTrackerProps> = ({
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {showTargetsModal && (
+        <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-black/80 p-3 backdrop-blur-sm" onClick={() => setShowTargetsModal(false)}>
+          <div className="my-4 w-full max-w-md rounded-2xl border border-[#263a4a] bg-[#0d151c] shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-[#1d2c38] px-4 py-3">
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-cyan-400" />
+                <div>
+                  <div className="text-sm font-bold text-slate-100">Как рассчитана норма</div>
+                  <div className="text-[9px] text-slate-500">BMR + активность + цель → калории → БЖУ</div>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowTargetsModal(false)} className="rounded-lg bg-[#18232f] p-1.5 text-slate-400" aria-label="Закрыть разбор">
+                <ChevronUp className="h-4 w-4 rotate-180" />
+              </button>
+            </div>
+            <div className="space-y-3 px-4 py-4 text-[10px] text-slate-300">
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-200">1. Базовый метаболизм (BMR)</span>
+                  <span className="font-mono text-cyan-300">{calculatedTargets.bmr} ккал</span>
+                </div>
+                <div className="mt-1 text-[9px] leading-relaxed text-slate-500">
+                  Mifflin-St Jeor: 10 × вес + 6,25 × рост − 5 × возраст {user.gender === 'female' ? '− 161' : '+ 5'}.
+                  Взято: вес {user.currentWeight || 75} кг, рост {user.heightCm || 175} см, возраст {user.age || 30}.
+                </div>
+              </div>
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-200">2. Поддержка с активностью</span>
+                  <span className="font-mono text-emerald-300">{calculatedTargets.maintenanceCalories} ккал</span>
+                </div>
+                <div className="mt-1 text-[9px] leading-relaxed text-slate-500">
+                  BMR × коэффициент активности {calculatedTargets.activityFactor.toFixed(3)}. Уровень: {
+                    user.activityLevel === 'sedentary' ? 'низкий' :
+                    user.activityLevel === 'active' ? 'высокий' :
+                    user.activityLevel === 'very_active' ? 'очень высокий' : 'умеренный'
+                  }.
+                </div>
+              </div>
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-200">3. Цель: {calculatedTargets.goalLabel}</span>
+                  <span className="font-mono text-amber-300">× {calculatedTargets.goalMultiplier.toFixed(2)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-[9px] text-slate-500">
+                  <span>Расчётная цель</span>
+                  <span className="font-mono text-slate-300">{Math.round(calculatedTargets.maintenanceCalories * calculatedTargets.goalMultiplier)} ккал</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-[9px] text-slate-500">
+                  <span>Итоговая цель</span>
+                  <span className="font-mono font-bold text-slate-100">{calculatedTargets.calories} ккал</span>
+                </div>
+                {calculatedTargets.customCalories && (
+                  <div className="mt-1 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2 py-1 text-[8px] text-amber-200">
+                    Стоит ручная цель калорий — она важнее расчёта.
+                  </div>
+                )}
+              </div>
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-200">4. БЖУ</span>
+                  <span className="font-mono text-slate-400">{calculatedTargets.protein * 4 + calculatedTargets.fat * 9 + calculatedTargets.carbs * 4} ккал</span>
+                </div>
+                <div className="mt-1 grid grid-cols-2 gap-1 text-[9px]">
+                  <div className="rounded-lg bg-[#18232f] px-2 py-1">Белки: <b>{calculatedTargets.protein} г</b> · 4 ккал/г</div>
+                  <div className="rounded-lg bg-[#18232f] px-2 py-1">Жиры: <b>{calculatedTargets.fat} г</b> · 9 ккал/г</div>
+                  <div className="rounded-lg bg-[#18232f] px-2 py-1">Углеводы: <b>{calculatedTargets.carbs} г</b> · 4 ккал/г</div>
+                  <div className="rounded-lg bg-[#18232f] px-2 py-1">Клетчатка: <b>{calculatedTargets.fiber} г</b></div>
+                </div>
+                <div className="mt-1 text-[8px] leading-relaxed text-slate-500">
+                  Белок — {calculatedTargets.proteinPerKg} г/кг. Углеводы — остаток калорий после белка и жира, минимум 80 г.
+                  Сумма БЖУ может отличаться от цели на 1–5 ккал из-за округления.
+                </div>
+              </div>
+              <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-2.5 py-2 text-[8px] leading-relaxed text-amber-200/80">
+                Это ориентир по формуле, а не медицинская рекомендация. Для точной настройки нужны динамика веса, самочувствие и консультация специалиста.
+              </div>
+            </div>
           </div>
         </div>
       )}

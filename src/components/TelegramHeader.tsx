@@ -26,7 +26,7 @@ interface TelegramHeaderProps {
  */
 export const TelegramHeader: React.FC<TelegramHeaderProps> = ({
   user,
-  title = 'GetFitBot',
+  title = 'GetFit',
   subtitle = 'AI Fitness & Discipline',
   disciplineScore,
   streakDays,

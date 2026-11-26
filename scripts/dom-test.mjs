@@ -629,7 +629,7 @@ if (exportButton) {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 120));
   });
-  check('копия попала в буфер обмена', clipboardText.includes('GetFitBot') && clipboardText.includes('workoutPlans'), clipboardText.slice(0, 60));
+  check('копия попала в буфер обмена', clipboardText.includes('GetFit') && clipboardText.includes('workoutPlans'), clipboardText.slice(0, 60));
   check('в копии есть состояние пользователя', clipboardText.includes('@fromcloud'));
   check('пользователю сообщили об успехе', text().includes('буфер'));
 }
@@ -647,7 +647,7 @@ if (importToggle) {
   check('открылось поле для вставки копии', Boolean(area));
   if (area) {
     const restored = JSON.stringify({
-      app: 'GetFitBot',
+      app: 'GetFit',
       version: 1,
       data: { user: { name: 'ИзКопии', telegramUsername: '@restored' }, workoutPlans: [{ id: 'p9', title: 'Восстановленный план', scheduledDay: 'Среда', exercises: [] }] },
     });
@@ -716,7 +716,7 @@ if (savedTemplatesBtn) {
       await new Promise((resolve) => setTimeout(resolve, 80));
     });
   }
-  check('библиотека шаблонов закрывается', !text().includes('GetFitBot Workout Templates Engine'));
+  check('библиотека шаблонов закрывается', !text().includes('GetFit Workout Templates Engine'));
 }
 
 // 5. Состояние после переключений и модалок не потерялось

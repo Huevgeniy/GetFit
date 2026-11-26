@@ -71,7 +71,7 @@ line('режим production (dev-вход выключен)', healthJson?.mode =
 line('ключи ИИ и токен бота видны серверу', healthJson?.hasGrokKey === true && healthJson?.hasTelegramToken === true, JSON.stringify({ groq: healthJson?.hasGrokKey, telegram: healthJson?.hasTelegramToken, gemini: healthJson?.hasGeminiKey }));
 
 const page = await get('/');
-line('приложение отдаётся (SPA)', page.status === 200 && /<title>GetFitBot<\/title>/.test(page.text), `${page.ms} мс, ${page.text.length} байт`);
+line('приложение отдаётся (SPA)', page.status === 200 && /<title>GetFit<\/title>/.test(page.text), `${page.ms} мс, ${page.text.length} байт`);
 
 const meNoAuth = await get('/api/me');
 line('API закрыт без авторизации', meNoAuth.status === 401, String(meNoAuth.status));

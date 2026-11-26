@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>GetFitBot</title>
+    <title>GetFit</title>
     <meta name="description" content="Telegram Mini App для учёта тренировок, питания, сна и прогресса" />
-    <meta property="og:title" content="GetFitBot" />
+    <meta property="og:title" content="GetFit" />
     <meta property="og:description" content="Telegram Mini App для учёта тренировок, питания, сна и прогресса" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -67,6 +67,8 @@
         window.addEventListener('error', function (event) {
           var target = event && event.target;
           if (target && target.tagName === 'SCRIPT') {
+            // Внешний Telegram SDK может быть недоступен — приложение обязано открыться.
+            if ((target.src || '').indexOf('telegram.org') !== -1) return;
             showBootError('Не загрузился файл приложения. Обновите страницу.');
           }
         }, true);

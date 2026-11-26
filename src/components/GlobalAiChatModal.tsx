@@ -49,6 +49,8 @@ interface GlobalAiChatModalProps {
   onLogMetric?: (name: string, value: number, unit: string, category?: string) => void;
   onLogDailyState?: (sleepHours: number, notes?: string, quality?: number, stress?: number) => void;
   onCreateExperiment?: (title: string, hypothesis: string, dependentMetric?: string, independentMetrics?: string[], durationDays?: number) => void;
+  /** Отмечает день активного цикла по сообщению в чате. */
+  onFixCycleWorkout?: (note: string) => { label: string; details: string } | null;
 }
 
 export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
@@ -62,6 +64,7 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
   onLogMetric,
   onLogDailyState,
   onCreateExperiment,
+  onFixCycleWorkout,
 }) => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -74,7 +77,7 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
     {
       id: 'welcome',
       sender: 'ai',
-      text: `Привет, ${user.name || 'Атлет'}! Я твой интеллектуальный ИИ-ассистент GetFitBot с Natural Language Interface.\n\nВместо заполнения форм просто напиши или надиктуй голосом:\n«Сегодня сделал жим 100 на 5 раз, чувствовалось тяжело, спал всего 5 часов. Еще замерил талию 82 см.»\n\nЯ сам распознаю упражнения, замеры, сон и внесу всё в твои графики и профиль!`,
+      text: `Привет, ${user.name || 'Атлет'}! Я твой интеллектуальный ИИ-ассистент GetFit с Natural Language Interface.\n\nВместо заполнения форм просто напиши или надиктуй голосом:\n«Сегодня сделал жим 100 на 5 раз, чувствовалось тяжело, спал всего 5 часов. Еще замерил талию 82 см.»\n\nЯ сам распознаю упражнения, замеры, сон и внесу всё в твои графики и профиль!`,
       timestamp: 'Сейчас',
       aiProvider: 'ждать сообщения',
     },
@@ -167,6 +170,34 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
 
     setMessages(prev => [...prev, userMsg]);
     if (!textToSend) setInput('');
+
+    // Активный цикл: «сделал тренировку по циклу, зафиксируй» — без похода в ИИ.
+    const mentionsCycle = /цикл/i.test(text);
+    const confirmsWorkout = /(сделал|сделана|выполнил|выполнена|зафиксир|закрыл|отметь|готово|трениров)/i.test(text);
+    if (mentionsCycle && confirmsWorkout && onFixCycleWorkout) {
+      const fixed = onFixCycleWorkout(text);
+      if (fixed) {
+        setMessages(prev => [
+          ...prev,
+          {
+            id: `ai_${Date.now()}`,
+            sender: 'ai',
+            text: `Зафиксировал тренировку по циклу: ${fixed.label}.\n${fixed.details}`,
+            actionsExecuted: [
+              {
+                type: 'cycle_workout',
+                label: fixed.label,
+                details: fixed.details,
+                icon: 'workout',
+              },
+            ],
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          },
+        ]);
+        return;
+      }
+    }
+
     setIsLoading(true);
 
     try {
@@ -515,17 +546,8 @@ export const GlobalAiChatModal: React.FC<GlobalAiChatModalProps> = ({
               <div className="flex items-center gap-1.5 text-[9px] font-mono text-slate-500 mt-1 px-1">
                 <span>{msg.timestamp}</span>
                 {msg.aiProvider && (
-                  <span
-                    className="text-[8px] px-1 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/50"
-                    title="Кто подготовил ответ: Groq — основной ИИ, Gemini — резерв, встроенный разбор — без ИИ"
-                  >
-                    {msg.aiProvider === 'groq'
-                      ? 'ответил: Groq'
-                      : msg.aiProvider === 'gemini'
-                        ? 'ответил: Gemini'
-                        : msg.aiProvider === 'heuristic'
-                          ? 'встроенный разбор'
-                          : msg.aiProvider}
+                  <span className="text-[8px] px-1 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/50">
+                    {msg.aiProvider === 'heuristic' ? 'встроенный разбор' : 'ИИ-тренер'}
                   </span>
                 )}
               </div>

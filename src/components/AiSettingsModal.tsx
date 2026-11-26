@@ -119,9 +119,8 @@ export const AiSettingsModal: React.FC<AiSettingsModalProps> = ({
               </span>
             </div>
             <p className="text-slate-300 mt-1 leading-relaxed">
-              Основной провайдер — <strong className="text-emerald-400">Groq</strong> (модель Qwen 3.8 27B), резервный —{' '}
-              <strong className="text-cyan-400">Gemini Flash</strong>. Если оба недоступны, приложение отвечает встроенным
-              разбором без ИИ. Ключи хранятся на сервере, в браузер не попадают.
+              ИИ-тренер работает автоматически. Если внешний сервис недоступен, приложение использует
+              встроенные правила и разбор без ИИ. Ключи и настройки хранятся на сервере и не попадают в браузер.
             </p>
           </div>
         </div>

@@ -337,18 +337,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const aiPrimary = !aiProviders
     ? 'проверяем подключение…'
-    : aiProviders.groq
-      ? `Groq · ${aiProviders.groqModel || 'qwen3.8-27b'}`
-      : aiProviders.gemini
-        ? `Gemini · ${aiProviders.geminiModel || 'flash'}`
-        : 'встроенный разбор (без ключей)';
+    : aiProviders.groq || aiProviders.gemini
+      ? 'ИИ-тренер подключён'
+      : 'встроенный разбор';
   const aiFallback = !aiProviders
     ? ''
     : aiProviders.groq && aiProviders.gemini
-      ? '⚡ Резерв: Gemini'
+      ? 'резерв подключён'
       : aiProviders.groq || aiProviders.gemini
-        ? 'Резерв: нет'
-        : 'Ключи не заданы';
+        ? 'работает'
+        : 'без внешнего ИИ';
 
   const handleOpenEditProfile = () => {
     setEditName(user?.name || '');
@@ -907,7 +905,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </div>
 
               <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400 font-mono px-1">
-                <span className="min-w-0 truncate">Модель: {aiPrimary}</span>
+                <span className="min-w-0 truncate">ИИ-тренер: {aiPrimary}</span>
                 {aiFallback && (
                   <span
                     className={`shrink-0 font-bold ${

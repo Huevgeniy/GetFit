@@ -19,35 +19,98 @@ import {
   Coffee,
   Utensils,
   Wallet,
-  Activity
+  Activity,
+  FileText,
+  Copy,
+  Download
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { UserProfile, DisciplinePenalty, WorkoutPlan } from '../types';
-import { apiFetch } from '../lib/api';
+import {
+  UserProfile,
+  DisciplinePenalty,
+  WorkoutPlan,
+  WorkoutRecord,
+  DailyNutritionRecord,
+  SleepRecord,
+  GoalMarathon,
+  DisciplineHabitId,
+  DisciplineSettings,
+  DisciplineEvent,
+} from '../types';
+import {
+  DISCIPLINE_HABITS,
+  DisciplineLevelMeta,
+  disciplineIsActive,
+  disciplineLevel,
+  enabledHabits,
+  normalizeDisciplineSettings,
+  suggestPenalties,
+  PenaltySuggestion,
+} from '../lib/discipline';
+import { loadActiveCycle } from '../lib/cycleTemplates';
 
 interface DisciplineTrackerProps {
   user: UserProfile;
   penalties: DisciplinePenalty[];
   workoutPlans: WorkoutPlan[];
+  pastWorkouts: WorkoutRecord[];
+  dailyNutritionRecords: DailyNutritionRecord[];
+  sleepRecords: SleepRecord[];
+  marathons: GoalMarathon[];
   onResolvePenalty: (penaltyId: string) => void;
   onRescheduleWorkout: (planId: string, newDate: string, reason: string) => void;
   onApplyPenalty: (reason: string, task: string, points: number) => void;
+  onAssignPenalty: (penaltyId: string, task: string, category: string, severity: number) => void;
+  onCloseDisciplineDay: (completed: DisciplineHabitId[]) => void;
   onUpdateUser?: (updated: Partial<UserProfile>) => void;
 }
 
 export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
   user,
-  penalties,
-  workoutPlans,
+  penalties = [],
+  workoutPlans = [],
+  pastWorkouts = [],
+  dailyNutritionRecords = [],
+  sleepRecords = [],
+  marathons = [],
   onResolvePenalty,
   onRescheduleWorkout,
   onApplyPenalty,
+  onAssignPenalty,
+  onCloseDisciplineDay = () => undefined,
   onUpdateUser,
 }) => {
+  const disciplineSettings = normalizeDisciplineSettings(user.disciplineSettings);
+  const habits = enabledHabits(disciplineSettings);
+  const active = disciplineIsActive(disciplineSettings, workoutPlans) || Boolean(user.disciplineStartedAt);
+  const started = Boolean(user.disciplineStartedAt);
+  const displayScore = active && started ? user.disciplineScore : 0;
+  const levelMeta = disciplineLevel(displayScore, active && started);
+  const today = new Date().toISOString().slice(0, 10);
+  const activeCycle = loadActiveCycle();
+  const cycleDoneToday = Boolean(
+    activeCycle &&
+      Object.values(activeCycle.completedAt || {}).some(value => value.slice(0, 10) === today),
+  );
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showCustomPenaltyModal, setShowCustomPenaltyModal] = useState(false);
   const [showAiArbitratorModal, setShowAiArbitratorModal] = useState(false);
   const [showNormsModal, setShowNormsModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showContractModal, setShowContractModal] = useState(false);
+  const [settingsDraft, setSettingsDraft] = useState<DisciplineSettings>(disciplineSettings);
+  const [contractFriend, setContractFriend] = useState(user.disciplineContract?.friendName || '');
+  const [contractAccepted, setContractAccepted] = useState(Boolean(user.disciplineContract?.acceptedAt));
+  const [contractFriendAccepted, setContractFriendAccepted] = useState(Boolean(user.disciplineContract?.friendAcceptedAt));
+  const [dayCompleted, setDayCompleted] = useState<Partial<Record<DisciplineHabitId, boolean>>>(() => ({
+    workout: pastWorkouts.some(workout => (workout.date || workout.completedAt || workout.startedAt || '').slice(0, 10) === today),
+    sleep: sleepRecords.some(record => record.date === today),
+    nutrition: dailyNutritionRecords.some(record => record.date === today && (record.meals?.length || 0) > 0),
+    steps: Boolean(user.stepGoalEnabled && user.dailyStepGoal > 0 && (user.dailySteps?.[today] || 0) >= user.dailyStepGoal),
+    marathon: marathons.some(marathon => marathon.dailyLogs?.some(log => log.date === today)),
+    cycle: cycleDoneToday,
+    lab: false,
+  }));
 
   // Reschedule form state
   const [selectedPlanId, setSelectedPlanId] = useState<string>(workoutPlans[0]?.id || '');
@@ -65,6 +128,10 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
   // AI Arbitrator state
   const [arbitratorInput, setArbitratorInput] = useState('');
   const [arbitratorLoading, setArbitratorLoading] = useState(false);
+  const [arbitratorLostPoints, setArbitratorLostPoints] = useState(15);
+  const [arbitratorOptions, setArbitratorOptions] = useState<PenaltySuggestion[]>([]);
+  const [arbitratorIndex, setArbitratorIndex] = useState(0);
+  const [arbitratorPenaltyId, setArbitratorPenaltyId] = useState<string | null>(null);
   const [arbitratorSuggestion, setArbitratorSuggestion] = useState<{
     task: string;
     points: number;
@@ -73,6 +140,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
 
   // Norms state (preserves 0 if no step goal set)
   const [stepNormInput, setStepNormInput] = useState<number>(user.dailyStepGoal !== undefined ? user.dailyStepGoal : 10000);
+  const [stepGoalEnabledDraft, setStepGoalEnabledDraft] = useState(Boolean(user.stepGoalEnabled));
 
   const pendingPenalties = penalties.filter(p => p.status === 'pending');
   const resolvedPenalties = penalties.filter(p => p.status === 'completed');
@@ -91,90 +159,159 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
     setShowCustomPenaltyModal(false);
   };
 
-  const handleAiArbitratorRequest = async () => {
-    if (!arbitratorInput.trim()) return;
-    setArbitratorLoading(true);
+  const handleAiArbitratorRequest = () => {
+    const options = suggestPenalties(
+      disciplineSettings,
+      arbitratorLostPoints,
+      Boolean(user.stepGoalEnabled),
+      user.dailyStepGoal,
+    );
+    setArbitratorOptions(options);
+    setArbitratorIndex(0);
+    const first = options[0];
+    setArbitratorSuggestion(
+      first
+        ? {
+            task: first.task,
+            points: first.points,
+            explanation: `Категория: ${first.label}. Сложность подобрана по потерянным очкам. Шаги предлагаются только если цель шагов включена.`,
+          }
+        : {
+            task: 'Выбери наказание вручную в конструкторе штрафов',
+            points: Math.max(1, arbitratorLostPoints),
+            explanation: 'В настройках дисциплины не разрешена ни одна категория штрафов. Включи категории или создай штраф вручную.',
+          },
+    );
+  };
 
-    try {
-      const res = await apiFetch('/api/ai/concierge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `Я совершил нарушение спортивной дисциплины: "${arbitratorInput}". Назначь мне справедливое и мотивирующее дисциплинарное задание (например: внеплановое кардио 30 минут, пропуск читмила, удвоенная норма шагов завтра, или отправить 500 ₽ кенту на кофе / 1000 ₽ на благотворительность, либо контрастный душ/наведение порядка). Укажи вычет дисциплины от 4 до 8%. Верни JSON с полями task, points, explanation.`,
-          userProfile: user,
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.action?.payload?.penaltyTask) {
-          setArbitratorSuggestion({
-            task: data.action.payload.penaltyTask,
-            points: data.action.payload.pointsDeducted || 6,
-            explanation: data.reply || 'ИИ-Арбитр вынес решение по дисциплине.',
-          });
-        } else {
-          setArbitratorSuggestion({
-            task: 'Внеплановое кардио 30 минут (дорожка в гору 12%)',
-            points: 6,
-            explanation: data.reply || 'Эффективное компенсаторное задание для сжигания калорий и сохранения рабочего ритма.',
-          });
-        }
-      } else {
-        throw new Error('Fallback');
-      }
-    } catch {
-      // Smart non-trivial disciplinary fallback based on context
-      if (/пицц|сладк|чипс|торт|шаурм|еда|жор|читмил/i.test(arbitratorInput)) {
-        setArbitratorSuggestion({
-          task: 'Пропуск ближайшего читмила + 30 мин внепланового кардио',
-          points: 6,
-          explanation: 'Для нейтрализации избытка гликогена, ускорения метаболизма и возврата к чистому рациону.',
-        });
-      } else if (/деньг|кент|друг|руб|фонд|благотворительн/i.test(arbitratorInput)) {
-        setArbitratorSuggestion({
-          task: 'Отправить 500 ₽ кенту на кофе за пропуск тренировки',
-          points: 7,
-          explanation: 'Финансовая цена слова — лучший стимул больше никогда не пропускать запланированные дни.',
-        });
-      } else if (/шаг|ходьб|активност/i.test(arbitratorInput)) {
-        setArbitratorSuggestion({
-          task: 'Удвоенная норма шагов завтра (х2 норма активности)',
-          points: 6,
-          explanation: 'Компенсация пассивного дня дополнительным расходом энергии на следующие сутки.',
-        });
-      } else if (/тренировк|зал|пропуск|забил|прогулял/i.test(arbitratorInput)) {
-        setArbitratorSuggestion({
-          task: 'Внеплановое кардио 30 минут ИЛИ 500 ₽ кенту на кофе',
-          points: 7,
-          explanation: 'На выбор: отработать энергией в зале либо ответить рублём перед товарищем.',
-        });
-      } else {
-        setArbitratorSuggestion({
-          task: 'Холодный душ 2 утра подряд + отбой строго до 23:00',
-          points: 5,
-          explanation: 'Дисциплинарная перезагрузка нервной системы, воли и ритмов восстановления.',
-        });
-      }
-    } finally {
-      setArbitratorLoading(false);
-    }
+  const cycleArbitratorOption = () => {
+    if (arbitratorOptions.length === 0) return;
+    const next = (arbitratorIndex + 1) % arbitratorOptions.length;
+    const option = arbitratorOptions[next];
+    setArbitratorIndex(next);
+    setArbitratorSuggestion({
+      task: option.task,
+      points: option.points,
+      explanation: `Категория: ${option.label}. Сложность подобрана по потерянным очкам.`,
+    });
   };
 
   const handleApplyArbitrator = () => {
     if (!arbitratorSuggestion) return;
-    onApplyPenalty(`Нарушение: ${arbitratorInput.slice(0, 30)}`, arbitratorSuggestion.task, arbitratorSuggestion.points);
+    if (arbitratorPenaltyId) {
+      onAssignPenalty(
+        arbitratorPenaltyId,
+        arbitratorSuggestion.task,
+        arbitratorOptions[arbitratorIndex]?.category || 'cardio',
+        arbitratorOptions[arbitratorIndex]?.severity ?? 0.5,
+      );
+    } else {
+      onApplyPenalty(`Нарушение: ${arbitratorInput.slice(0, 30)}`, arbitratorSuggestion.task, arbitratorSuggestion.points);
+    }
     setShowAiArbitratorModal(false);
     setArbitratorSuggestion(null);
     setArbitratorInput('');
+    setArbitratorOptions([]);
+    setArbitratorPenaltyId(null);
   };
 
   const handleSaveNorms = (e: React.FormEvent) => {
     e.preventDefault();
     if (onUpdateUser) {
-      onUpdateUser({ dailyStepGoal: stepNormInput });
+      onUpdateUser({ dailyStepGoal: stepNormInput, stepGoalEnabled: stepNormInput > 0 });
     }
     setShowNormsModal(false);
+  };
+
+  const handleSaveSettings = () => {
+    if (onUpdateUser) {
+      const nextSettings = {
+        ...settingsDraft,
+        enabled: {
+          ...settingsDraft.enabled,
+          steps: stepGoalEnabledDraft && stepNormInput > 0 ? settingsDraft.enabled.steps : false,
+        },
+      };
+      onUpdateUser({
+        disciplineSettings: nextSettings,
+        dailyStepGoal: stepNormInput,
+        stepGoalEnabled: stepGoalEnabledDraft && stepNormInput > 0,
+      });
+    }
+    setShowSettingsModal(false);
+  };
+
+  const handleCloseDay = () => {
+    onCloseDisciplineDay(habits.filter(habit => dayCompleted[habit]));
+  };
+
+  const penaltyCategoryOptions: Array<{ id: keyof DisciplineSettings['allowedCategories']; label: string }> = [
+    { id: 'cardio', label: 'Кардио' },
+    { id: 'steps', label: 'Шаги' },
+    { id: 'financial', label: 'Финансы' },
+    { id: 'diet', label: 'Питание' },
+    { id: 'sleep', label: 'Сон' },
+    { id: 'social', label: 'Социальное' },
+    { id: 'skill', label: 'Навык' },
+  ];
+
+  const contractText = [    'ДОГОВОР ДИСЦИПЛИНЫ GETFIT',
+    `Дата: ${new Date().toLocaleDateString('ru-RU')}`,
+    `Участник: ${user.name || 'атлет'}`,
+    contractFriend.trim() ? `Партнёр: ${contractFriend.trim()}` : 'Партнёр: не указан',
+    '',
+    'Я обязуюсь:',
+    ...habits.map(habit => {
+      const meta = DISCIPLINE_HABITS.find(item => item.id === habit);
+      return `— ${meta?.label || habit}: вес ${disciplineSettings.weights[habit]} из 100`;
+    }),
+    '',
+    'За пропуск я принимаю штраф из выбранных мной категорий. Штраф должен вернуть потерянные очки только после выполнения.',
+    'Если штраф не выполнен вовремя, дисциплина снижается дополнительно, а восстановление требует закрыть все долги и удержать серию.',
+    '',
+    'Подпись участника: ____________________',
+    contractFriend.trim() ? 'Подпись партнёра: ____________________' : '',
+    'Я подтверждаю, что условия выбраны добровольно и буду выполнять их честно.',
+  ].filter(Boolean).join('\n');
+
+  const copyContract = async () => {
+    try {
+      await navigator.clipboard.writeText(contractText);
+      confetti({ particleCount: 40, spread: 50, origin: { y: 0.7 } });
+    } catch {
+      // ignore
+    }
+  };
+
+  const downloadContract = () => {
+    const blob = new Blob([contractText], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'getfit-discipline-contract.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const shareContract = () => {
+    const text = encodeURIComponent(contractText);
+    window.open(`https://t.me/share/url?url=${encodeURIComponent('https://getfit-kqhi.onrender.com')}&text=${text}`, '_blank');
+  };
+
+  const saveContract = () => {
+    if (!onUpdateUser) return;
+    const now = new Date().toISOString();
+    onUpdateUser({
+      disciplineContract: {
+        text: contractText,
+        friendName: contractFriend.trim(),
+        acceptedAt: now,
+        friendAcceptedAt: contractFriendAccepted ? now : undefined,
+        status: contractAccepted && contractFriendAccepted ? 'active' : 'draft',
+      },
+    });
+    confetti({ particleCount: 60, spread: 70, origin: { y: 0.7 } });
+    setShowContractModal(false);
   };
 
   return (
@@ -187,20 +324,52 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
         <div className="flex items-center justify-between">
           <div>
             <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
-              Индекс дисциплины GetFitBot
+              Индекс дисциплины GetFit
             </span>
             <div className="flex items-baseline gap-2 mt-0.5">
-              <span className="text-3xl font-extrabold font-mono text-emerald-400">
-                {user.disciplineScore}%
+              <span className="text-3xl font-extrabold font-mono" style={{ color: levelMeta.color }}>
+                {displayScore}%
               </span>
-              <span className="text-xs text-emerald-300/80 font-medium">
-                {user.disciplineScore >= 90 ? 'Железная воля' : user.disciplineScore >= 75 ? 'Стабильный атлет' : 'Нужно поднажать'}
+              <span className="text-xs font-medium" style={{ color: levelMeta.color }}>
+                {levelMeta.label}
               </span>
             </div>
+            <p className="mt-1 max-w-[230px] text-[9px] leading-snug text-slate-500">
+              {!active
+                ? 'Пока 0: дисциплина активируется после первого выполненного задания по плану или привычке.'
+                : !started
+                  ? 'Пока 0: выполните первое задание по плану или привычке — тогда дисциплина станет 100%.'
+                  : levelMeta.description}
+            </p>
           </div>
 
-          <div className="w-12 h-12 rounded-xl bg-emerald-950/80 border border-emerald-500/30 flex items-center justify-center">
-            <ShieldCheck className="w-6 h-6 text-emerald-400" />
+          <div className="flex flex-col items-end gap-1.5">
+            <div className="w-12 h-12 rounded-xl bg-emerald-950/80 border border-emerald-500/30 flex items-center justify-center">
+              <ShieldCheck className="w-6 h-6 text-emerald-400" />
+            </div>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setSettingsDraft(disciplineSettings);
+                  setStepNormInput(user.dailyStepGoal ?? 10000);
+                  setStepGoalEnabledDraft(Boolean(user.stepGoalEnabled));
+                  setShowSettingsModal(true);
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#2b4050] bg-[#121c25] px-1.5 py-1 text-[8px] font-bold text-slate-300"
+              >
+                <Settings className="h-2.5 w-2.5" />
+                Настройки
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowContractModal(true)}
+                className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-1 text-[8px] font-bold text-emerald-300"
+              >
+                <FileText className="h-2.5 w-2.5" />
+                Договор
+              </button>
+            </div>
           </div>
         </div>
 
@@ -211,7 +380,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
               <Flame className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
               <span>Стрик</span>
             </div>
-            <div className="text-xs font-bold font-mono text-slate-100 mt-1">{user.streakDays} дн.</div>
+            <div className="text-xs font-bold font-mono text-slate-100 mt-1">{started ? user.streakDays : 0} дн.</div>
           </div>
 
           <div className="bg-[#151e29] p-2.5 rounded-xl">
@@ -219,7 +388,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
               <Sparkles className="w-3.5 h-3.5 text-teal-400" />
               <span>Рекорд</span>
             </div>
-            <div className="text-xs font-bold font-mono text-slate-100 mt-1">{user.longestStreak} дн.</div>
+            <div className="text-xs font-bold font-mono text-slate-100 mt-1">{started ? user.longestStreak : 0} дн.</div>
           </div>
 
           <div 
@@ -234,12 +403,73 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
               <Settings className="w-3 h-3 text-slate-400" />
             </div>
             <div className="text-xs font-bold font-mono text-slate-100 mt-1">
-              {user.dailyStepGoal && user.dailyStepGoal > 0
+              {user.stepGoalEnabled && user.dailyStepGoal && user.dailyStepGoal > 0
                 ? `${user.dailyStepGoal.toLocaleString('ru-RU')} ш.`
                 : 'Без цели'}
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Daily discipline check-in */}
+      <div className="rounded-2xl border border-[#1f2c3a] bg-[#0d141b] p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <Calendar className="h-4 w-4 text-cyan-400" />
+            <span className="text-xs font-bold text-slate-200">Чек-ин дня</span>
+          </div>
+          <span className="text-[9px] text-slate-500">{new Date().toLocaleDateString('ru-RU')}</span>
+        </div>
+        {!active ? (
+          <p className="mt-2 rounded-xl border border-dashed border-[#263a4a] bg-[#091117] px-2.5 py-3 text-[9px] leading-relaxed text-slate-500">
+            Дисциплина пока не активна. Добавьте план или включите привычки в настройках — после первого выполненного задания она станет 100%.
+          </p>
+        ) : (
+          <>
+            <div className="mt-2 space-y-1.5">
+              {habits.map(habit => {
+                const meta = DISCIPLINE_HABITS.find(item => item.id === habit);
+                const done = Boolean(dayCompleted[habit]);
+                return (
+                  <button
+                    key={habit}
+                    type="button"
+                    onClick={() => setDayCompleted(prev => ({ ...prev, [habit]: !prev[habit] }))}
+                    className={`flex w-full items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors ${
+                      done
+                        ? 'border-emerald-500/30 bg-emerald-500/8'
+                        : 'border-[#223442] bg-[#091117]'
+                    }`}
+                  >
+                    <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${done ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-[#3b4a5a]'}`}>
+                      {done && <CheckCircle2 className="h-3 w-3" />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[10px] font-bold text-slate-200">{meta?.label || habit}</span>
+                      <span className="block text-[8px] text-slate-500">{meta?.description}</span>
+                    </span>
+                    <span className="shrink-0 rounded bg-[#18232f] px-1.5 py-0.5 text-[8px] font-bold text-slate-400">
+                      −{disciplineSettings.weights[habit]}%
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <span className="text-[8px] leading-snug text-slate-500">
+                После закрытия пропуски спишут очки и создадут штраф.
+              </span>
+              <button
+                type="button"
+                disabled={user.disciplineLastClosedDate === today}
+                onClick={handleCloseDay}
+                className="shrink-0 rounded-xl bg-emerald-500 px-2.5 py-2 text-[9px] font-bold text-slate-950 disabled:opacity-40"
+              >
+                {user.disciplineLastClosedDate === today ? 'День закрыт' : 'Закрыть день'}
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Action Strip: Reschedule vs Penalty Builder vs AI Arbitrator */}
@@ -263,13 +493,30 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
         >
           <div className="flex items-center gap-1.5 text-emerald-300 font-bold text-xs">
             <Bot className="w-4 h-4 text-emerald-400" />
-            <span>ИИ-Арбитр штрафов</span>
+            <span>Арбитр штрафов</span>
           </div>
           <span className="text-[10px] text-slate-400 leading-tight">
-            Справедливое задание под твою ситуацию
+            Подберёт вариант из разрешённых категорий
           </span>
         </button>
       </div>
+
+      {/* Expired penalty warning */}
+      {penalties.some(p => p.status === 'expired') && (
+        <div className="rounded-xl border border-rose-500/35 bg-rose-500/8 px-3 py-2 text-[9px] leading-relaxed text-rose-200">
+          <AlertTriangle className="mr-1 inline h-3 w-3" />
+          Есть просроченные штрафы. Пока они не закрыты, дисциплина не вернётся к 100. Сначала закрой активные штрафы, затем удерживай серию несколько дней подряд.
+        </div>
+      )}
+
+      {/* Hold period notice */}
+      {user.disciplineHoldUntil && Date.parse(user.disciplineHoldUntil) >= Date.now() && (
+        <div className="rounded-xl border border-amber-500/35 bg-amber-500/8 px-3 py-2 text-[9px] leading-relaxed text-amber-200">
+          <Clock className="mr-1 inline h-3 w-3" />
+          Долги закрыты, но для возврата к 100 нужно удержать дисциплину до{' '}
+          {new Date(user.disciplineHoldUntil).toLocaleDateString('ru-RU')}. Закрывай дни без пропусков — очки растут за каждый чистый день.
+        </div>
+      )}
 
       {/* Pending Penalties Section */}
       <div
@@ -330,12 +577,24 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
                       </div>
                       <div className="text-[11px] text-slate-400 font-mono mt-0.5">{p.date}</div>
                     </div>
-                    <span className="text-xs font-mono font-bold text-rose-400">
+                    <span className="text-right text-[9px] font-mono font-bold text-rose-400">
                       -{p.pointsDeducted}% дисц.
+                      <span className="mt-0.5 block text-[8px] font-semibold text-emerald-400">
+                        вернёт {p.restorePoints ?? p.pointsDeducted}
+                      </span>
                     </span>
                   </div>
 
-                  <div className="bg-[#0e141a] p-2.5 rounded-lg border border-[#1f2a37] flex items-center justify-between text-xs">
+                  <div className="flex items-center justify-between text-[8px] text-slate-500">
+                    <span>{p.category ? p.category : 'категория не выбрана'}</span>
+                    {p.expiresAt && (
+                      <span>
+                        до {new Date(p.expiresAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="bg-[#0e141a] p-2.5 rounded-lg border border-[#1f2a37] flex items-center justify-between text-xs gap-2">
                     <div className="pr-2">
                       <span className="text-[10px] text-slate-400 uppercase font-semibold block">
                         Штрафное задание:
@@ -345,15 +604,31 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
                       </span>
                     </div>
 
-                    <button
-                      onClick={() => {
-                        onResolvePenalty(p.id);
-                        confetti({ particleCount: 35, spread: 60 });
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-sm transition-all whitespace-nowrap shrink-0"
-                    >
-                      {isFinancial ? 'Перевел' : 'Выполнил'}
-                    </button>
+                    {!p.category ? (
+                      <button
+                        onClick={() => {
+                          setArbitratorPenaltyId(p.id);
+                          setArbitratorLostPoints(Math.max(1, p.pointsDeducted));
+                          setArbitratorInput(p.reason);
+                          setArbitratorOptions([]);
+                          setArbitratorSuggestion(null);
+                          setShowAiArbitratorModal(true);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs shadow-sm transition-all whitespace-nowrap shrink-0"
+                      >
+                        Выбрать штраф
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          onResolvePenalty(p.id);
+                          confetti({ particleCount: 35, spread: 60 });
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-sm transition-all whitespace-nowrap shrink-0"
+                      >
+                        {isFinancial ? 'Перевел' : 'Выполнил'}
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -362,14 +637,14 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
         )}
       </div>
 
-      {/* Quick Penalty Presets */}
+      {/* Penalty builder */}
       <div
         id="tour-discipline-presets"
         className="bg-[#12181f] border border-[#1e293b] rounded-xl p-3.5 space-y-2.5"
       >
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold text-slate-200">
-            Быстрое дисциплинарное задание
+            Штраф за пропуск
           </span>
           <button
             onClick={() => setShowCustomPenaltyModal(true)}
@@ -379,112 +654,23 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
           </button>
         </div>
         <p className="text-[11px] text-slate-400">
-          Сорвался с режима? Выбери понятное задание, чтобы вернуться к плану и не потерять серию дней:
+          Арбитр предложит вариант из разрешённых тобой категорий. Шаги появятся только
+          при включённой цели, а сложность растёт вместе с потерянными очками.
         </p>
-        
-        <div className="grid grid-cols-2 gap-2 pt-1">
-          {/* Preset 1: Extra Cardio */}
-          <button
-            onClick={() => onApplyPenalty('Пропуск силовой тренировки', 'Внеплановое кардио 30 мин (дорожка в гору 12% / эллипс)', 5)}
-            className="p-2.5 rounded-xl bg-[#16202a] hover:bg-[#1f2c3a] border border-[#253444] hover:border-sky-500/40 text-left text-xs text-slate-200 transition-all flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center gap-1.5 text-sky-400 font-bold font-mono">
-                <Activity className="w-3.5 h-3.5" />
-                <span>Кардио 30 мин</span>
-              </div>
-              <div className="text-[11px] text-slate-300 font-medium mt-1 leading-snug">
-                Внеплановая дорожка в гору
-              </div>
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1.5">Сжечь калории • -5%</div>
-          </button>
-
-          {/* Preset 2: Double Daily Steps */}
-          <button
-            onClick={() => onApplyPenalty('Недобор дневной активности', 'Удвоенная норма шагов завтра (х2 норма активности)', 6)}
-            className="p-2.5 rounded-xl bg-[#16202a] hover:bg-[#1f2c3a] border border-[#253444] hover:border-emerald-500/40 text-left text-xs text-slate-200 transition-all flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center gap-1.5 text-emerald-400 font-bold font-mono">
-                <Footprints className="w-3.5 h-3.5" />
-                <span>х2 норма шагов</span>
-              </div>
-              <div className="text-[11px] text-slate-300 font-medium mt-1 leading-snug">
-                Удвоенная норма активности завтра
-              </div>
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1.5">Компенсация шагов • -6%</div>
-          </button>
-
-          {/* Preset 3: Skip Cheat Meal */}
-          <button
-            onClick={() => onApplyPenalty('Срыв диеты / перебор калорий', 'Пропуск ближайшего читмила (строго чистый рацион на выходных)', 6)}
-            className="p-2.5 rounded-xl bg-[#16202a] hover:bg-[#1f2c3a] border border-[#253444] hover:border-amber-500/40 text-left text-xs text-slate-200 transition-all flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center gap-1.5 text-amber-400 font-bold font-mono">
-                <Utensils className="w-3.5 h-3.5" />
-                <span>Минус читмил</span>
-              </div>
-              <div className="text-[11px] text-slate-300 font-medium mt-1 leading-snug">
-                Пропуск ближайшего читмила
-              </div>
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1.5">Чистый рацион • -6%</div>
-          </button>
-
-          {/* Preset 4: 500 RUB to Friend */}
-          <button
-            onClick={() => onApplyPenalty('Пропуск тренировки (цена слова)', 'Отправить 500 ₽ кенту на кофе за пропуск тренировки', 7)}
-            className="p-2.5 rounded-xl bg-[#16202a] hover:bg-[#1f2c3a] border border-[#253444] hover:border-teal-500/40 text-left text-xs text-slate-200 transition-all flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center gap-1.5 text-teal-400 font-bold font-mono">
-                <Coffee className="w-3.5 h-3.5" />
-                <span>500 ₽ кенту</span>
-              </div>
-              <div className="text-[11px] text-slate-300 font-medium mt-1 leading-snug">
-                Скинуть другу на кофе
-              </div>
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1.5">Цена слова • -7%</div>
-          </button>
-
-          {/* Preset 5: 1000 RUB to Charity */}
-          <button
-            onClick={() => onApplyPenalty('Грубый срыв тренировочного графика', 'Отправить 1 000 ₽ в благотворительный фонд («Подари Жизнь» / Хабенский)', 8)}
-            className="p-2.5 rounded-xl bg-[#16202a] hover:bg-[#1f2c3a] border border-[#253444] hover:border-rose-500/40 text-left text-xs text-slate-200 transition-all flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center gap-1.5 text-rose-400 font-bold font-mono">
-                <HeartHandshake className="w-3.5 h-3.5" />
-                <span>1 000 ₽ в фонд</span>
-              </div>
-              <div className="text-[11px] text-slate-300 font-medium mt-1 leading-snug">
-                На благотворительность
-              </div>
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1.5">Польза обществу • -8%</div>
-          </button>
-
-          {/* Preset 6: 3 Days Sugar-Free */}
-          <button
-            onClick={() => onApplyPenalty('Срыв на сладкое и фастфуд', '3 дня строго без сахара, десертов и фастфуда', 5)}
-            className="p-2.5 rounded-xl bg-[#16202a] hover:bg-[#1f2c3a] border border-[#253444] hover:border-purple-500/40 text-left text-xs text-slate-200 transition-all flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center gap-1.5 text-purple-400 font-bold font-mono">
-                <Zap className="w-3.5 h-3.5" />
-                <span>3 дня без сахара</span>
-              </div>
-              <div className="text-[11px] text-slate-300 font-medium mt-1 leading-snug">
-                Полный детокс от сладкого
-              </div>
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1.5">Чистка рецепторов • -5%</div>
-          </button>
-        </div>
+        <button
+          onClick={() => {
+            setArbitratorPenaltyId(null);
+            setArbitratorLostPoints(10);
+            setArbitratorInput('');
+            setArbitratorOptions([]);
+            setArbitratorSuggestion(null);
+            setShowAiArbitratorModal(true);
+          }}
+          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-xs font-bold text-emerald-300"
+        >
+          <Bot className="h-4 w-4" />
+          Открыть арбитр штрафов
+        </button>
       </div>
 
       {/* History of Completed Penalties */}
@@ -892,7 +1078,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-xs">
                 <Bot className="w-4 h-4" />
-                <span>ИИ-Арбитр дисциплины</span>
+                <span>Арбитр штрафов</span>
               </div>
               <button
                 onClick={() => setShowAiArbitratorModal(false)}
@@ -903,8 +1089,25 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
             </div>
 
             <p className="text-[11px] text-slate-300">
-              Опиши, что произошло (пропустил тренировку, лег в 3 ночи, перебрал углеводов). ИИ подберет физиологически обоснованное компенсаторное задание.
+              {arbitratorPenaltyId
+                ? 'Выбери штраф из разрешённых категорий. Он заменит общую формулировку и вернёт потерянные очки после выполнения.'
+                : 'Опиши пропуск. Арбитр подберёт штраф из разрешённых тобой категорий. Шаги предлагаются только если цель шагов включена, без удвоений и пересечений.'}
             </p>
+
+            <label className="block">
+              <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                Сколько очков потеряно
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                disabled={Boolean(arbitratorPenaltyId)}
+                value={arbitratorLostPoints}
+                onChange={event => setArbitratorLostPoints(Math.max(1, Math.min(50, Number(event.target.value) || 1)))}
+                className="w-full rounded-xl border border-[#263546] bg-[#18232f] px-2.5 py-2 text-xs font-bold text-slate-100 focus:border-emerald-500 focus:outline-none disabled:opacity-60"
+              />
+            </label>
 
             <textarea
               rows={3}
@@ -917,18 +1120,18 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
             {!arbitratorSuggestion ? (
               <button
                 onClick={handleAiArbitratorRequest}
-                disabled={!arbitratorInput.trim() || arbitratorLoading}
+                disabled={arbitratorLoading}
                 className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 transition-all"
               >
                 {arbitratorLoading ? (
                   <>
                     <Sparkles className="w-4 h-4 animate-spin" />
-                    <span>ИИ рассчитывает нагрузку...</span>
+                    <span>Подбираю вариант...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>Запросить справедливый штраф</span>
+                    <span>Подобрать вариант штрафа</span>
                   </>
                 )}
               </button>
@@ -937,7 +1140,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
                 <div className="bg-[#15202c] border border-emerald-500/30 p-3 rounded-xl space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] uppercase font-bold text-emerald-400">
-                      Решение ИИ-Арбитра:
+                      Решение арбитра:
                     </span>
                     <span className="text-xs font-mono font-bold text-rose-400">
                       -{arbitratorSuggestion.points}% дисц.
@@ -953,7 +1156,7 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
 
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setArbitratorSuggestion(null)}
+                    onClick={cycleArbitratorOption}
                     className="flex-1 py-2 rounded-xl bg-[#1a2430] text-slate-300 text-xs font-semibold"
                   >
                     Другой вариант
@@ -1074,6 +1277,201 @@ export const DisciplineTracker: React.FC<DisciplineTrackerProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {showSettingsModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-3 backdrop-blur-sm">
+          <div className="my-3 w-full max-w-md rounded-2xl border border-[#253342] bg-[#12181f] p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Settings className="h-4 w-4 text-emerald-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100">Настройки дисциплины</h3>
+                  <p className="text-[9px] text-slate-500">Привычки, веса и правила штрафов</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowSettingsModal(false)} className="text-slate-400 hover:text-slate-200">✕</button>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              <div className="rounded-xl border border-[#223442] bg-[#091117] p-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] font-bold text-slate-200">Цель по шагам</div>
+                    <div className="text-[8px] text-slate-500">Если выключена, арбитр не предлагает шаговые штрафы</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setStepGoalEnabledDraft(value => !value)}
+                    className={`rounded-lg border px-2 py-1 text-[9px] font-bold ${stepGoalEnabledDraft ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300' : 'border-[#2b4050] text-slate-400'}`}
+                  >
+                    {stepGoalEnabledDraft ? 'Включена' : 'Выключена'}
+                  </button>
+                </div>
+                {stepGoalEnabledDraft && (
+                  <input
+                    type="number"
+                    min={1000}
+                    max={50000}
+                    step={500}
+                    value={stepNormInput}
+                    onChange={event => setStepNormInput(Number(event.target.value) || 0)}
+                    className="mt-2 w-full rounded-lg border border-[#263546] bg-[#18232f] px-2.5 py-1.5 text-xs font-bold text-slate-100"
+                  />
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Привычки и вес</div>
+                {DISCIPLINE_HABITS.map(habit => (
+                  <div key={habit.id} className="flex items-center gap-2 rounded-xl border border-[#223442] bg-[#091117] px-2.5 py-2">
+                    <button
+                      type="button"
+                      onClick={() => setSettingsDraft(prev => ({ ...prev, enabled: { ...prev.enabled, [habit.id]: !prev.enabled[habit.id] } }))}
+                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${settingsDraft.enabled[habit.id] ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-[#3b4a5a]'}`}
+                    >
+                      {settingsDraft.enabled[habit.id] && <CheckCircle2 className="h-3 w-3" />}
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[9px] font-bold text-slate-200">{habit.label}</div>
+                      <div className="text-[7px] text-slate-500">{habit.description}</div>
+                    </div>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={settingsDraft.weights[habit.id]}
+                      onChange={event => setSettingsDraft(prev => ({ ...prev, weights: { ...prev.weights, [habit.id]: Math.max(1, Math.min(50, Number(event.target.value) || 1)) } }))}
+                      className="w-12 rounded-lg border border-[#263546] bg-[#18232f] px-1 py-1 text-center text-[9px] font-bold text-slate-200"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-[8px] text-slate-500">
+                  Режим
+                  <select
+                    value={settingsDraft.penaltyMode}
+                    onChange={event => setSettingsDraft(prev => ({ ...prev, penaltyMode: event.target.value as 'confirm' | 'auto' }))}
+                    className="mt-1 w-full rounded-lg border border-[#263546] bg-[#18232f] px-2 py-1.5 text-[9px] text-slate-200"
+                  >
+                    <option value="confirm">Подтверждать</option>
+                    <option value="auto">Автоматически</option>
+                  </select>
+                </label>
+                <label className="text-[8px] text-slate-500">
+                  Срок, ч
+                  <select
+                    value={settingsDraft.confirmationHours}
+                    onChange={event => setSettingsDraft(prev => ({ ...prev, confirmationHours: Number(event.target.value) }))}
+                    className="mt-1 w-full rounded-lg border border-[#263546] bg-[#18232f] px-2 py-1.5 text-[9px] text-slate-200"
+                  >
+                    {[12, 24, 48, 72].map(hours => <option key={hours} value={hours}>{hours}</option>)}
+                  </select>
+                </label>
+                <label className="text-[8px] text-slate-500">
+                  Сложность
+                  <select
+                    value={settingsDraft.difficulty}
+                    onChange={event => setSettingsDraft(prev => ({ ...prev, difficulty: event.target.value as 'soft' | 'normal' | 'hard' }))}
+                    className="mt-1 w-full rounded-lg border border-[#263546] bg-[#18232f] px-2 py-1.5 text-[9px] text-slate-200"
+                  >
+                    <option value="soft">Мягкая</option>
+                    <option value="normal">Обычная</option>
+                    <option value="hard">Жёсткая</option>
+                  </select>
+                </label>
+                <label className="text-[8px] text-slate-500">
+                  Финансы, ₽
+                  <div className="mt-1 flex gap-1">
+                    <input type="number" value={settingsDraft.financialMin} onChange={event => setSettingsDraft(prev => ({ ...prev, financialMin: Math.max(50, Number(event.target.value) || 100) }))} className="w-full rounded-lg border border-[#263546] bg-[#18232f] px-1 py-1.5 text-[9px] text-slate-200" />
+                    <input type="number" value={settingsDraft.financialMax} onChange={event => setSettingsDraft(prev => ({ ...prev, financialMax: Math.max(100, Number(event.target.value) || 1000) }))} className="w-full rounded-lg border border-[#263546] bg-[#18232f] px-1 py-1.5 text-[9px] text-slate-200" />
+                  </div>
+                </label>
+              </div>
+
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Разрешённые штрафы</div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {penaltyCategoryOptions.map(category => (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => setSettingsDraft(prev => ({ ...prev, allowedCategories: { ...prev.allowedCategories, [category.id]: !prev.allowedCategories[category.id] } }))}
+                      className={`rounded-lg border px-1.5 py-1 text-[8px] font-semibold ${settingsDraft.allowedCategories[category.id] ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-[#263546] text-slate-500'}`}
+                    >
+                      {category.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-[9px] text-slate-400">
+                <input type="checkbox" checked={settingsDraft.notifyPenalties} onChange={event => setSettingsDraft(prev => ({ ...prev, notifyPenalties: event.target.checked }))} />
+                Присылать уведомление о штрафе в Telegram
+              </label>
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <button type="button" onClick={() => setShowSettingsModal(false)} className="flex-1 rounded-xl bg-[#1a2430] py-2 text-xs font-semibold text-slate-300">Отмена</button>
+              <button type="button" onClick={handleSaveSettings} className="flex-1 rounded-xl bg-emerald-500 py-2 text-xs font-bold text-slate-950">Сохранить</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showContractModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-3 backdrop-blur-sm">
+          <div className="my-3 w-full max-w-md rounded-2xl border border-emerald-500/30 bg-[#12181f] p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-emerald-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100">Договор дисциплины</h3>
+                  <p className="text-[9px] text-slate-500">Двусторонний: вы и партнёр</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowContractModal(false)} className="text-slate-400 hover:text-slate-200">✕</button>
+            </div>
+            <label className="mt-3 block text-[9px] text-slate-500">
+              Имя партнёра
+              <input value={contractFriend} onChange={event => setContractFriend(event.target.value)} placeholder="Кому отправляем договор" className="mt-1 w-full rounded-xl border border-[#263546] bg-[#18232f] px-2.5 py-2 text-[10px] text-slate-200" />
+            </label>
+            <pre className="mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-xl border border-[#223442] bg-[#091117] p-2.5 text-[8px] leading-relaxed text-slate-400">{contractText}</pre>
+            <div className="mt-2 space-y-1">
+              <label className="flex items-center gap-2 text-[9px] text-slate-300">
+                <input type="checkbox" checked={contractAccepted} onChange={event => setContractAccepted(event.target.checked)} />
+                Я принимаю условия и буду выполнять их честно
+              </label>
+              <label className="flex items-center gap-2 text-[9px] text-slate-300">
+                <input type="checkbox" checked={contractFriendAccepted} onChange={event => setContractFriendAccepted(event.target.checked)} />
+                Партнёр подтвердил условия в Telegram
+              </label>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-1.5">
+              <button type="button" onClick={copyContract} disabled={!contractAccepted} className="inline-flex items-center justify-center gap-1 rounded-xl border border-[#263546] py-2 text-[9px] font-semibold text-slate-300 disabled:opacity-40">
+                <Copy className="h-3 w-3" /> Копировать
+              </button>
+              <button type="button" onClick={downloadContract} disabled={!contractAccepted} className="inline-flex items-center justify-center gap-1 rounded-xl border border-[#263546] py-2 text-[9px] font-semibold text-slate-300 disabled:opacity-40">
+                <Download className="h-3 w-3" /> Скачать
+              </button>
+              <button type="button" onClick={shareContract} disabled={!contractAccepted || !contractFriendAccepted || !contractFriend.trim()} className="col-span-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 py-2 text-[9px] font-bold text-emerald-300 disabled:opacity-40">
+                Отправить партнёру в Telegram
+              </button>
+              <button type="button" onClick={saveContract} disabled={!contractAccepted || !contractFriendAccepted || !contractFriend.trim()} className="col-span-2 rounded-xl bg-emerald-500 py-2 text-[9px] font-bold text-slate-950 disabled:opacity-40">
+                Зафиксировать двусторонний договор
+              </button>
+            </div>
+            {user.disciplineContract?.status === 'active' && (
+              <p className="mt-2 rounded-lg border border-emerald-500/25 bg-emerald-500/8 px-2 py-1.5 text-[8px] text-emerald-300">
+                Договор активен с {new Date(user.disciplineContract.acceptedAt).toLocaleDateString('ru-RU')} · партнёр: {user.disciplineContract.friendName}
+              </p>
+            )}
+            <p className="mt-2 text-[8px] leading-relaxed text-slate-500">
+              Пока обе стороны не подтвердили условия, договор остаётся черновиком. После фиксации текст и подписи хранятся в профиле.
+            </p>
           </div>
         </div>
       )}

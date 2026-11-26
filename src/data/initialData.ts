@@ -19,7 +19,7 @@ export const INITIAL_USER_PROFILE: UserProfile = {
   stepGoalEnabled: true,
   dailyStepGoal: 10000,
   dailySteps: {},
-  disciplineScore: 100,
+  disciplineScore: 0,
   streakDays: 0,
   longestStreak: 0,
   selectedDisciplines: ['powerlifting', 'streetlifting'],

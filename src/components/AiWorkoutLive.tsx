@@ -627,7 +627,7 @@ export const AiWorkoutLive: React.FC<AiWorkoutLiveProps> = ({
           previousSetsReps: [],
           currentWeight: currentWeight,
           currentSetsReps: currentSetsReps,
-          summaryVerdict: 'Первая фиксация упражнения в GetFitBot. Задана базовая планка!',
+          summaryVerdict: 'Первая фиксация упражнения в GetFit. Задана базовая планка!',
         });
       }
     });
@@ -1304,7 +1304,7 @@ export const AiWorkoutLive: React.FC<AiWorkoutLiveProps> = ({
           <div className="px-3 py-2 bg-[#161f28] border-b border-[#1f2937] flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Bot className="w-4 h-4 text-emerald-400" />
-              <span className="text-xs font-bold text-slate-200">GetFitBot Секундант</span>
+              <span className="text-xs font-bold text-slate-200">GetFit Секундант</span>
             </div>
             <span className="text-[10px] text-emerald-400/90 font-mono bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/20">
               Авто-фиксация

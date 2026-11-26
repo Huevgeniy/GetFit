@@ -1234,7 +1234,7 @@ app.post('/api/ai/chat', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    const systemInstruction = `Ты — GetFitBot AI, профессиональный персональный тренер и секундант атлета прямо во время тренировки.
+    const systemInstruction = `Ты — GetFit AI, профессиональный персональный тренер и секундант атлета прямо во время тренировки.
 Твоя задача:
 1. Поддерживать пользователя во время тренировки, давать короткие, четкие и экспертные советы по технике, восстановлению между подходами и прогрессу.
 2. Автоматически извлекать данные о выполненном подходе из сообщения атлета (например: "сделал 10 раз", "пожал 100 на 10", "второй подход 8 раз", "105 кг на 9 раз").
@@ -1534,7 +1534,7 @@ app.post('/api/ai/cross-analysis', async (req, res) => {
       return res.json({ analysis: verdict });
     }
 
-    const systemInstruction = `Ты — спортивный методист приложения GetFitBot.
+    const systemInstruction = `Ты — спортивный методист приложения GetFit.
 Твоя задача — понятно разобрать, как сон, питание и тренировки влияют на прогресс атлета:
 1. Показать, как качество сна связано с силой и самочувствием на тренировке.
 2. Показать, как калории, белок, жиры, углеводы и клетчатка связаны с прогрессом и восстановлением.
@@ -1583,7 +1583,7 @@ async function processNaturalLanguageInput(
   dataContext?: Record<string, any>,
   savedFoods: any[] = [],
 ): Promise<NLIResult> {
-  const systemInstruction = `Ты — GetFitBot Natural Language Interface & AI Coach: разбираешь свободный текст атлета и превращаешь его в структурированные данные для приложения.
+  const systemInstruction = `Ты — GetFit Natural Language Interface & AI Coach: разбираешь свободный текст атлета и превращаешь его в структурированные данные для приложения.
 
 Примеры сообщений:
 «Сделал жим 100 на 5, 3 подхода, присед 120 3 по 8. Чувствовалось тяжело. Спал 5 часов.»
@@ -1917,7 +1917,7 @@ async function processNaturalLanguageInput(
 
   const finalReply = replyParts.length > 0
     ? replyParts.join('\n\n')
-    : 'Я — ИИ-помощник GetFitBot. Могу записать подход («жим 100 на 5»), замер («талия 82 см»), сон («спал 5 часов») или начать эксперимент. Что запишем?';
+    : 'Я — ИИ-помощник GetFit. Могу записать подход («жим 100 на 5»), замер («талия 82 см»), сон («спал 5 часов») или начать эксперимент. Что запишем?';
 
   return {
     reply: finalReply,
@@ -1971,7 +1971,7 @@ app.post('/api/ai/experiment-analyze', async (req, res) => {
       return res.status(400).json({ error: 'Experiment data required' });
     }
 
-    const systemInstruction = `Ты — спортивный методист приложения GetFitBot.
+    const systemInstruction = `Ты — спортивный методист приложения GetFit.
 Твоя задача — понятно разобрать личный эксперимент атлета:
 1. Оцени, как выбранные факторы (сон, вода, добавки, кофеин, стресс) влияют на спортивный показатель (рабочий вес, подтягивания, общий вес, самочувствие).
 2. Опиши простыми словами, есть ли связь и насколько она заметна, посчитай изменение показателя в процентах. Не используй формулы, коэффициент корреляции, r и p-value.
@@ -2056,7 +2056,7 @@ app.post('/api/ai/periodization-recommend', async (req, res) => {
   try {
     const { blocks, pastWorkouts, currentFatigue, userProfile } = req.body;
 
-    const systemInstruction = `Ты — методист по тренировочным циклам GetFitBot.
+    const systemInstruction = `Ты — методист по тренировочным циклам GetFit.
 Твоя задача — посмотреть блоки (рост мышц, сила, разгрузка, перестройка тела) и понятно подсказать следующий шаг:
 1. Оценить накопленную усталость по тяжести подходов, общему поднятому весу и прогрессу.
 2. Порекомендовать тип следующего блока ('strength' | 'hypertrophy' | 'deload' | 'recomp'), длительность в неделях и комфортный диапазон тяжести.
@@ -2603,7 +2603,7 @@ async function initTelegramBot() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             commands: [
-              { command: 'start', description: 'Запустить GetFitBot Mini App' },
+              { command: 'start', description: 'Запустить GetFit Mini App' },
               { command: 'help', description: 'Справка и команды' },
               { command: 'ranks', description: 'Таблица нормативов и разрядов' },
               { command: 'diag', description: 'Проверить, почему не открывается приложение' },
@@ -2698,7 +2698,7 @@ async function startServer() {
   // Порт открываем сразу, а базу поднимаем в фоне: иначе при спящем Supabase
   // сервис не успевает ответить хостингу и выглядит мёртвым.
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`GetFitBot server running on port ${PORT} (${IS_DEV ? 'dev' : 'production'})`);
+    console.log(`GetFit server running on port ${PORT} (${IS_DEV ? 'dev' : 'production'})`);
     initTelegramBot().catch((err) => console.error('Telegram bot init error:', err));
     scheduleReminders();
 

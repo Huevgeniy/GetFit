@@ -608,10 +608,10 @@ export const ResearchLabView: React.FC<ResearchLabViewProps> = ({
                   {isSelected && aiAnalysisResult && (
                     <div className="mt-4 p-3.5 rounded-xl bg-gradient-to-br from-cyan-950/60 to-slate-900 border border-cyan-500/40 text-xs space-y-2 animate-fade-in">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-cyan-400 flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5" />
-                          Вывод по эксперименту ({aiAnalysisResult.aiProvider === 'groq' ? 'Groq' : aiAnalysisResult.aiProvider === 'gemini' ? 'Gemini' : aiAnalysisResult.aiProvider === 'heuristic' ? 'встроенный разбор' : 'ИИ'})
-                        </span>
+                <span className="font-bold text-cyan-400 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Вывод по эксперименту
+                </span>
                         <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                           {aiAnalysisResult.effectPercent > 0 ? `+${aiAnalysisResult.effectPercent}%` : `${aiAnalysisResult.effectPercent}%`} эффект
                         </span>

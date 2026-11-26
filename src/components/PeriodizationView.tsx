@@ -21,12 +21,14 @@ import {
   Zap,
   AlertCircle
 } from 'lucide-react';
-import { TrainingBlock, WorkoutRecord, UserProfile } from '../types';
+import { TrainingBlock, WorkoutRecord, UserProfile, WorkoutPlan } from '../types';
+import { CycleLibrary } from './CycleLibrary';
 
 interface PeriodizationViewProps {
   user: UserProfile;
   pastWorkouts: WorkoutRecord[];
   onUpdateUser?: (updated: Partial<UserProfile>) => void;
+  onStartPlan: (plan: WorkoutPlan) => void;
 }
 
 const BLOCK_TYPES = [
@@ -42,6 +44,7 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
   user,
   pastWorkouts,
   onUpdateUser,
+  onStartPlan,
 }) => {
   const [blocks, setBlocks] = useState<TrainingBlock[]>(() => {
     try {
@@ -226,6 +229,8 @@ export const PeriodizationView: React.FC<PeriodizationViewProps> = ({
       </div>
 
       <div id="tour-periodization-list" className="px-4 py-4 space-y-6">
+        <CycleLibrary user={user} onStartPlan={onStartPlan} />
+
         {/* Current Block */}
         {currentBlock && (
           <section>
